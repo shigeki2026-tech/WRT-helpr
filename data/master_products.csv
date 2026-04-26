@@ -1,0 +1,5 @@
+priority,enabled,match_target,keyword,normalized_product,category,repair_type,cost_estimate,script_sheet,script_part,can_announce_cost,data_erase_required,notes
+10,1,model,EH-NA0J-A,ドライヤー,家電,持込修理,"2,000円～5,000円前後",④家電出張・持込・新築住設,家電・持込修理,可,不要,
+50,1,series,ドライヤー・ヘアアイロン,ドライヤー,家電,持込修理,"2,000円～5,000円前後",④家電出張・持込・新築住設,家電・持込修理,可,不要,
+50,1,product,洗濯機,洗濯機,家電,出張修理,"5,000円～7,000円前後",④家電出張・持込・新築住設,家電・出張修理,可,不要,
+40,1,product,パソコン,パソコン,家電,持込修理,"国内2,000円～9,000円 / 海外12,000円前後",④家電出張・持込・新築住設,家電・持込修理,可,必要,
