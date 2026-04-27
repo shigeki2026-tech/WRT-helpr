@@ -284,6 +284,95 @@ def normalize_product_for_select(product: str) -> str:
     return PRODUCT_OTHER
 
 
+def parse_date_safe(value):
+    """受付画面の日付文字列を date に変換する。不正・空欄は None。"""
+    text = (value or "").strip()
+    if not text:
+        return None
+    normalized = text.replace("-", "/")
+    m = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", normalized)
+    if m:
+        y, mo, d = map(int, m.groups())
+        try:
+            return date(y, mo, d)
+        except ValueError:
+            return None
+    m = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})", normalized)
+    if m:
+        y, mo, d = map(int, m.groups())
+        try:
+            return date(y, mo, d)
+        except ValueError:
+            return None
+    return None
+
+
+def determine_warranty_status(form: dict, today=None) -> dict:
+    """保証開始日・終了日から、WRTで受付へ進めるかを判定する。"""
+    today = today or date.today()
+    start_raw = form.get("warranty_start_date", "")
+    end_raw = form.get("warranty_end_date", "")
+    start_date = parse_date_safe(start_raw)
+    end_date = parse_date_safe(end_raw)
+
+    unknown = {
+        "warranty_status": "unknown",
+        "can_accept": False,
+        "severity": "warning",
+        "title": "保証期間未確認",
+        "message": "保証開始日・保証終了日が確認できないため、受付可否を確定できません。保証期間を確認してください。",
+        "required_questions": "保証開始日・保証終了日を確認してください",
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    if not start_date or not end_date:
+        return unknown
+
+    if today < start_date:
+        return {
+            "warranty_status": "before_start",
+            "can_accept": False,
+            "severity": "warning",
+            "title": "保証開始日前",
+            "message": "保証開始日前のため、WRTでの修理受付はできません。メーカー保証または販売店・メーカー窓口をご案内してください。",
+            "required_questions": "保証開始日とメーカー保証期間を確認してください",
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    if today > end_date:
+        return {
+            "warranty_status": "expired",
+            "can_accept": False,
+            "severity": "error",
+            "title": "保証期間終了",
+            "message": "保証期間終了後のため、WRTでの修理受付はできません。受付不可として案内してください。",
+            "required_questions": "",
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+    return {
+        "warranty_status": "active",
+        "can_accept": True,
+        "severity": "ok",
+        "title": "保証期間内",
+        "message": "保証期間内のため、受付判定へ進めます。",
+        "required_questions": "",
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def build_warranty_guidance(warranty_result: dict) -> str:
+    status = warranty_result.get("warranty_status", "unknown")
+    if status == "before_start":
+        return "メーカー保証または販売店・メーカー窓口へ誘導"
+    if status == "active":
+        return "受付判定へ進む"
+    if status == "expired":
+        return "保証期間終了のため受付不可"
+    return "保証開始日・保証終了日を確認"
+
+
 @st.cache_data
 def load_master_products() -> pd.DataFrame:
     """legacy: data/master_products.csv（後方互換・主判定には使わない）"""
@@ -924,7 +1013,9 @@ def build_customer_cost_guidance(repair_type: str, cost_estimate: str,
 # 履歴テンプレ
 # ============================================================
 def build_history_template(form: dict, repair_type: str, script_result: dict,
-                            cost_estimate: str, vendor: str) -> str:
+                            cost_estimate: str, vendor: str,
+                            warranty_result: dict = None) -> str:
+    warranty_result = warranty_result or determine_warranty_status(form)
     lines = [
         "■対応履歴",
         f"WRT-NO　　　: {form.get('wrt_no', '未入力')}",
@@ -940,6 +1031,13 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"保証プラン　: {form.get('warranty_plan', '未入力')}",
         f"保証開始日　: {form.get('warranty_start_date', '未入力')}",
         f"保証終了日　: {form.get('warranty_end_date', '未入力')}",
+        "",
+        "【保証期間判定】",
+        f"ステータス：{warranty_result.get('title', '保証期間未確認')}",
+        f"保証開始日：{form.get('warranty_start_date', '未入力') or '未入力'}",
+        f"保証終了日：{form.get('warranty_end_date', '未入力') or '未入力'}",
+        f"対応方針：{build_warranty_guidance(warranty_result)}",
+        "",
         f"症状　　　　: {form.get('symptom', '未入力')}",
         f"家電/住設　 : {form.get('appliance_type', '未入力')}",
         f"修理形態　　: {repair_type}",
@@ -1044,6 +1142,7 @@ def run_decision(form: dict) -> dict:
         working_form["case_type"] = inferred_case_type
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
+    warranty_result = determine_warranty_status(working_form)
 
     # ── Layer 1: 製品名エイリアス ──
     alias_result = normalize_product_from_alias(working_form)
@@ -1110,6 +1209,9 @@ def run_decision(form: dict) -> dict:
         "vendor":              vendor,
         "normalized_product":  working_form.get("product", ""),
         "area_group":          area_group,
+        "warranty_result":     warranty_result,
+        "warranty_status":     warranty_result["warranty_status"],
+        "can_accept":          warranty_result["can_accept"],
         # ── 各層の判定詳細 ──
         "alias_result":        alias_result,
         "repair_result":       repair_result,
@@ -1296,6 +1398,7 @@ def render_tab_call():
     normalized_product  = decision["normalized_product"]
     inferred_case_type  = decision.get("inferred_case_type", "")
     area_group          = decision.get("area_group", "")
+    warranty_result     = decision["warranty_result"]
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -1303,6 +1406,27 @@ def render_tab_call():
     # ─── 右カラム: 通話中判定結果 ───
     with col_right:
         st.subheader("⚡ 通話中判定結果")
+
+        # --- 保証期間判定（受付可否の最優先表示） ---
+        st.markdown("##### 🛡️ 保証期間判定")
+        warranty_color = {
+            "ok": "#27ae60",
+            "warning": "#f39c12",
+            "error": "#c0392b",
+        }.get(warranty_result.get("severity"), "#7f8c8d")
+        st.markdown(
+            f'<div style="background:{warranty_color};color:white;padding:12px 16px;'
+            f'border-radius:8px;font-size:1.15em;font-weight:bold;line-height:1.7;">'
+            f'{warranty_result.get("title", "保証期間未確認")}<br>'
+            f'<span style="font-size:0.9em;font-weight:normal;">{warranty_result.get("message", "")}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if not warranty_result.get("can_accept", False):
+            st.error(f"受付可否: 受付不可 / 最優先対応: {build_warranty_guidance(warranty_result)}")
+        else:
+            st.success("受付可否: 受付判定へ進めます")
+        st.divider()
 
         # --- case_type 自動推定バッジ ---
         if inferred_case_type and not (st.session_state.form.get("case_type") or "").strip():
@@ -1428,6 +1552,13 @@ def render_tab_call():
         st.markdown("##### ✅ 次に確認する項目")
         req_questions = build_required_questions(
             st.session_state.form, repair_type, needs_data_erase)
+        if warranty_result.get("warranty_status") == "before_start":
+            req_questions.insert(0, "メーカー保証期間を確認")
+            req_questions.insert(1, "メーカーまたは販売店窓口への誘導")
+        elif warranty_result.get("warranty_status") == "unknown":
+            req_questions.insert(0, "保証開始日・保証終了日を確認")
+        elif warranty_result.get("warranty_status") == "expired":
+            req_questions.insert(0, "受付不可。保証期間終了後であることを案内")
         # 費用未確定の場合は確認事項を先頭に追加
         if cost_result.get("cost_status") == "pending":
             cost_rq = cost_result.get("required_questions", "").strip()
@@ -1496,7 +1627,7 @@ def render_tab_call():
         st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
     with col_b:
         history_tmpl = build_history_template(
-            st.session_state.form, repair_type, script_result, cost_estimate, vendor)
+            st.session_state.form, repair_type, script_result, cost_estimate, vendor, warranty_result)
         st.markdown("##### 📄 対応履歴テンプレ")
         st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
 
@@ -1512,7 +1643,8 @@ def render_tab_after_call():
     cost_estimate = decision["cost_estimate"]
     script_result = decision["script_result"]
     vendor        = decision["vendor"]
-    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor)
+    warranty_result = decision["warranty_result"]
+    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor, warranty_result)
 
     col1, col2 = st.columns(2)
     with col1:
@@ -1539,6 +1671,7 @@ def render_tab_after_call():
         memo = (
             f"WRT-NO: {form.get('wrt_no','─')}\n"
             f"製品: {form.get('product','─')} / {form.get('manufacturer','─')} {form.get('model_number','─')}\n"
+            f"保証期間判定: {warranty_result.get('title','─')}\n"
             f"修理形態: {repair_type}\n"
             f"症状: {form.get('symptom','─')}\n"
             f"拠点候補: {vendor}"
@@ -1550,6 +1683,7 @@ def render_tab_after_call():
             f"WRT-NO: {form.get('wrt_no','─')}\n"
             f"お客様名: {form.get('customer_name','─')}\n"
             f"製品: {form.get('product','─')}（{form.get('manufacturer','─')} {form.get('model_number','─')}）\n"
+            f"保証期間判定: {warranty_result.get('title','─')}\n"
             f"修理形態: {repair_type} / 概算: {cost_estimate}\n"
             f"拠点候補: {vendor}\n"
             f"症状: {form.get('symptom','─')}"

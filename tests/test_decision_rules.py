@@ -12,6 +12,7 @@ Standalone:
 
 import sys
 import os
+from datetime import date
 
 # Add project root to path so `import app` works from any working directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,7 +35,7 @@ import app  # noqa: E402  (must come after sys.modules patch)
 def make_form(
     product="", series="", manufacturer="", model_number="",
     prefecture="", case_type="", appliance_type="",
-    extra_condition="", store_name="",
+    extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -48,6 +49,8 @@ def make_form(
         appliance_type=appliance_type,
         extra_condition=extra_condition,
         store_name=store_name,
+        warranty_start_date=warranty_start_date,
+        warranty_end_date=warranty_end_date,
     )
     return form
 
@@ -406,6 +409,86 @@ def test_tc37_series_dryer_alias_reflects_product_select():
     check("TC37 原文製品名を保持", form["product_original"], "ドライヤー・ヘアアイロン")
 
 
+def test_tc38_warranty_before_start():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026/05/01", warranty_end_date="2031/04/30"),
+        today=date(2026, 4, 27),
+    )
+    check("TC38 warranty before_start", r["warranty_status"], "before_start")
+    check("TC38 can_accept False", r["can_accept"], False)
+
+
+def test_tc39_warranty_active():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026/01/01", warranty_end_date="2030/12/31"),
+        today=date(2026, 4, 27),
+    )
+    check("TC39 warranty active", r["warranty_status"], "active")
+    check("TC39 can_accept True", r["can_accept"], True)
+
+
+def test_tc40_warranty_expired():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2020/01/01", warranty_end_date="2026/04/26"),
+        today=date(2026, 4, 27),
+    )
+    check("TC40 warranty expired", r["warranty_status"], "expired")
+    check("TC40 can_accept False", r["can_accept"], False)
+
+
+def test_tc41_warranty_unknown_start_blank():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="", warranty_end_date="2031/04/30"),
+        today=date(2026, 4, 27),
+    )
+    check("TC41 start空欄 → unknown", r["warranty_status"], "unknown")
+    check("TC41 can_accept False", r["can_accept"], False)
+
+
+def test_tc42_warranty_unknown_end_blank():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026/01/01", warranty_end_date=""),
+        today=date(2026, 4, 27),
+    )
+    check("TC42 end空欄 → unknown", r["warranty_status"], "unknown")
+    check("TC42 can_accept False", r["can_accept"], False)
+
+
+def test_tc43_warranty_hyphen_date_active():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026-01-01", warranty_end_date="2030-12-31"),
+        today=date(2026, 4, 27),
+    )
+    check("TC43 YYYY-MM-DD → active", r["warranty_status"], "active")
+
+
+def test_tc44_warranty_japanese_date_active():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026年01月01日", warranty_end_date="2030年12月31日"),
+        today=date(2026, 4, 27),
+    )
+    check("TC44 YYYY年MM月DD日 → active", r["warranty_status"], "active")
+
+
+def test_tc45_run_decision_includes_warranty_result():
+    d = app.run_decision(make_form(warranty_start_date="2026/01/01", warranty_end_date="2030/12/31"))
+    check("TC45 warranty_resultあり", "warranty_result" in d, True)
+    check("TC45 warranty_statusあり", "warranty_status" in d, True)
+    check("TC45 can_acceptあり", "can_accept" in d, True)
+
+
+def test_tc46_expired_keeps_acceptance_priority_even_when_cost_exists():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2026/04/26",
+    ))
+    check("TC46 expired", d["warranty_status"], "expired")
+    check("TC46 can_accept False", d["can_accept"], False)
+    check("TC46 cost can still be calculated behind the scenes", d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC46 guidance is受付不可", app.build_warranty_guidance(d["warranty_result"]), "保証期間終了のため受付不可")
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -448,6 +531,15 @@ _ALL_TESTS = [
     test_tc35_pc_only_never_falls_back_to_pc_cost,
     test_tc36_product_options_from_repair_type_rules,
     test_tc37_series_dryer_alias_reflects_product_select,
+    test_tc38_warranty_before_start,
+    test_tc39_warranty_active,
+    test_tc40_warranty_expired,
+    test_tc41_warranty_unknown_start_blank,
+    test_tc42_warranty_unknown_end_blank,
+    test_tc43_warranty_hyphen_date_active,
+    test_tc44_warranty_japanese_date_active,
+    test_tc45_run_decision_includes_warranty_result,
+    test_tc46_expired_keeps_acceptance_priority_even_when_cost_exists,
 ]
 
 if __name__ == "__main__":
