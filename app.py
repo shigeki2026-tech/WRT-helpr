@@ -80,7 +80,11 @@ _REPAIR_TYPE_COLS  = ["priority", "enabled", "product_keyword", "manufacturer_ke
                       "model_keyword", "condition_keyword", "repair_type", "needs_confirmation", "notes"]
 _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
                       "manufacturer_group", "condition_keyword", "repair_type",
-                      "cost_estimate", "can_announce_cost", "needs_escalation", "notes"]
+                      "cost_estimate", "can_announce_cost", "needs_escalation",
+                      "required_fields", "cost_status", "guidance_scope",
+                      "required_questions", "customer_notice", "internal_note", "notes"]
+_MFR_GROUP_COLS    = ["group_name", "manufacturers", "notes"]
+_AREA_GROUP_COLS   = ["area_group", "prefectures", "notes"]
 _VENDOR_COLS       = ["priority", "enabled", "case_type", "prefecture", "area_group",
                       "manufacturer_keyword", "product_keyword", "store_keyword",
                       "repair_type", "vendor_name", "reason", "needs_escalation", "notes"]
@@ -142,6 +146,66 @@ def load_cost_rules() -> pd.DataFrame:
 @st.cache_data
 def load_vendor_rules() -> pd.DataFrame:
     return _load_csv("master_vendor_rules.csv", _VENDOR_COLS)
+
+
+# ── 新規: メーカーグループ / エリアグループ CSVローダー ──
+def _load_simple_csv(filename: str, required_cols: list) -> pd.DataFrame:
+    """priority/enabled フィルタなしのシンプルなCSVローダー（設定系CSV用）。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=required_cols)
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
+    except Exception:
+        return pd.DataFrame(columns=required_cols)
+    if any(c not in df.columns for c in required_cols):
+        return pd.DataFrame(columns=required_cols)
+    return df.fillna("")
+
+
+@st.cache_data
+def load_manufacturer_groups_csv() -> pd.DataFrame:
+    return _load_simple_csv("master_manufacturer_groups.csv", _MFR_GROUP_COLS)
+
+
+@st.cache_data
+def load_area_groups_csv() -> pd.DataFrame:
+    return _load_simple_csv("master_area_groups.csv", _AREA_GROUP_COLS)
+
+
+def load_manufacturer_groups_dict() -> dict:
+    """
+    master_manufacturer_groups.csv から {group_name: set[manufacturer]} を返す。
+    CSVが存在しない/空の場合はハードコード定数 DOMESTIC_PC_MAKERS にフォールバック。
+    """
+    df = load_manufacturer_groups_csv()
+    result: dict = {}
+    if not df.empty:
+        for _, row in df.iterrows():
+            gname = (row.get("group_name") or "").strip()
+            mfrs  = (row.get("manufacturers") or "").strip()
+            if gname and mfrs:
+                result[gname] = set(m.strip() for m in mfrs.split(";") if m.strip())
+    # ハードコードフォールバック（国内PCが未定義の場合）
+    if "国内PC" not in result:
+        result["国内PC"] = DOMESTIC_PC_MAKERS
+    return result
+
+
+def load_area_groups_dict() -> dict:
+    """
+    master_area_groups.csv から {area_group_name: set[prefecture]} を返す。
+    NTT東日本 / NTT西日本 等のエリアグループを保持する。
+    """
+    df = load_area_groups_csv()
+    result: dict = {}
+    if not df.empty:
+        for _, row in df.iterrows():
+            aname = (row.get("area_group") or "").strip()
+            prefs = (row.get("prefectures") or "").strip()
+            if aname and prefs:
+                result[aname] = set(p.strip() for p in prefs.split(";") if p.strip())
+    return result
 
 
 @st.cache_data
@@ -404,55 +468,104 @@ def determine_repair_type(form: dict) -> str:
 # ============================================================
 def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     """
-    master_cost_rules.csv を使って概算費用を判定する。
-    - repair_type 列が空 = ワイルドカード
-    - manufacturer_group で MANUFACTURER_GROUPS との照合を行う
-    - condition_keyword は extra_condition に対して照合する
+    master_cost_rules.csv から概算費用ルールを判定する（拡張版）。
+
+    拡張機能:
+    - required_fields: 列挙フィールドが未入力なら cost_status="pending" を返す
+    - cost_status: confirmed / pending / escalation
+    - guidance_scope: always / eu_asked_only / internal / escalation_only
+    - required_questions / customer_notice / internal_note も返す
     """
     df = load_cost_rules()
+    mfr_groups   = load_manufacturer_groups_dict()
     product      = (form.get("product") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
     condition    = (form.get("extra_condition") or "").strip()
     norm_mfr     = normalize_manufacturer(manufacturer)
 
-    if not df.empty:
-        for _, row in df.iterrows():
-            pk  = (row.get("product_keyword") or "").strip()
-            mk  = (row.get("manufacturer_keyword") or "").strip()
-            mg  = (row.get("manufacturer_group") or "").strip()
-            ck  = (row.get("condition_keyword") or "").strip()
-            rt  = (row.get("repair_type") or "").strip()
-
-            # repair_type は完全一致（空=ワイルドカード）
-            if rt and rt != repair_type:
-                continue
-            if not _kw_match(pk, product):                   continue
-            if not _kw_match(mk, manufacturer):              continue
-            if not _kw_match(ck, condition):                 continue
-            # manufacturer_group チェック
-            if mg:
-                group_set = MANUFACTURER_GROUPS.get(mg)
-                if group_set is not None and norm_mfr not in group_set:
-                    continue  # グループに含まれないメーカー
-                # 未定義グループは無視（ワイルドカード扱い）
-
-            matched_kw = pk or mk or mg or ck or rt or "(汎用)"
-            return {
-                "matched":           True,
-                "cost_estimate":     (row.get("cost_estimate") or "").strip(),
-                "can_announce_cost": (row.get("can_announce_cost") or "可").strip() != "不可",
-                "needs_escalation":  str(row.get("needs_escalation", "0")).strip() == "1",
-                "keyword":           matched_kw,
-                "priority":          int(row.get("priority", 999)),
-                "csv_name":          "master_cost_rules.csv",
-                "notes":             (row.get("notes") or "").strip(),
-            }
-
-    return {
+    _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
-        "needs_escalation": False, "keyword": "", "priority": None,
-        "csv_name": "", "notes": "",
+        "needs_escalation": False, "cost_status": "confirmed",
+        "guidance_scope": "always", "required_questions": "",
+        "customer_notice": "", "internal_note": "", "missing_fields": [],
+        "keyword": "", "priority": None, "csv_name": "", "notes": "",
     }
+
+    if df.empty:
+        return _no_match
+
+    for _, row in df.iterrows():
+        pk  = (row.get("product_keyword") or "").strip()
+        mk  = (row.get("manufacturer_keyword") or "").strip()
+        mg  = (row.get("manufacturer_group") or "").strip()
+        ck  = (row.get("condition_keyword") or "").strip()
+        rt  = (row.get("repair_type") or "").strip()
+
+        # repair_type: 完全一致（空=ワイルドカード）
+        if rt and rt != repair_type:
+            continue
+        if not _kw_match(pk, product):      continue
+        if not _kw_match(mk, manufacturer): continue
+        if not _kw_match(ck, condition):    continue
+        # manufacturer_group チェック（CSVロード済みグループ辞書を使用）
+        if mg:
+            group_set = mfr_groups.get(mg)
+            if group_set is not None and norm_mfr not in group_set:
+                continue  # グループに含まれないメーカーはスキップ
+            # 未定義グループは無視（ワイルドカード扱い）
+
+        matched_kw = pk or mk or mg or ck or rt or "(汎用)"
+
+        # ── required_fields チェック ──────────────────────────────
+        req_fields_str = (row.get("required_fields") or "").strip()
+        if req_fields_str:
+            missing = [
+                f for f in req_fields_str.split(";")
+                if not (form.get(f.strip()) or "").strip()
+            ]
+            if missing:
+                # 必須フィールドが未入力 → pending を返す
+                return {
+                    "matched":            True,
+                    "cost_estimate":      "未確定",
+                    "can_announce_cost":  False,
+                    "needs_escalation":   False,
+                    "cost_status":        "pending",
+                    "guidance_scope":     "always",
+                    "required_questions": (row.get("required_questions") or "").strip(),
+                    "customer_notice":    "確認後にご案内します",
+                    "internal_note":      (row.get("internal_note") or "").strip(),
+                    "missing_fields":     missing,
+                    "keyword":            matched_kw,
+                    "priority":           int(row.get("priority", 999)),
+                    "csv_name":           "master_cost_rules.csv",
+                    "notes":              (row.get("notes") or "").strip(),
+                }
+
+        # ── 通常マッチ ──────────────────────────────────────────
+        esc = str(row.get("needs_escalation", "0")).strip() == "1"
+        raw_status = (row.get("cost_status") or "").strip()
+        if not raw_status:
+            raw_status = "escalation" if esc else "confirmed"
+
+        return {
+            "matched":            True,
+            "cost_estimate":      (row.get("cost_estimate") or "").strip(),
+            "can_announce_cost":  (row.get("can_announce_cost") or "可").strip() != "不可",
+            "needs_escalation":   esc,
+            "cost_status":        raw_status,
+            "guidance_scope":     (row.get("guidance_scope") or "always").strip(),
+            "required_questions": (row.get("required_questions") or "").strip(),
+            "customer_notice":    (row.get("customer_notice") or "").strip(),
+            "internal_note":      (row.get("internal_note") or "").strip(),
+            "missing_fields":     [],
+            "keyword":            matched_kw,
+            "priority":           int(row.get("priority", 999)),
+            "csv_name":           "master_cost_rules.csv",
+            "notes":              (row.get("notes") or "").strip(),
+        }
+
+    return _no_match
 
 
 # ── 既存ロジック（フォールバック・削除しない） ──
@@ -556,6 +669,27 @@ def determine_vendor_candidate(form: dict) -> str:
     if prefecture == "滋賀県" and product == "洗濯機":     return "ユナイトサービス㈱"
     if prefecture in {"東京都","神奈川県"} and product == "洗濯機": return "WRT修理センター"
     return "担当エスカ（要確認）"
+
+
+# ============================================================
+# case_type 自動推定（販売店名 → 案件区分）
+# ============================================================
+def infer_case_type(form: dict) -> str:
+    """
+    case_type が未入力の場合に、販売店名・運営会社名から自動推定する。
+    すでに case_type が設定されていればそのまま返す。
+    """
+    existing = (form.get("case_type") or "").strip()
+    if existing:
+        return existing
+    store = (form.get("store_name") or "").strip()
+    if "ビックカメラ" in store or "ビックカメラ" in store.lower():
+        return "ビックカメラ案件"
+    if "ビック" in store and "カメラ" in store:
+        return "ビックカメラ案件"
+    if "ソフマップ" in store:
+        return "ソフマップ案件"
+    return ""
 
 
 # ============================================================
@@ -761,9 +895,12 @@ def run_decision(form: dict) -> dict:
       + determine_data_erase_consent      (データ消去同意)
     各層でCSVにヒットしなければ既存ロジックにフォールバック。
     """
-    # ── 準備: メーカー正規化を working_form に適用 ──
+    # ── 準備: メーカー正規化 + case_type 自動推定 ──
     working_form = form.copy()
     working_form["manufacturer"] = normalize_manufacturer(form.get("manufacturer", ""))
+    inferred_case_type = infer_case_type(working_form)
+    if inferred_case_type:
+        working_form["case_type"] = inferred_case_type
 
     # ── Layer 1: 製品名エイリアス ──
     alias_result = normalize_product_from_alias(working_form)
@@ -784,6 +921,10 @@ def run_decision(form: dict) -> dict:
         cost_result = {
             "matched": False, "cost_estimate": "要確認",
             "can_announce_cost": True, "needs_escalation": False,
+            "cost_status": "pending", "guidance_scope": "always",
+            "required_questions": "", "customer_notice": "",
+            "internal_note": repair_result.get("notes", ""),
+            "missing_fields": [],
             "keyword": "", "priority": None, "csv_name": "",
             "notes": repair_result.get("notes", ""),
         }
@@ -811,21 +952,23 @@ def run_decision(form: dict) -> dict:
 
     return {
         # ── 主要判定結果 ──
-        "repair_type":        repair_type,
-        "cost_estimate":      cost_estimate,
-        "script_result":      script_result,
-        "needs_data_erase":   needs_data_erase,
-        "vendor":             vendor,
-        "normalized_product": working_form.get("product", ""),
+        "repair_type":         repair_type,
+        "cost_estimate":       cost_estimate,
+        "script_result":       script_result,
+        "needs_data_erase":    needs_data_erase,
+        "vendor":              vendor,
+        "normalized_product":  working_form.get("product", ""),
         # ── 各層の判定詳細 ──
-        "alias_result":       alias_result,
-        "repair_result":      repair_result,
-        "repair_source":      repair_source,
-        "cost_result":        cost_result,
-        "cost_source":        cost_source,
-        "vendor_result":      vendor_result,
+        "alias_result":        alias_result,
+        "repair_result":       repair_result,
+        "repair_source":       repair_source,
+        "cost_result":         cost_result,
+        "cost_source":         cost_source,
+        "vendor_result":       vendor_result,
+        # ── 自動推定 ──
+        "inferred_case_type":  inferred_case_type,
         # ── working_form（デバッグ用） ──
-        "working_form":       working_form,
+        "working_form":        working_form,
     }
 
 
@@ -970,9 +1113,10 @@ def render_tab_call():
     repair_source    = decision["repair_source"]
     cost_result      = decision["cost_result"]
     cost_source      = decision["cost_source"]
-    vendor           = decision["vendor"]
-    vendor_result    = decision["vendor_result"]
-    normalized_product = decision["normalized_product"]
+    vendor              = decision["vendor"]
+    vendor_result       = decision["vendor_result"]
+    normalized_product  = decision["normalized_product"]
+    inferred_case_type  = decision.get("inferred_case_type", "")
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -980,6 +1124,10 @@ def render_tab_call():
     # ─── 右カラム: 通話中判定結果 ───
     with col_right:
         st.subheader("⚡ 通話中判定結果")
+
+        # --- case_type 自動推定バッジ ---
+        if inferred_case_type and not (st.session_state.form.get("case_type") or "").strip():
+            st.warning(f"⚠️ 案件区分を自動推定しました: **{inferred_case_type}** （フォームで確認してください）")
 
         # --- 正規化製品 ---
         if normalized_product:
@@ -1024,24 +1172,53 @@ def render_tab_call():
             confirm_note = repair_result.get("notes") or "型番・詳細確認要"
             st.warning(f"⚠️ 要確認理由: {confirm_note}")
 
-        # --- 概算費用 ---
+        # --- 概算費用（4状態: confirmed / pending / unavailable / escalation）---
         st.markdown("##### 💴 保証対象外時の概算費用")
-        cost_color = "#c0392b" if cost_estimate == "要確認" else "#27ae60"
-        st.markdown(
-            f'<div style="background:{cost_color};color:white;padding:10px 16px;'
-            f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
-            f'{cost_estimate}</div>',
-            unsafe_allow_html=True,
-        )
-        if cost_result.get("needs_escalation"):
-            esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
-            st.warning(f"⚠️ コストエスカ注意: {esc_note}")
+        # 表示状態を決定
+        _disp_status = cost_result.get("cost_status", "confirmed")
+        if not script_result.get("price_guidance_allowed", True):
+            _disp_status = "unavailable"
+        elif cost_result.get("needs_escalation") and _disp_status not in ("pending",):
+            _disp_status = "escalation"
 
-        # --- 金額案内可否 ---
-        if not script_result["price_guidance_allowed"]:
-            st.error("🚫 金額案内不可（スクリプト・担当確認に従うこと）")
-        else:
-            st.success("✅ 金額案内可")
+        if _disp_status == "unavailable":
+            st.error("🚫 金額案内不可 — スクリプト・担当確認に従うこと")
+        elif _disp_status == "pending":
+            st.warning("🟡 概算費用: 追加確認が必要です（未確定）")
+            rq = cost_result.get("required_questions", "").strip()
+            if rq:
+                st.markdown(f"**▶ 確認事項:** {rq}")
+            note = cost_result.get("internal_note", "").strip()
+            if note:
+                st.caption(f"内部メモ: {note}")
+        elif _disp_status == "escalation":
+            st.markdown(
+                f'<div style="background:#e67e22;color:white;padding:10px 16px;'
+                f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
+                f'{cost_estimate}</div>',
+                unsafe_allow_html=True,
+            )
+            esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
+            st.warning(f"⚠️ 高額エスカ注意: {esc_note}")
+        else:  # confirmed
+            cost_color = "#c0392b" if cost_estimate in ("要確認", "") else "#27ae60"
+            st.markdown(
+                f'<div style="background:{cost_color};color:white;padding:10px 16px;'
+                f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
+                f'{cost_estimate}</div>',
+                unsafe_allow_html=True,
+            )
+            # eu_asked_only の場合は注記を表示
+            if cost_result.get("guidance_scope") == "eu_asked_only":
+                cn = cost_result.get("customer_notice") or "EUから質問があった場合のみ案内"
+                st.caption(f"⚠️ EU質問時のみ案内: {cn}")
+
+        # --- 金額案内可否（unavailableは上で表示済み）---
+        if _disp_status != "unavailable":
+            if not script_result.get("price_guidance_allowed", True):
+                st.error("🚫 金額案内不可（スクリプト・担当確認に従うこと）")
+            elif _disp_status == "confirmed" and cost_estimate not in ("要確認", "未確定", ""):
+                st.success("✅ 金額案内可")
 
         # --- データ消去同意 ---
         if needs_data_erase:
@@ -1064,6 +1241,11 @@ def render_tab_call():
         st.markdown("##### ✅ 次に確認する項目")
         req_questions = build_required_questions(
             st.session_state.form, repair_type, needs_data_erase)
+        # 費用未確定の場合は確認事項を先頭に追加
+        if cost_result.get("cost_status") == "pending":
+            cost_rq = cost_result.get("required_questions", "").strip()
+            if cost_rq:
+                req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
         for i, q in enumerate(req_questions, 1):
             color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
             st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
@@ -1203,7 +1385,7 @@ def render_tab_master():
 
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
-        "修理拠点ルール", "レガシーマスタ",
+        "修理拠点ルール", "メーカーグループ", "エリアグループ", "レガシーマスタ",
     ])
 
     with master_tabs[0]:
@@ -1251,6 +1433,34 @@ def render_tab_master():
                     st.markdown(f"- **{ag}**: {', '.join(sorted(prefs))}")
 
     with master_tabs[4]:
+        st.markdown("##### 📄 master_manufacturer_groups.csv")
+        df_mg = load_manufacturer_groups_csv()
+        if df_mg.empty:
+            st.warning("CSVが見つかりません: data/master_manufacturer_groups.csv")
+        else:
+            st.success(f"読み込み済み: {len(df_mg)} グループ定義")
+            st.dataframe(df_mg, use_container_width=True)
+            st.caption("group_name 列 = master_cost_rules.csv の manufacturer_group で参照するグループ名")
+            mfr_dict = load_manufacturer_groups_dict()
+            with st.expander("展開済みグループ定義"):
+                for gname, mfrs in mfr_dict.items():
+                    st.markdown(f"- **{gname}**: {', '.join(sorted(mfrs))}")
+
+    with master_tabs[5]:
+        st.markdown("##### 📄 master_area_groups.csv（NTT東西エリア等）")
+        df_ag = load_area_groups_csv()
+        if df_ag.empty:
+            st.warning("CSVが見つかりません: data/master_area_groups.csv")
+        else:
+            st.success(f"読み込み済み: {len(df_ag)} エリアグループ定義")
+            st.dataframe(df_ag, use_container_width=True)
+            st.caption("vendor判定・NTT東西エリア判定等に利用可能")
+            area_dict = load_area_groups_dict()
+            with st.expander("展開済みエリアグループ定義"):
+                for aname, prefs in area_dict.items():
+                    st.markdown(f"- **{aname}** ({len(prefs)}県): {', '.join(sorted(prefs))}")
+
+    with master_tabs[6]:
         st.markdown("##### 📄 master_products.csv（legacy・後方互換）")
         df = load_master_products()
         if df.empty:

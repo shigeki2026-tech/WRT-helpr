@@ -1,0 +1,3 @@
+group_name,manufacturers,notes
+国内PC,パナソニック;シャープ;富士通;東芝;日立;ソニー;NEC;VAIO,国内PCメーカーグループ（master_cost_rules の manufacturer_group=国内PC で参照）
+海外PC,Dell;HP;Lenovo;Apple;ASUS;Acer;Microsoft;Dynabook,海外PCメーカーグループ（参考定義）

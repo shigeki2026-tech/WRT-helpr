@@ -50,12 +50,48 @@ streamlit run app.py
 |----------|------|
 | `data/master_product_alias.csv` | 製品名のゆらぎ・略称を正規製品名に変換（例: ドライヤー・ヘアアイロン → ドライヤー） |
 | `data/master_repair_type_rules.csv` | 製品・メーカー・条件から修理形態（出張/持込/要確認）を判定 |
-| `data/master_cost_rules.csv` | 製品・メーカー・修理形態から保証対象外時の概算費用を判定 |
+| `data/master_cost_rules.csv` | 製品・メーカー・修理形態から保証対象外時の概算費用を判定（拡張列あり） |
 | `data/master_vendor_rules.csv` | 案件種別・都道府県・製品から修理拠点候補を判定 |
+| `data/master_manufacturer_groups.csv` | メーカーグループ定義（国内PC等）をCSVで管理 |
+| `data/master_area_groups.csv` | NTT東日本/西日本等のエリアグループ定義 |
 | `data/master_products.csv` | **旧フォールバック用**（Phase2-1以前の旧マスタ。主判定では使用しない） |
 
 各CSVは `priority` 昇順で評価し、最初にヒットしたルールを採用します（first-match wins）。
 `enabled=0` の行はスキップされます。
+
+### master_cost_rules.csv 拡張列
+
+| 列名 | 意味 |
+|------|------|
+| `required_fields` | 費用を確定表示する前に必須のフォームフィールド（例: `manufacturer;extra_condition`）。未入力時は `cost_status=pending` を返す |
+| `cost_status` | `confirmed` / `pending` / `escalation` — 費用確定状態 |
+| `guidance_scope` | `always`（常時表示）/ `eu_asked_only`（EUから質問があった場合のみ案内）|
+| `required_questions` | pendingのときに次に確認すべき質問文（UIに表示） |
+| `customer_notice` | お客様へ案内してよい補助文 |
+| `internal_note` | オペレーター内部向け注意（画面下部に小さく表示） |
+
+### 概算費用 4状態の表示仕様
+
+| 状態 | 表示色 | 発生条件 |
+|------|--------|----------|
+| `confirmed` | 緑 | 費用確定・案内可 |
+| `pending` | 黄 | required_fields が未入力、または修理形態が要確認 |
+| `escalation` | オレンジ | 高額等でエスカレーション推奨（needs_escalation=1） |
+| `unavailable` | 赤 | ビックカメラ/ソフマップ等で金額案内不可 |
+
+### エアコンの費用制御
+
+- **メーカー未入力** → pending「メーカーをご確認ください」
+- **ダイキン + 家庭用/業務用未入力** → pending「家庭用・業務用を確認してください」
+- **ダイキン + 家庭用** → 7,000円～16,000円前後
+- **ダイキン + 業務用** → 15,000円～22,000円前後
+- **ガス漏れ検査**（ダイキン + extra_condition="ガス漏れ"）→ 30,000円前後（eu_asked_only: EUから質問があった場合のみ案内）
+
+### パソコンの費用制御
+
+- **メーカー未入力** → pending「国内・海外メーカーをご確認ください」
+- **国内メーカー**（パナソニック・富士通・NEC等）→ 2,000円～9,000円
+- **海外メーカー**（Dell・HP・Lenovo等）→ 12,000円前後
 
 ---
 

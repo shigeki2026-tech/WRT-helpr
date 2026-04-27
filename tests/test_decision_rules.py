@@ -114,10 +114,12 @@ def test_tc03_electrolux_washer():
 
 # ============================================================
 # TC04: ダイキン家庭用エアコン → 出張修理 / 7,000円～16,000円前後
+# ※ extra_condition="家庭用" 指定が必要（未指定は pending になる）
 # ============================================================
 
 def test_tc04_daikin_ac():
-    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン"))
+    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン",
+                                   extra_condition="家庭用"))
     check("TC04 修理形態 → 出張修理",                d["repair_type"],   "出張修理")
     check("TC04 概算費用 → 7,000円～16,000円前後",   d["cost_estimate"], "7,000円～16,000円前後")
 
@@ -181,6 +183,129 @@ def test_tc10_bic_camera():
 
 
 # ============================================================
+# TC11: エアコンのみ入力 → 金額未確定 / メーカー確認要求
+# ============================================================
+
+def test_tc11_ac_no_manufacturer():
+    d = app.run_decision(make_form(product="エアコン"))
+    check("TC11 cost_status → pending",         d["cost_result"]["cost_status"],        "pending")
+    check("TC11 cost_estimate → 未確定",         d["cost_estimate"],                     "未確定")
+    check("TC11 required_questions 非空",        bool(d["cost_result"]["required_questions"]), True)
+
+
+# ============================================================
+# TC12: エアコン + ダイキンのみ → 金額未確定 / 家庭用・業務用確認要求
+# ============================================================
+
+def test_tc12_ac_daikin_no_type():
+    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン"))
+    check("TC12 cost_status → pending",         d["cost_result"]["cost_status"],        "pending")
+    check("TC12 cost_estimate → 未確定",         d["cost_estimate"],                     "未確定")
+    rq = d["cost_result"]["required_questions"]
+    check("TC12 required_questions 含む '業務用'", "業務用" in rq, True)
+
+
+# ============================================================
+# TC13: エアコン + ダイキン + 家庭用 → 7,000円～16,000円前後
+# ============================================================
+
+def test_tc13_ac_daikin_katei():
+    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン",
+                                   extra_condition="家庭用"))
+    check("TC13 修理形態 → 出張修理",             d["repair_type"],   "出張修理")
+    check("TC13 概算費用 → 7,000円～16,000円前後", d["cost_estimate"], "7,000円～16,000円前後")
+    check("TC13 cost_status → confirmed",         d["cost_result"]["cost_status"], "confirmed")
+
+
+# ============================================================
+# TC14: エアコン + ダイキン + 業務用 → 15,000円～22,000円前後
+# ============================================================
+
+def test_tc14_ac_daikin_gyomu():
+    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン",
+                                   extra_condition="業務用"))
+    check("TC14 修理形態 → 出張修理",              d["repair_type"],   "出張修理")
+    check("TC14 概算費用 → 15,000円～22,000円前後", d["cost_estimate"], "15,000円～22,000円前後")
+    check("TC14 cost_status → confirmed",          d["cost_result"]["cost_status"], "confirmed")
+
+
+# ============================================================
+# TC15: パソコンのみ入力 → 金額未確定 / メーカー確認要求
+# ============================================================
+
+def test_tc15_pc_no_manufacturer():
+    d = app.run_decision(make_form(product="パソコン"))
+    check("TC15 cost_status → pending",         d["cost_result"]["cost_status"], "pending")
+    check("TC15 cost_estimate → 未確定",         d["cost_estimate"],              "未確定")
+    check("TC15 required_questions 非空",        bool(d["cost_result"]["required_questions"]), True)
+
+
+# ============================================================
+# TC16: パソコン + 富士通 → 2,000円～9,000円
+# ============================================================
+
+def test_tc16_pc_fujitsu():
+    d = app.run_decision(make_form(product="パソコン", manufacturer="富士通"))
+    check("TC16 修理形態 → 持込修理",            d["repair_type"],   "持込修理")
+    check("TC16 概算費用 → 2,000円～9,000円",     d["cost_estimate"], "2,000円～9,000円")
+
+
+# ============================================================
+# TC17: パソコン + Dell → 12,000円前後
+# ============================================================
+
+def test_tc17_pc_dell():
+    d = app.run_decision(make_form(product="パソコン", manufacturer="Dell"))
+    check("TC17 修理形態 → 持込修理",            d["repair_type"],   "持込修理")
+    check("TC17 概算費用 → 12,000円前後",         d["cost_estimate"], "12,000円前後")
+
+
+# ============================================================
+# TC18: 販売店名に「ビックカメラ」→ case_type 自動推定
+# ============================================================
+
+def test_tc18_bic_store_infer():
+    d = app.run_decision(make_form(store_name="ビックカメラ新宿店"))
+    check("TC18 case_type自動推定 → ビックカメラ案件",
+          d["inferred_case_type"], "ビックカメラ案件")
+    # case_type が自動設定されるため vendor もソフマップになる
+    check("TC18 vendor → ソフマップ修理センター",
+          d["vendor"], "ソフマップ修理センター")
+
+
+# ============================================================
+# TC19: 販売店名に「ソフマップ」→ case_type 自動推定
+# ============================================================
+
+def test_tc19_sofmap_store_infer():
+    d = app.run_decision(make_form(store_name="ソフマップAkiba"))
+    check("TC19 case_type自動推定 → ソフマップ案件",
+          d["inferred_case_type"], "ソフマップ案件")
+    check("TC19 vendor → ソフマップ修理センター",
+          d["vendor"], "ソフマップ修理センター")
+
+
+# ============================================================
+# TC20: 滋賀県 → NTT西日本 / TC21: 東京都 → NTT東日本
+# ============================================================
+
+def test_tc20_shiga_ntt_west():
+    area_groups = app.load_area_groups_dict()
+    check("TC20 滋賀県 → NTT西日本 に含まれる",
+          "滋賀県" in area_groups.get("NTT西日本", set()), True)
+    check("TC20 滋賀県 → NTT東日本 に含まれない",
+          "滋賀県" in area_groups.get("NTT東日本", set()), False)
+
+
+def test_tc21_tokyo_ntt_east():
+    area_groups = app.load_area_groups_dict()
+    check("TC21 東京都 → NTT東日本 に含まれる",
+          "東京都" in area_groups.get("NTT東日本", set()), True)
+    check("TC21 東京都 → NTT西日本 に含まれない",
+          "東京都" in area_groups.get("NTT西日本", set()), False)
+
+
+# ============================================================
 # Standalone runner
 # ============================================================
 
@@ -195,6 +320,17 @@ _ALL_TESTS = [
     test_tc08_tokyo_washer,
     test_tc09_okinawa,
     test_tc10_bic_camera,
+    test_tc11_ac_no_manufacturer,
+    test_tc12_ac_daikin_no_type,
+    test_tc13_ac_daikin_katei,
+    test_tc14_ac_daikin_gyomu,
+    test_tc15_pc_no_manufacturer,
+    test_tc16_pc_fujitsu,
+    test_tc17_pc_dell,
+    test_tc18_bic_store_infer,
+    test_tc19_sofmap_store_infer,
+    test_tc20_shiga_ntt_west,
+    test_tc21_tokyo_ntt_east,
 ]
 
 if __name__ == "__main__":
