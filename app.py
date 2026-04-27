@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-"""修理受付 支援ツール MVP - app.py"""
+"""修理受付 支援ツール MVP - app.py  (Phase2-2: 4-layer CSV decision)"""
 
 import re
 import os
 import streamlit as st
 from datetime import date
-
 import pandas as pd
 
-# pyperclip: ローカルPC専用。使えない環境では手動貼り付けにフォールバック
 try:
     import pyperclip
     _PYPERCLIP_AVAILABLE = True
@@ -54,169 +52,126 @@ FIELD_LABELS = {
     "extra_condition": "補足条件",
 }
 
+# 国内PCメーカー判定グループ
+DOMESTIC_PC_MAKERS = {
+    "パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー", "NEC", "VAIO",
+}
+
+# manufacturer_group 名 → メーカーセット のマッピング
+MANUFACTURER_GROUPS: dict = {
+    "国内PC": DOMESTIC_PC_MAKERS,
+}
+
+# エリアグループ → 都道府県セット のマッピング
+AREA_GROUPS: dict = {
+    "九州":  {"福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県"},
+    "東北":  {"青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県"},
+    "関東":  {"東京都", "神奈川県", "埼玉県", "千葉県", "茨城県", "栃木県", "群馬県"},
+    "近畿":  {"大阪府", "兵庫県", "京都府", "滋賀県", "奈良県", "和歌山県"},
+    "中国":  {"鳥取県", "島根県", "岡山県", "広島県", "山口県"},
+    "四国":  {"徳島県", "香川県", "愛媛県", "高知県"},
+    "北海道": {"北海道"},
+    "沖縄":  {"沖縄県"},
+}
+
+# ── CSV 必須列定義 ──
+_ALIAS_COLS        = ["priority", "enabled", "keyword", "normalized_product", "product_group", "notes"]
+_REPAIR_TYPE_COLS  = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
+                      "model_keyword", "condition_keyword", "repair_type", "needs_confirmation", "notes"]
+_COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
+                      "manufacturer_group", "condition_keyword", "repair_type",
+                      "cost_estimate", "can_announce_cost", "needs_escalation", "notes"]
+_VENDOR_COLS       = ["priority", "enabled", "case_type", "prefecture", "area_group",
+                      "manufacturer_keyword", "product_keyword", "store_keyword",
+                      "repair_type", "vendor_name", "reason", "needs_escalation", "notes"]
+# legacy
 _MASTER_REQUIRED_COLS = [
     "priority", "enabled", "match_target", "keyword",
     "normalized_product", "category", "repair_type", "cost_estimate",
-    "script_sheet", "script_part", "can_announce_cost",
-    "data_erase_required", "notes",
+    "script_sheet", "script_part", "can_announce_cost", "data_erase_required", "notes",
 ]
 
-# ============================================================
-# CSVマスタ読み込み
-# ============================================================
-@st.cache_data
-def load_master_products() -> pd.DataFrame:
-    """
-    data/master_products.csv を読み込み、有効行を priority 昇順で返す。
-    CSVが無い・列不足・読み込み失敗のいずれでも空DataFrameを返す（フォールバック用）。
-    """
-    csv_path = os.path.join(os.path.dirname(__file__), "data", "master_products.csv")
-    if not os.path.exists(csv_path):
-        return pd.DataFrame(columns=_MASTER_REQUIRED_COLS)
 
+# ============================================================
+# Generic CSV ローダー（キャッシュなし・内部用）
+# ============================================================
+def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
+    """
+    data/<filename> を読み込む。
+    - utf-8-sig エンコード
+    - enabled=1 の行のみ
+    - priority 昇順ソート
+    - 失敗時は空 DataFrame を返す（呼び出し元でフォールバック）
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=required_cols)
     try:
-        df = pd.read_csv(csv_path, encoding="utf-8-sig", dtype=str)
-    except Exception as e:
-        st.warning(f"CSVマスタ読み込みエラー: {e}  ─ 既存ロジックにフォールバックします。")
-        return pd.DataFrame(columns=_MASTER_REQUIRED_COLS)
-
-    missing = [c for c in _MASTER_REQUIRED_COLS if c not in df.columns]
+        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
+    except Exception:
+        return pd.DataFrame(columns=required_cols)
+    missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        st.warning(f"CSVマスタに必須列が不足しています: {missing}  ─ 既存ロジックにフォールバックします。")
-        return pd.DataFrame(columns=_MASTER_REQUIRED_COLS)
-
+        return pd.DataFrame(columns=required_cols)
     df["priority"] = pd.to_numeric(df["priority"], errors="coerce").fillna(999).astype(int)
     df["enabled"]  = pd.to_numeric(df["enabled"],  errors="coerce").fillna(0).astype(int)
     df = df[df["enabled"] == 1].copy()
     df = df.sort_values("priority", kind="stable").reset_index(drop=True)
-    df["notes"] = df["notes"].fillna("")
+    df = df.fillna("")
     return df
 
 
 # ============================================================
-# CSVマスタ判定
+# キャッシュ付き CSV ローダー × 4 + legacy
 # ============================================================
-def determine_repair_info_from_master(form: dict) -> dict:
-    """
-    CSVマスタを使って製品・修理形態・概算費用・スクリプト参照・データ消去同意を判定する。
-    ヒットした場合は matched=True、非ヒットは matched=False（既存ロジックへフォールバック）。
-    """
-    _not_matched: dict = {
-        "matched": False,
-        "source": "既存ロジック判定",
-        "keyword": "",
-        "priority": None,
-        "match_target": "",
-        "product": "",
-        "appliance_type": "",
-        "repair_type": "",
-        "cost_estimate": "",
-        "script_result": None,
-        "data_erase_required": None,
-        "notes": "",
-        "_row": None,
-    }
+@st.cache_data
+def load_alias_csv() -> pd.DataFrame:
+    return _load_csv("master_product_alias.csv", _ALIAS_COLS)
 
-    df = load_master_products()
-    if df.empty:
-        return _not_matched
 
-    # フォームから照合候補テキストを準備
-    model_number   = (form.get("model_number") or "").strip()
-    series_text    = (form.get("series") or "").strip()
-    product_text   = (form.get("product") or "").strip()
-    norm_product   = normalize_product(series_text, product_text)
-    manufacturer   = (form.get("manufacturer") or "").strip()
-    appliance_type = (form.get("appliance_type") or "").strip()
-    category       = (form.get("category") or "").strip()
-    genre          = (form.get("genre") or "").strip()
-    extra          = (form.get("extra_condition") or "").strip()
+@st.cache_data
+def load_repair_type_rules() -> pd.DataFrame:
+    return _load_csv("master_repair_type_rules.csv", _REPAIR_TYPE_COLS)
 
-    # any 用: すべてを連結した検索対象テキスト
-    any_text = " ".join([
-        model_number, series_text, product_text, norm_product,
-        manufacturer, appliance_type, category, genre, extra,
-    ])
 
-    matched_row = None
-    for _, row in df.iterrows():
-        keyword     = (row.get("keyword") or "").strip()
-        match_target = (row.get("match_target") or "").strip().lower()
+@st.cache_data
+def load_cost_rules() -> pd.DataFrame:
+    return _load_csv("master_cost_rules.csv", _COST_COLS)
 
-        if not keyword:
-            continue
 
-        # 照合対象の選択
-        if match_target == "model":
-            target = model_number
-        elif match_target == "series":
-            target = series_text
-        elif match_target == "product":
-            # normalized と raw の両方を試す
-            target = norm_product + " " + product_text
-        elif match_target == "manufacturer":
-            target = manufacturer
-        elif match_target == "any":
-            target = any_text
-        else:
-            target = any_text
+@st.cache_data
+def load_vendor_rules() -> pd.DataFrame:
+    return _load_csv("master_vendor_rules.csv", _VENDOR_COLS)
 
-        # 大文字小文字を吸収（英数字のみ lower）しつつ包含チェック
-        # 日本語はそのまま、英数字は lower で比較
-        kw_lower = keyword.lower()
-        tg_lower = target.lower()
-        if kw_lower in tg_lower:
-            matched_row = row
-            break  # priority 昇順でソート済みなので最初にヒットした行が最優先
 
-    if matched_row is None:
-        return _not_matched
-
-    # can_announce_cost の変換
-    can_cost_raw = (matched_row.get("can_announce_cost") or "").strip()
-    price_guidance_allowed = (can_cost_raw != "不可")
-
-    # data_erase_required の変換
-    erase_raw = (matched_row.get("data_erase_required") or "").strip()
-    data_erase_required = (erase_raw == "必要")
-
-    # notes
-    notes_str = (matched_row.get("notes") or "").strip()
-    script_notes = [notes_str] if notes_str else []
-
-    script_result = {
-        "sheet_name":           (matched_row.get("script_sheet") or "").strip(),
-        "part":                 (matched_row.get("script_part") or "").strip(),
-        "price_guidance_allowed": price_guidance_allowed,
-        "notes":                script_notes,
-        "escalation_needed":    False,
-        "reason":               f"CSVマスタ一致: {matched_row.get('keyword', '')}",
-    }
-
-    return {
-        "matched":            True,
-        "source":             "CSVマスタ一致",
-        "keyword":            matched_row.get("keyword", ""),
-        "priority":           int(matched_row.get("priority", 0)),
-        "match_target":       matched_row.get("match_target", ""),
-        "product":            (matched_row.get("normalized_product") or "").strip(),
-        "appliance_type":     (matched_row.get("category") or "").strip(),
-        "repair_type":        (matched_row.get("repair_type") or "").strip(),
-        "cost_estimate":      (matched_row.get("cost_estimate") or "").strip(),
-        "script_result":      script_result,
-        "data_erase_required": data_erase_required,
-        "notes":              notes_str,
-        "_row":               matched_row.to_dict(),
-    }
+@st.cache_data
+def load_master_products() -> pd.DataFrame:
+    """legacy: data/master_products.csv（後方互換・主判定には使わない）"""
+    return _load_csv("master_products.csv", _MASTER_REQUIRED_COLS)
 
 
 # ============================================================
-# 1. テキスト抽出
+# コア照合ヘルパー
+# ============================================================
+def _kw_match(keyword: str, target: str) -> bool:
+    """
+    keyword が空 → ワイルドカード（常に True）。
+    そうでなければ keyword.lower() in target.lower() で包含チェック。
+    regex / str.contains 禁止。通常の文字列包含のみ。
+    """
+    kw = (keyword or "").strip()
+    if not kw:
+        return True  # 空キーワード = ワイルドカード
+    tg = (target or "").strip()
+    return kw.lower() in tg.lower()
+
+
+# ============================================================
+# テキスト抽出
 # ============================================================
 def extract_fields_from_pasted_text(text: str) -> dict:
     """貼り付けテキストから正規表現で各フィールドを抽出する。"""
     result = {}
-
     patterns = {
         "operating_company": r"運営会社\s*[\t　](.+?)(?:\t|\n|　|販売店)",
         "store_name":         r"販売店\s*[\t　](.+?)(?:\t|\n|$)",
@@ -242,24 +197,20 @@ def extract_fields_from_pasted_text(text: str) -> dict:
         "model_number":       r"型番\s*[\t　]([^\t\n\s]+)",
         "serial_number":      r"製造番号\s*[\t　]([^\t\n]+)",
     }
-
     for key, pattern in patterns.items():
         m = re.search(pattern, text)
         if m:
             val = m.group(1).strip()
             if val:
                 result[key] = val
-
-    # 住所から都道府県抽出
     addr = result.get("address", "")
     if addr:
         result["prefecture"] = extract_prefecture(addr)
-
     return result
 
 
 # ============================================================
-# 2. 正規化
+# 正規化（フォールバック用に保持）
 # ============================================================
 def extract_prefecture(address: str) -> str:
     for pref in PREFECTURES:
@@ -272,32 +223,18 @@ def extract_prefecture(address: str) -> str:
 
 
 def normalize_product(series: str, product: str = "") -> str:
+    """既存ロジックフォールバック。CSVエイリアスにヒットしない場合に使う。"""
     mapping = {
-        "ドライヤー": "ドライヤー",
-        "ヘアアイロン": "ドライヤー",
-        "ドライヤー・ヘアアイロン": "ドライヤー",
-        "洗濯機": "洗濯機",
-        "冷蔵庫": "冷蔵庫",
-        "エアコン": "エアコン",
-        "パソコン": "パソコン",
-        "PC": "パソコン",
-        "プリンター": "プリンター",
-        "カーナビ": "カーナビ",
-        "電子レンジ": "電子レンジ",
-        "食器洗い乾燥機": "食器洗い乾燥機",
-        "食洗機": "食器洗い乾燥機",
-        "給湯器": "給湯器",
-        "温水便座": "温水便座",
-        "掃除機": "掃除機",
-        "炊飯器": "炊飯器",
-        "トースター": "トースター",
-        "ゲーム機": "ゲーム機",
-        "テレビ": "テレビ",
-        "タブレット": "タブレット",
-        "ブルーレイレコーダー": "ブルーレイレコーダー",
-        "DVDレコーダー": "DVDレコーダー",
-        "ドアホン": "ドアホン",
-        "ドライブレコーダー": "ドライブレコーダー",
+        "ドライヤー・ヘアアイロン": "ドライヤー", "ドライヤー": "ドライヤー",
+        "ヘアアイロン": "ドライヤー", "洗濯機": "洗濯機", "冷蔵庫": "冷蔵庫",
+        "エアコン": "エアコン", "パソコン": "パソコン", "PC": "パソコン",
+        "プリンター": "プリンター", "カーナビ": "カーナビ", "電子レンジ": "電子レンジ",
+        "食器洗い乾燥機": "食器洗い乾燥機", "食洗機": "食器洗い乾燥機",
+        "給湯器": "給湯器", "温水便座": "温水便座", "掃除機": "掃除機",
+        "炊飯器": "炊飯器", "トースター": "トースター", "ゲーム機": "ゲーム機",
+        "テレビ": "テレビ", "タブレット": "タブレット",
+        "ブルーレイレコーダー": "ブルーレイレコーダー", "DVDレコーダー": "DVDレコーダー",
+        "ドアホン": "ドアホン", "ドライブレコーダー": "ドライブレコーダー",
     }
     for k, v in mapping.items():
         if k in (series or ""):
@@ -310,23 +247,16 @@ def normalize_product(series: str, product: str = "") -> str:
 
 def normalize_manufacturer(manufacturer: str) -> str:
     mapping = {
-        "パナソニック": "パナソニック",
-        "Panasonic": "パナソニック",
-        "ダイキン": "ダイキン",
-        "DAIKIN": "ダイキン",
+        "パナソニック": "パナソニック", "Panasonic": "パナソニック",
+        "ダイキン": "ダイキン", "DAIKIN": "ダイキン",
         "アイリスオーヤマ": "アイリスオーヤマ",
         "エレクトロラックス": "エレクトロラックス・ジャパン",
-        "ダイソン": "ダイソン",
-        "Dyson": "ダイソン",
-        "シャープ": "シャープ",
-        "SHARP": "シャープ",
-        "日立": "日立",
-        "東芝": "東芝",
-        "三菱": "三菱",
-        "富士通": "富士通",
-        "ソニー": "ソニー",
-        "SONY": "ソニー",
-        "ヤマダ": "ヤマダ",
+        "ダイソン": "ダイソン", "Dyson": "ダイソン",
+        "シャープ": "シャープ", "SHARP": "シャープ",
+        "日立": "日立", "東芝": "東芝", "三菱": "三菱",
+        "富士通": "富士通", "ソニー": "ソニー", "SONY": "ソニー",
+        "パイオニア": "パイオニア", "PIONEER": "パイオニア",
+        "ヤマダ": "ヤマダ", "山善": "山善",
     }
     for k, v in mapping.items():
         if k.lower() in (manufacturer or "").lower():
@@ -337,55 +267,122 @@ def normalize_manufacturer(manufacturer: str) -> str:
 def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     """抽出結果をフォーム辞書にマッピングして返す。"""
     mapping = {
-        "plan":               "warranty_plan",
-        "warranty_start_date":"warranty_start_date",
-        "warranty_end_date":  "warranty_end_date",
-        "customer_code":      "customer_code",
-        "customer_name":      "customer_name",
-        "phone_number":       "phone_number",
-        "address":            "address",
-        "prefecture":         "prefecture",
-        "wrt_no":             "wrt_no",
-        "product_price":      "product_price",
-        "manufacturer":       "manufacturer",
-        "model_number":       "model_number",
-        "series":             "series",
-        "store_name":         "store_name",
-        "genre":              "genre",
-        "category":           "category",
+        "plan": "warranty_plan", "warranty_start_date": "warranty_start_date",
+        "warranty_end_date": "warranty_end_date", "customer_code": "customer_code",
+        "customer_name": "customer_name", "phone_number": "phone_number",
+        "address": "address", "prefecture": "prefecture",
+        "wrt_no": "wrt_no", "product_price": "product_price",
+        "manufacturer": "manufacturer", "model_number": "model_number",
+        "series": "series", "store_name": "store_name",
+        "genre": "genre", "category": "category",
     }
     form = current_form.copy()
     for src, dst in mapping.items():
         if src in extracted and extracted[src]:
             form[dst] = extracted[src]
-
-    # 製品正規化
     raw_series = extracted.get("series", "")
     if raw_series:
         form["product"] = normalize_product(raw_series, "")
-
-    # メーカー正規化
     raw_mfr = extracted.get("manufacturer", "")
     if raw_mfr:
         form["manufacturer"] = normalize_manufacturer(raw_mfr)
-
-    # 家電/住設 自動判定
     genre = extracted.get("genre", "")
     if genre:
-        if any(x in genre for x in ["住設", "給湯", "温水", "ビルトイン"]):
-            form["appliance_type"] = "住設"
-        else:
-            form["appliance_type"] = "家電"
-
+        form["appliance_type"] = "住設" if any(
+            x in genre for x in ["住設", "給湯", "温水", "ビルトイン"]
+        ) else "家電"
     return form
 
 
 # ============================================================
-# 3. 修理形態判定（既存ロジック・削除しない）
+# Layer 1: 製品名エイリアス正規化
 # ============================================================
-VISIT_REPAIR_PRODUCTS = {
-    "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "食器洗い乾燥機"
-}
+def normalize_product_from_alias(form: dict) -> dict:
+    """
+    master_product_alias.csv を使って製品名を正規化する。
+    照合対象: series + product + model_number を連結したテキスト。
+    ヒットしない場合は既存の normalize_product() でフォールバック。
+    """
+    df = load_alias_csv()
+    series  = (form.get("series") or "").strip()
+    product = (form.get("product") or "").strip()
+    model   = (form.get("model_number") or "").strip()
+    target  = " ".join([series, product, model]).strip()
+
+    if not df.empty:
+        for _, row in df.iterrows():
+            kw = (row.get("keyword") or "").strip()
+            if not kw:
+                continue
+            if kw.lower() in target.lower():
+                return {
+                    "matched": True,
+                    "normalized_product": (row.get("normalized_product") or "").strip(),
+                    "product_group":      (row.get("product_group") or "").strip(),
+                    "keyword":            kw,
+                    "priority":           int(row.get("priority", 999)),
+                    "csv_name":           "master_product_alias.csv",
+                    "notes":              (row.get("notes") or "").strip(),
+                }
+
+    # フォールバック: 既存ロジック
+    fallback = normalize_product(series, product)
+    return {
+        "matched":            False,
+        "normalized_product": fallback,
+        "product_group":      "",
+        "keyword":            "",
+        "priority":           None,
+        "csv_name":           "",
+        "notes":              "",
+    }
+
+
+# ============================================================
+# Layer 2: 修理形態判定
+# ============================================================
+def determine_repair_type_from_rules(form: dict) -> dict:
+    """
+    master_repair_type_rules.csv を使って修理形態を判定する。
+    空カラム = ワイルドカード。全非空条件の AND 一致。
+    """
+    df = load_repair_type_rules()
+    product      = (form.get("product") or "").strip()
+    manufacturer = (form.get("manufacturer") or "").strip()
+    model        = (form.get("model_number") or "").strip()
+    condition    = (form.get("extra_condition") or "").strip()
+
+    if not df.empty:
+        for _, row in df.iterrows():
+            pk  = (row.get("product_keyword") or "").strip()
+            mk  = (row.get("manufacturer_keyword") or "").strip()
+            mok = (row.get("model_keyword") or "").strip()
+            ck  = (row.get("condition_keyword") or "").strip()
+
+            if not _kw_match(pk, product):      continue
+            if not _kw_match(mk, manufacturer): continue
+            if not _kw_match(mok, model):       continue
+            if not _kw_match(ck, condition):    continue
+
+            matched_kw = pk or mk or mok or ck or "(条件なし)"
+            return {
+                "matched":           True,
+                "repair_type":       (row.get("repair_type") or "要確認").strip(),
+                "needs_confirmation": str(row.get("needs_confirmation", "0")).strip() == "1",
+                "keyword":           matched_kw,
+                "priority":          int(row.get("priority", 999)),
+                "csv_name":          "master_repair_type_rules.csv",
+                "notes":             (row.get("notes") or "").strip(),
+            }
+
+    return {
+        "matched": False, "repair_type": "", "needs_confirmation": False,
+        "keyword": "", "priority": None, "csv_name": "", "notes": "",
+    }
+
+
+# ── 既存ロジック（フォールバック・削除しない） ──
+VISIT_REPAIR_PRODUCTS  = {"洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "食器洗い乾燥機"}
 CARRY_IN_REPAIR_PRODUCTS = {
     "ドライヤー", "パソコン", "プリンター", "カーナビ", "ゲーム機",
     "掃除機", "炊飯器", "トースター", "タブレット"
@@ -395,114 +392,210 @@ CONFIRM_REPAIR_PRODUCTS = {"テレビ", "電子レンジ"}
 
 def determine_repair_type(form: dict) -> str:
     product = form.get("product", "")
-    if product in VISIT_REPAIR_PRODUCTS:
-        return "出張修理"
-    if product in CARRY_IN_REPAIR_PRODUCTS:
-        return "持込修理"
-    if product in CONFIRM_REPAIR_PRODUCTS:
-        return "要確認"
-    if form.get("appliance_type") == "住設":
-        return "出張修理"
+    if product in VISIT_REPAIR_PRODUCTS:   return "出張修理"
+    if product in CARRY_IN_REPAIR_PRODUCTS: return "持込修理"
+    if product in CONFIRM_REPAIR_PRODUCTS:  return "要確認"
+    if form.get("appliance_type") == "住設": return "出張修理"
     return "要確認"
 
 
 # ============================================================
-# 4. 概算費用判定（既存ロジック・削除しない）
+# Layer 3: 概算費用判定
 # ============================================================
+def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
+    """
+    master_cost_rules.csv を使って概算費用を判定する。
+    - repair_type 列が空 = ワイルドカード
+    - manufacturer_group で MANUFACTURER_GROUPS との照合を行う
+    - condition_keyword は extra_condition に対して照合する
+    """
+    df = load_cost_rules()
+    product      = (form.get("product") or "").strip()
+    manufacturer = (form.get("manufacturer") or "").strip()
+    condition    = (form.get("extra_condition") or "").strip()
+    norm_mfr     = normalize_manufacturer(manufacturer)
+
+    if not df.empty:
+        for _, row in df.iterrows():
+            pk  = (row.get("product_keyword") or "").strip()
+            mk  = (row.get("manufacturer_keyword") or "").strip()
+            mg  = (row.get("manufacturer_group") or "").strip()
+            ck  = (row.get("condition_keyword") or "").strip()
+            rt  = (row.get("repair_type") or "").strip()
+
+            # repair_type は完全一致（空=ワイルドカード）
+            if rt and rt != repair_type:
+                continue
+            if not _kw_match(pk, product):                   continue
+            if not _kw_match(mk, manufacturer):              continue
+            if not _kw_match(ck, condition):                 continue
+            # manufacturer_group チェック
+            if mg:
+                group_set = MANUFACTURER_GROUPS.get(mg)
+                if group_set is not None and norm_mfr not in group_set:
+                    continue  # グループに含まれないメーカー
+                # 未定義グループは無視（ワイルドカード扱い）
+
+            matched_kw = pk or mk or mg or ck or rt or "(汎用)"
+            return {
+                "matched":           True,
+                "cost_estimate":     (row.get("cost_estimate") or "").strip(),
+                "can_announce_cost": (row.get("can_announce_cost") or "可").strip() != "不可",
+                "needs_escalation":  str(row.get("needs_escalation", "0")).strip() == "1",
+                "keyword":           matched_kw,
+                "priority":          int(row.get("priority", 999)),
+                "csv_name":          "master_cost_rules.csv",
+                "notes":             (row.get("notes") or "").strip(),
+            }
+
+    return {
+        "matched": False, "cost_estimate": "", "can_announce_cost": True,
+        "needs_escalation": False, "keyword": "", "priority": None,
+        "csv_name": "", "notes": "",
+    }
+
+
+# ── 既存ロジック（フォールバック・削除しない） ──
 def determine_cost_estimate(form: dict, repair_type: str) -> str:
-    product = form.get("product", "")
+    product      = form.get("product", "")
     manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
-
-    if repair_type == "要確認":
-        return "要確認"
-
+    if repair_type == "要確認":       return "要確認"
     if manufacturer == "ダイキン" and "エアコン" in product:
         if form.get("appliance_type") == "住設" or "業務用" in form.get("extra_condition", ""):
             return "15,000円～22,000円前後"
         return "7,000円～16,000円前後"
-
     if manufacturer == "アイリスオーヤマ" and repair_type == "出張修理":
         return "15,000円前後"
-
     if manufacturer == "エレクトロラックス・ジャパン":
         if product in {"洗濯機", "食器洗い乾燥機"} or "レンジフード" in product:
             return "45,000円前後"
         if "IH" in product or "クッキングヒーター" in product:
             return "25,000円～30,000円前後"
-
-    if manufacturer == "ダイソン" and product == "掃除機":
-        return "10,000円前後"
-
+    if manufacturer == "ダイソン" and product == "掃除機": return "10,000円前後"
     if product == "パソコン":
         domestic = {"パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー"}
-        if manufacturer in domestic:
-            return "2,000円～9,000円"
-        return "12,000円前後"
-
-    if repair_type == "出張修理":
-        return "5,000円～7,000円前後"
-    if repair_type == "持込修理":
-        return "2,000円～5,000円前後"
-
+        return "2,000円～9,000円" if manufacturer in domestic else "12,000円前後"
+    if repair_type == "出張修理": return "5,000円～7,000円前後"
+    if repair_type == "持込修理": return "2,000円～5,000円前後"
     return "要確認"
 
 
 # ============================================================
-# 5. スクリプトルート判定（既存ロジック・削除しない）
+# Layer 4: 修理拠点候補判定
 # ============================================================
-def determine_script_route(form: dict, repair_type: str) -> dict:
-    case_type = form.get("case_type", "")
-    appliance_type = form.get("appliance_type", "")
-    result = {
-        "sheet_name": "",
-        "part": "",
-        "price_guidance_allowed": True,
-        "notes": [],
-        "escalation_needed": False,
-        "reason": "",
+def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
+    """
+    master_vendor_rules.csv を使って修理拠点候補を判定する。
+    - case_type / prefecture は完全一致（空=ワイルドカード）
+    - area_group は AREA_GROUPS マッピングで都道府県が含まれるか判定
+    - その他フィールドは keyword in target の包含一致
+    """
+    df = load_vendor_rules()
+    case_type    = (form.get("case_type") or "").strip()
+    prefecture   = (form.get("prefecture") or "").strip()
+    manufacturer = (form.get("manufacturer") or "").strip()
+    product      = (form.get("product") or "").strip()
+    store        = (form.get("store_name") or "").strip()
+
+    if not df.empty:
+        for _, row in df.iterrows():
+            ct   = (row.get("case_type") or "").strip()
+            pref = (row.get("prefecture") or "").strip()
+            ag   = (row.get("area_group") or "").strip()
+            mk   = (row.get("manufacturer_keyword") or "").strip()
+            pk   = (row.get("product_keyword") or "").strip()
+            sk   = (row.get("store_keyword") or "").strip()
+            rt   = (row.get("repair_type") or "").strip()
+
+            # case_type: 完全一致（空=ワイルドカード）
+            if ct and ct.lower() != case_type.lower():         continue
+            # prefecture: 完全一致（空=ワイルドカード）
+            if pref and pref != prefecture:                     continue
+            # area_group: AREA_GROUPS マッピング（空=ワイルドカード）
+            if ag:
+                group_set = AREA_GROUPS.get(ag)
+                if group_set is None or prefecture not in group_set:
+                    continue
+            # keyword 包含一致
+            if not _kw_match(mk, manufacturer):                continue
+            if not _kw_match(pk, product):                     continue
+            if not _kw_match(sk, store):                       continue
+            # repair_type: 完全一致（空=ワイルドカード）
+            if rt and rt != repair_type:                       continue
+
+            return {
+                "matched":          True,
+                "vendor_name":      (row.get("vendor_name") or "担当エスカ（要確認）").strip(),
+                "reason":           (row.get("reason") or "").strip(),
+                "needs_escalation": str(row.get("needs_escalation", "0")).strip() == "1",
+                "keyword":          ct or pref or ag or mk or pk,
+                "priority":         int(row.get("priority", 999)),
+                "csv_name":         "master_vendor_rules.csv",
+                "notes":            (row.get("notes") or "").strip(),
+            }
+
+    return {
+        "matched": False, "vendor_name": "担当エスカ（要確認）",
+        "reason": "", "needs_escalation": True, "keyword": "",
+        "priority": None, "csv_name": "", "notes": "",
     }
 
+
+# ── 既存ロジック（フォールバック・削除しない） ──
+def determine_vendor_candidate(form: dict) -> str:
+    prefecture   = form.get("prefecture", "")
+    product      = form.get("product", "")
+    case_type    = form.get("case_type", "")
+    manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
+    extra        = form.get("extra_condition", "")
+    if case_type in ["ビックカメラ案件", "ソフマップ案件"]: return "ソフマップ修理センター"
+    if "ヤマダオリジナル" in extra:                         return "㈱ヤマダデンキ"
+    if prefecture == "沖縄県":                              return "宗建リノベーション"
+    if prefecture in {"福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県"}:
+        return "CER候補（担当確認）"
+    if prefecture == "滋賀県" and product == "洗濯機":     return "ユナイトサービス㈱"
+    if prefecture in {"東京都","神奈川県"} and product == "洗濯機": return "WRT修理センター"
+    return "担当エスカ（要確認）"
+
+
+# ============================================================
+# スクリプトルート判定（既存ロジック・削除しない）
+# ============================================================
+def determine_script_route(form: dict, repair_type: str) -> dict:
+    case_type      = form.get("case_type", "")
+    appliance_type = form.get("appliance_type", "")
+    result = {
+        "sheet_name": "", "part": "", "price_guidance_allowed": True,
+        "notes": [], "escalation_needed": False, "reason": "",
+    }
     if case_type in ["ビックカメラ案件", "ソフマップ案件"]:
-        result["sheet_name"] = "⑩-1ビックカメラ・ソフマップ"
-        result["part"] = "案件別受付"
-        result["price_guidance_allowed"] = False
-        result["notes"].append("保証対象外時の概算費用・上限金額などの金額案内はしない")
-        result["reason"] = "ビックカメラ/ソフマップ案件のため金額案内不可"
+        result.update(sheet_name="⑩-1ビックカメラ・ソフマップ", part="案件別受付",
+                      price_guidance_allowed=False,
+                      notes=["保証対象外時の概算費用・上限金額などの金額案内はしない"],
+                      reason="ビックカメラ/ソフマップ案件のため金額案内不可")
         return result
-
     if case_type == "既築中古":
-        result["sheet_name"] = "住設【既築／中古のみ】"
-        result["part"] = "既築・中古住設受付"
-        result["reason"] = "既築中古案件"
+        result.update(sheet_name="住設【既築／中古のみ】", part="既築・中古住設受付",
+                      reason="既築中古案件")
         return result
-
     if appliance_type == "住設":
-        result["sheet_name"] = "住設【既築／中古のみ】"
-        result["part"] = "住設受付"
-        result["reason"] = "住設製品"
+        result.update(sheet_name="住設【既築／中古のみ】", part="住設受付", reason="住設製品")
         return result
-
     if appliance_type == "家電" and repair_type == "出張修理":
-        result["sheet_name"] = "家電出張・持込・新築住設"
-        result["part"] = "家電・出張修理"
-        result["reason"] = "家電＋出張修理"
+        result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
+                      reason="家電＋出張修理")
         return result
-
     if appliance_type == "家電" and repair_type == "持込修理":
-        result["sheet_name"] = "家電出張・持込・新築住設"
-        result["part"] = "家電・持込修理"
-        result["reason"] = "家電＋持込修理"
+        result.update(sheet_name="家電出張・持込・新築住設", part="家電・持込修理",
+                      reason="家電＋持込修理")
         return result
-
-    result["sheet_name"] = "要確認"
-    result["part"] = "SV/担当確認"
-    result["escalation_needed"] = True
-    result["reason"] = "家電/住設区分または修理形態が未確定"
+    result.update(sheet_name="要確認", part="SV/担当確認",
+                  escalation_needed=True, reason="家電/住設区分または修理形態が未確定")
     return result
 
 
 # ============================================================
-# 6. データ消去同意判定（既存ロジック・削除しない）
+# データ消去同意判定（既存ロジック・削除しない）
 # ============================================================
 DATA_ERASE_PRODUCTS = {
     "パソコン", "タブレット", "プリンター", "カーナビ",
@@ -516,7 +609,7 @@ def determine_data_erase_consent(form: dict) -> bool:
 
 
 # ============================================================
-# 7. 確認項目ビルダー
+# 確認項目ビルダー
 # ============================================================
 def build_required_questions(form: dict, repair_type: str, needs_data_erase: bool) -> list:
     common = ["症状の詳細", "発生時期", "発生頻度"]
@@ -528,70 +621,35 @@ def build_required_questions(form: dict, repair_type: str, needs_data_erase: boo
             qs.append("データ消去同意（必須）")
     else:
         qs = ["製品詳細", "型番", "メーカー", "販売店", "保証内容", "SV/担当確認"]
-
     if not form.get("model_number"):
         qs.insert(0, "型番の確認（未入力）")
     if not form.get("manufacturer"):
         qs.insert(0, "メーカーの確認（未入力）")
-
     return qs
 
 
 # ============================================================
-# 8. 概算案内補助文
+# 概算案内補助文
 # ============================================================
 def build_customer_cost_guidance(repair_type: str, cost_estimate: str,
                                   price_guidance_allowed: bool) -> str:
     if not price_guidance_allowed:
-        return (
-            "【金額案内不可】\n"
-            "こちらの案件は金額案内を行わず、正式スクリプトおよび担当確認に従って案内してください。"
-        )
+        return ("【金額案内不可】\n"
+                "こちらの案件は金額案内を行わず、正式スクリプトおよび担当確認に従って案内してください。")
     if repair_type == "出張修理":
-        return (
-            f"保証対象外の場合、訪問費用および故障検証費用として、概算で {cost_estimate} かかる可能性がございます。\n"
-            "実際の金額は、メーカー・製品・設置状況・診断内容・地域により前後いたします。"
-        )
+        return (f"保証対象外の場合、訪問費用および故障検証費用として、概算で {cost_estimate} かかる可能性がございます。\n"
+                "実際の金額は、メーカー・製品・設置状況・診断内容・地域により前後いたします。")
     if repair_type == "持込修理":
-        return (
-            f"保証対象外の場合、故障検証費用・返送費用等として、概算で {cost_estimate} かかる可能性がございます。\n"
-            "実際の金額は、メーカー・製品・診断内容により前後いたします。"
-        )
-    return (
-        "恐れ入りますが、こちらの商品は確認が必要な内容となります。\n"
-        "修理受付可否および概算費用を確認のうえ、ご案内いたします。"
-    )
+        return (f"保証対象外の場合、故障検証費用・返送費用等として、概算で {cost_estimate} かかる可能性がございます。\n"
+                "実際の金額は、メーカー・製品・診断内容により前後いたします。")
+    return ("恐れ入りますが、こちらの商品は確認が必要な内容となります。\n"
+            "修理受付可否および概算費用を確認のうえ、ご案内いたします。")
 
 
 # ============================================================
-# 9. 修理拠点候補
+# 履歴テンプレ
 # ============================================================
-def determine_vendor_candidate(form: dict) -> str:
-    prefecture = form.get("prefecture", "")
-    product = form.get("product", "")
-    case_type = form.get("case_type", "")
-    manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
-    extra = form.get("extra_condition", "")
-
-    if case_type in ["ビックカメラ案件", "ソフマップ案件"]:
-        return "ソフマップ修理センター"
-    if "ヤマダオリジナル" in extra:
-        return "㈱ヤマダデンキ"
-    if prefecture == "沖縄県":
-        return "宗建リノベーション"
-    if prefecture in {"福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県"}:
-        return "CER候補（担当確認）"
-    if prefecture == "滋賀県" and product == "洗濯機":
-        return "ユナイトサービス㈱"
-    if prefecture in {"東京都", "神奈川県"} and product == "洗濯機":
-        return "WRT修理センター"
-    return "担当エスカ（要確認）"
-
-
-# ============================================================
-# 10. 履歴テンプレ
-# ============================================================
-def build_history_template(form: dict, repair_type: str, result: dict,
+def build_history_template(form: dict, repair_type: str, script_result: dict,
                             cost_estimate: str, vendor: str) -> str:
     lines = [
         "■対応履歴",
@@ -611,9 +669,9 @@ def build_history_template(form: dict, repair_type: str, result: dict,
         f"家電/住設　 : {form.get('appliance_type', '未入力')}",
         f"修理形態　　: {repair_type}",
         f"保証外概算　: {cost_estimate}",
-        f"参照シート　: {result.get('sheet_name', '')}",
-        f"該当パート　: {result.get('part', '')}",
-        f"注意事項　　: {' / '.join(result.get('notes', [])) or 'なし'}",
+        f"参照シート　: {script_result.get('sheet_name', '')}",
+        f"該当パート　: {script_result.get('part', '')}",
+        f"注意事項　　: {' / '.join(script_result.get('notes', [])) or 'なし'}",
         f"修理拠点候補: {vendor}",
         f"次対応　　　: ",
     ]
@@ -621,19 +679,168 @@ def build_history_template(form: dict, repair_type: str, result: dict,
 
 
 # ============================================================
+# Legacy: 旧 master_products.csv 判定（後方互換・主判定には使わない）
+# ============================================================
+def determine_repair_info_from_master(form: dict) -> dict:
+    """legacy: Phase2-1 の旧判定関数。run_decision では使わない。"""
+    _not_matched = {
+        "matched": False, "source": "既存ロジック判定",
+        "keyword": "", "priority": None, "match_target": "",
+        "product": "", "appliance_type": "", "repair_type": "",
+        "cost_estimate": "", "script_result": None,
+        "data_erase_required": None, "notes": "", "_row": None,
+    }
+    df = load_master_products()
+    if df.empty:
+        return _not_matched
+
+    model_number   = (form.get("model_number") or "").strip()
+    series_text    = (form.get("series") or "").strip()
+    product_text   = (form.get("product") or "").strip()
+    norm_product   = normalize_product(series_text, product_text)
+    manufacturer   = (form.get("manufacturer") or "").strip()
+    appliance_type = (form.get("appliance_type") or "").strip()
+    category       = (form.get("category") or "").strip()
+    genre          = (form.get("genre") or "").strip()
+    extra          = (form.get("extra_condition") or "").strip()
+    any_text = " ".join([model_number, series_text, product_text, norm_product,
+                         manufacturer, appliance_type, category, genre, extra])
+    matched_row = None
+    for _, row in df.iterrows():
+        keyword      = (row.get("keyword") or "").strip()
+        match_target = (row.get("match_target") or "").strip().lower()
+        if not keyword:
+            continue
+        target = {
+            "model": model_number, "series": series_text,
+            "product": norm_product + " " + product_text,
+            "manufacturer": manufacturer,
+        }.get(match_target, any_text)
+        if keyword.lower() in target.lower():
+            matched_row = row
+            break
+    if matched_row is None:
+        return _not_matched
+    can_cost_raw    = (matched_row.get("can_announce_cost") or "").strip()
+    erase_raw       = (matched_row.get("data_erase_required") or "").strip()
+    notes_str       = (matched_row.get("notes") or "").strip()
+    script_result   = {
+        "sheet_name": (matched_row.get("script_sheet") or "").strip(),
+        "part":       (matched_row.get("script_part") or "").strip(),
+        "price_guidance_allowed": can_cost_raw != "不可",
+        "notes":      [notes_str] if notes_str else [],
+        "escalation_needed": False,
+        "reason": f"legacy CSV一致: {matched_row.get('keyword','')}",
+    }
+    return {
+        "matched": True, "source": "legacy CSVマスタ一致",
+        "keyword": matched_row.get("keyword", ""),
+        "priority": int(matched_row.get("priority", 0)),
+        "match_target": matched_row.get("match_target", ""),
+        "product": (matched_row.get("normalized_product") or "").strip(),
+        "appliance_type": (matched_row.get("category") or "").strip(),
+        "repair_type": (matched_row.get("repair_type") or "").strip(),
+        "cost_estimate": (matched_row.get("cost_estimate") or "").strip(),
+        "script_result": script_result,
+        "data_erase_required": erase_raw == "必要",
+        "notes": notes_str, "_row": matched_row.to_dict(),
+    }
+
+
+# ============================================================
+# 4層パイプライン統合判定
+# ============================================================
+def run_decision(form: dict) -> dict:
+    """
+    判定順:
+      1. normalize_product_from_alias     (製品名正規化)
+      2. determine_repair_type_from_rules (修理形態)
+      3. determine_cost_from_rules        (概算費用)
+      4. determine_vendor_from_rules      (修理拠点候補)
+      + determine_script_route            (スクリプト誘導・既存ロジック)
+      + determine_data_erase_consent      (データ消去同意)
+    各層でCSVにヒットしなければ既存ロジックにフォールバック。
+    """
+    # ── 準備: メーカー正規化を working_form に適用 ──
+    working_form = form.copy()
+    working_form["manufacturer"] = normalize_manufacturer(form.get("manufacturer", ""))
+
+    # ── Layer 1: 製品名エイリアス ──
+    alias_result = normalize_product_from_alias(working_form)
+    if alias_result["normalized_product"]:
+        working_form["product"] = alias_result["normalized_product"]
+
+    # ── Layer 2: 修理形態 ──
+    repair_result = determine_repair_type_from_rules(working_form)
+    if repair_result["matched"]:
+        repair_type = repair_result["repair_type"]
+        repair_source = "CSVマスタ"
+    else:
+        repair_type   = determine_repair_type(working_form)
+        repair_source = "既存ロジック"
+
+    # ── Layer 3: 概算費用（要確認なら短絡） ──
+    if repair_type == "要確認":
+        cost_result = {
+            "matched": False, "cost_estimate": "要確認",
+            "can_announce_cost": True, "needs_escalation": False,
+            "keyword": "", "priority": None, "csv_name": "",
+            "notes": repair_result.get("notes", ""),
+        }
+        cost_source = "要確認のため短絡"
+    else:
+        cost_result = determine_cost_from_rules(working_form, repair_type)
+        if cost_result["matched"]:
+            cost_source = "CSVマスタ"
+        else:
+            cost_source = "既存ロジック"
+    cost_estimate = cost_result["cost_estimate"] or determine_cost_estimate(working_form, repair_type)
+
+    # ── スクリプトルート（既存ロジック） ──
+    script_result = determine_script_route(working_form, repair_type)
+
+    # ── データ消去同意 ──
+    needs_data_erase = determine_data_erase_consent(working_form)
+
+    # ── Layer 4: 修理拠点候補 ──
+    vendor_result = determine_vendor_from_rules(working_form, repair_type)
+    if vendor_result["matched"]:
+        vendor = vendor_result["vendor_name"]
+    else:
+        vendor = determine_vendor_candidate(working_form)
+
+    return {
+        # ── 主要判定結果 ──
+        "repair_type":        repair_type,
+        "cost_estimate":      cost_estimate,
+        "script_result":      script_result,
+        "needs_data_erase":   needs_data_erase,
+        "vendor":             vendor,
+        "normalized_product": working_form.get("product", ""),
+        # ── 各層の判定詳細 ──
+        "alias_result":       alias_result,
+        "repair_result":      repair_result,
+        "repair_source":      repair_source,
+        "cost_result":        cost_result,
+        "cost_source":        cost_source,
+        "vendor_result":      vendor_result,
+        # ── working_form（デバッグ用） ──
+        "working_form":       working_form,
+    }
+
+
+# ============================================================
 # UI ヘルパー
 # ============================================================
-def label_badge(label: str, value: str, color: str = "#1f77b4") -> str:
-    return (
-        f'<span style="background:{color};color:white;padding:2px 8px;'
-        f'border-radius:4px;font-size:0.85em;margin-right:4px;">{label}</span>'
-        f'<strong>{value}</strong>'
-    )
+def _src_badge(source: str) -> str:
+    """判定ソースの小バッジ HTML を返す。"""
+    color = "#16a085" if source == "CSVマスタ" else "#7f8c8d"
+    return (f'<span style="background:{color};color:white;padding:1px 6px;'
+            f'border-radius:3px;font-size:0.75em;margin-left:4px;">{source}</span>')
 
 
 def empty_form() -> dict:
     form = {k: "" for k in FIELD_LABELS}
-    # CSVマスタ判定で使う追加フィールドも初期化
     form["genre"] = ""
     form["category"] = ""
     return form
@@ -649,33 +856,6 @@ def init_session():
 
 
 # ============================================================
-# 判定ロジック統合（CSVマスタ優先 → 既存フォールバック）
-# ============================================================
-def run_decision(form: dict) -> tuple:
-    """
-    フォーム内容から判定を実行する。
-    CSVマスタにヒットすればその結果を、非ヒットなら既存ロジックを使う。
-
-    Returns:
-        repair_type, cost_estimate, script_result, needs_data_erase, master_info
-    """
-    master_info = determine_repair_info_from_master(form)
-
-    if master_info["matched"]:
-        repair_type      = master_info["repair_type"]
-        cost_estimate    = master_info["cost_estimate"]
-        script_result    = master_info["script_result"]
-        needs_data_erase = master_info["data_erase_required"]
-    else:
-        repair_type      = determine_repair_type(form)
-        cost_estimate    = determine_cost_estimate(form, repair_type)
-        script_result    = determine_script_route(form, repair_type)
-        needs_data_erase = determine_data_erase_consent(form)
-
-    return repair_type, cost_estimate, script_result, needs_data_erase, master_info
-
-
-# ============================================================
 # タブ1: 通話中判定
 # ============================================================
 def render_tab_call():
@@ -685,7 +865,6 @@ def render_tab_call():
     with col_left:
         st.subheader("📋 コピー情報取り込み")
 
-        # ── クリップボード直接読み取りボタン ──
         if _PYPERCLIP_AVAILABLE:
             st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
             if st.button("📋 クリップボードから直接抽出", use_container_width=True):
@@ -699,37 +878,31 @@ def render_tab_call():
                         st.session_state["extracted"] = extracted
                         if extracted:
                             st.session_state["form"] = apply_extracted_fields_to_form(
-                                extracted, st.session_state["form"]
-                            )
+                                extracted, st.session_state["form"])
                         st.rerun()
                 except Exception as e:
-                    st.warning(f"クリップボード読み取りに失敗しました（{e}）。手動貼り付け欄を使ってください。")
+                    st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
         else:
             st.info("pyperclip が使えません。手動貼り付け欄を使ってください。")
 
-        # ── 手動貼り付け欄（必ず残す） ──
         pasted = st.text_area(
             "保証画面などのテキストを貼り付け",
             value=st.session_state.pasted_text,
-            height=200,
+            height=190,
             key="paste_area",
             placeholder="ここにコピーしたテキストを貼り付けてください...",
         )
         st.session_state.pasted_text = pasted
 
-        # ── 抽出ボタン（必ず残す） ──
         if st.button("🔍 抽出する", use_container_width=True, type="primary"):
             if pasted.strip():
-                extracted = extract_fields_from_pasted_text(pasted)
-                st.session_state.extracted = extracted
+                st.session_state.extracted = extract_fields_from_pasted_text(pasted)
             else:
                 st.warning("テキストを貼り付けてください。")
 
-        # 抽出結果表示
         if st.session_state.extracted:
             st.markdown("**抽出結果**")
             ext = st.session_state.extracted
-            rows = []
             label_map = {
                 "plan": "保証プラン", "warranty_start_date": "保証開始日",
                 "warranty_end_date": "保証終了日", "customer_code": "お客様コード",
@@ -739,15 +912,11 @@ def render_tab_call():
                 "manufacturer": "メーカー", "model_number": "型番",
                 "series": "シリーズ", "store_name": "販売店",
             }
-            for k, lbl in label_map.items():
-                val = ext.get(k, "")
-                rows.append(f"- **{lbl}**: {val if val else '─'}")
+            rows = [f"- **{lbl}**: {ext.get(k,'') or '─'}" for k, lbl in label_map.items()]
             st.markdown("\n".join(rows))
-
             if st.button("📥 フォームへ反映", use_container_width=True):
                 st.session_state.form = apply_extracted_fields_to_form(
-                    st.session_state.extracted, st.session_state.form
-                )
+                    st.session_state.extracted, st.session_state.form)
                 st.success("フォームへ反映しました。")
                 st.rerun()
 
@@ -756,75 +925,81 @@ def render_tab_call():
         st.subheader("📝 受付情報フォーム")
         form = st.session_state.form
 
-        call_type_opts = ["", "新規入電", "折り返し", "再入電", "その他"]
-        case_type_opts = ["", "通常", "ビックカメラ案件", "ソフマップ案件",
-                          "既築中古", "ヤマダオリジナル", "その他"]
+        call_type_opts    = ["", "新規入電", "折り返し", "再入電", "その他"]
+        case_type_opts    = ["", "通常", "ビックカメラ案件", "ソフマップ案件",
+                             "既築中古", "ヤマダオリジナル", "その他"]
         appliance_type_opts = ["", "家電", "住設"]
-
-        form["call_type"] = st.selectbox("入電種別", call_type_opts,
-            index=call_type_opts.index(form.get("call_type", "")) if form.get("call_type") in call_type_opts else 0)
-        form["case_type"] = st.selectbox("案件区分", case_type_opts,
-            index=case_type_opts.index(form.get("case_type", "")) if form.get("case_type") in case_type_opts else 0)
-        form["appliance_type"] = st.selectbox("家電/住設", appliance_type_opts,
-            index=appliance_type_opts.index(form.get("appliance_type", "")) if form.get("appliance_type") in appliance_type_opts else 0)
-
         pref_opts = [""] + PREFECTURES
-        form["prefecture"] = st.selectbox("都道府県", pref_opts,
-            index=pref_opts.index(form.get("prefecture", "")) if form.get("prefecture") in pref_opts else 0)
 
-        form["address"]           = st.text_input("お客様住所",         form.get("address", ""))
-        form["product"]           = st.text_input("製品",               form.get("product", ""), placeholder="例: 洗濯機")
-        form["series"]            = st.text_input("シリーズ",           form.get("series", ""))
-        form["manufacturer"]      = st.text_input("メーカー",           form.get("manufacturer", ""))
-        form["model_number"]      = st.text_input("型番",               form.get("model_number", ""))
-        form["product_price"]     = st.text_input("商品価格",           form.get("product_price", ""))
-        form["warranty_plan"]     = st.text_input("保証プラン",         form.get("warranty_plan", ""))
-        form["warranty_start_date"] = st.text_input("保証開始日",       form.get("warranty_start_date", ""))
-        form["warranty_end_date"]   = st.text_input("保証終了日",       form.get("warranty_end_date", ""))
-        form["store_name"]        = st.text_input("販売店",             form.get("store_name", ""))
-        form["wrt_no"]            = st.text_input("WRT-NO",             form.get("wrt_no", ""))
-        form["customer_code"]     = st.text_input("お客様コード",       form.get("customer_code", ""))
-        form["customer_name"]     = st.text_input("お客様名",           form.get("customer_name", ""))
-        form["phone_number"]      = st.text_input("電話番号",           form.get("phone_number", ""))
-        form["symptom"]           = st.text_area("症状",                form.get("symptom", ""), height=60)
-        form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period", ""))
-        form["install_type"]      = st.text_input("設置形態",           form.get("install_type", ""))
-        form["extra_condition"]   = st.text_input("補足条件",           form.get("extra_condition", ""))
-
+        form["call_type"]     = st.selectbox("入電種別", call_type_opts,
+            index=call_type_opts.index(form.get("call_type","")) if form.get("call_type") in call_type_opts else 0)
+        form["case_type"]     = st.selectbox("案件区分", case_type_opts,
+            index=case_type_opts.index(form.get("case_type","")) if form.get("case_type") in case_type_opts else 0)
+        form["appliance_type"]= st.selectbox("家電/住設", appliance_type_opts,
+            index=appliance_type_opts.index(form.get("appliance_type","")) if form.get("appliance_type") in appliance_type_opts else 0)
+        form["prefecture"]    = st.selectbox("都道府県", pref_opts,
+            index=pref_opts.index(form.get("prefecture","")) if form.get("prefecture") in pref_opts else 0)
+        form["address"]       = st.text_input("お客様住所",   form.get("address",""))
+        form["product"]       = st.text_input("製品",         form.get("product",""), placeholder="例: 洗濯機")
+        form["series"]        = st.text_input("シリーズ",     form.get("series",""))
+        form["manufacturer"]  = st.text_input("メーカー",     form.get("manufacturer",""))
+        form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
+        form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
+        form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
+        form["warranty_start_date"] = st.text_input("保証開始日", form.get("warranty_start_date",""))
+        form["warranty_end_date"]   = st.text_input("保証終了日", form.get("warranty_end_date",""))
+        form["store_name"]    = st.text_input("販売店",       form.get("store_name",""))
+        form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
+        form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
+        form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
+        form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
+        form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
+        form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
+        form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
+        form["extra_condition"]= st.text_input("補足条件",    form.get("extra_condition",""))
         st.session_state.form = form
+
+    # ── 判定実行（form確定後・right描画前に1回だけ）──
+    decision = run_decision(st.session_state.form)
+    repair_type      = decision["repair_type"]
+    cost_estimate    = decision["cost_estimate"]
+    script_result    = decision["script_result"]
+    needs_data_erase = decision["needs_data_erase"]
+    alias_result     = decision["alias_result"]
+    repair_result    = decision["repair_result"]
+    repair_source    = decision["repair_source"]
+    cost_result      = decision["cost_result"]
+    cost_source      = decision["cost_source"]
+    vendor           = decision["vendor"]
+    vendor_result    = decision["vendor_result"]
+    normalized_product = decision["normalized_product"]
+
+    guidance_text = build_customer_cost_guidance(
+        repair_type, cost_estimate, script_result["price_guidance_allowed"])
 
     # ─── 右カラム: 通話中判定結果 ───
     with col_right:
         st.subheader("⚡ 通話中判定結果")
-        form = st.session_state.form
 
-        # ★ CSVマスタ優先 → 既存ロジックフォールバック
-        repair_type, cost_estimate, script_result, needs_data_erase, master_info = run_decision(form)
+        # --- 正規化製品 ---
+        if normalized_product:
+            st.markdown(
+                f'<div style="background:#2c3e50;color:#ecf0f1;padding:6px 14px;'
+                f'border-radius:6px;font-size:1.0em;margin-bottom:6px;">'
+                f'📦 正規化製品: <b>{normalized_product}</b>'
+                + (_src_badge("CSVマスタ") if alias_result["matched"] else _src_badge("既存ロジック"))
+                + '</div>',
+                unsafe_allow_html=True,
+            )
 
-        req_questions = build_required_questions(form, repair_type, needs_data_erase)
-        guidance_text = build_customer_cost_guidance(
-            repair_type, cost_estimate, script_result["price_guidance_allowed"]
-        )
-
-        # --- 判定ソースバッジ ---
-        source_color = "#16a085" if master_info["matched"] else "#7f8c8d"
-        st.markdown(
-            f'<div style="background:{source_color};color:white;padding:4px 12px;'
-            f'border-radius:4px;font-size:0.85em;display:inline-block;margin-bottom:8px;">'
-            f'📊 {master_info["source"]}</div>',
-            unsafe_allow_html=True,
-        )
-
-        # --- スクリプト参照 (最重要) ---
+        # --- 参照スクリプト（最重要） ---
         st.markdown("##### 📖 参照スクリプト")
         sheet = script_result["sheet_name"] or "─"
         part  = script_result["part"] or "─"
         st.markdown(
-            f"""<div style="background:#1e3a5f;color:#fff;padding:12px 16px;
-            border-radius:8px;font-size:1.1em;line-height:2;">
-            <b>シート名:</b> {sheet}<br>
-            <b>該当パート:</b> {part}
-            </div>""",
+            f'<div style="background:#1e3a5f;color:#fff;padding:12px 16px;'
+            f'border-radius:8px;font-size:1.1em;line-height:2.0;">'
+            f'<b>シート名:</b> {sheet}<br><b>該当パート:</b> {part}</div>',
             unsafe_allow_html=True,
         )
         st.text_input("シート名コピー用", sheet, key="copy_sheet", label_visibility="collapsed")
@@ -833,13 +1008,21 @@ def render_tab_call():
 
         # --- 修理形態 ---
         repair_color = {"出張修理": "#2ecc71", "持込修理": "#3498db", "要確認": "#e67e22"}
-        st.markdown("##### 🔧 修理形態")
+        st.markdown(
+            f'##### 🔧 修理形態'
+            + (f'<span style="font-size:0.75em;color:#888;margin-left:8px;">({repair_source})</span>'
+               if True else ""),
+            unsafe_allow_html=True,
+        )
         st.markdown(
             f'<div style="background:{repair_color.get(repair_type,"#95a5a6")};'
             f'color:white;padding:10px 16px;border-radius:8px;font-size:1.3em;'
             f'font-weight:bold;text-align:center;">{repair_type}</div>',
             unsafe_allow_html=True,
         )
+        if repair_result.get("needs_confirmation"):
+            confirm_note = repair_result.get("notes") or "型番・詳細確認要"
+            st.warning(f"⚠️ 要確認理由: {confirm_note}")
 
         # --- 概算費用 ---
         st.markdown("##### 💴 保証対象外時の概算費用")
@@ -850,6 +1033,9 @@ def render_tab_call():
             f'{cost_estimate}</div>',
             unsafe_allow_html=True,
         )
+        if cost_result.get("needs_escalation"):
+            esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
+            st.warning(f"⚠️ コストエスカ注意: {esc_note}")
 
         # --- 金額案内可否 ---
         if not script_result["price_guidance_allowed"]:
@@ -861,7 +1047,7 @@ def render_tab_call():
         if needs_data_erase:
             st.warning("⚠️ データ消去同意が必要な製品です")
 
-        # --- エスカレーション ---
+        # --- スクリプトエスカレーション ---
         if script_result["escalation_needed"]:
             st.error("🔺 エスカレーション必要 — SV/担当確認")
 
@@ -870,61 +1056,78 @@ def render_tab_call():
         # --- 注意事項 ---
         st.markdown("##### 📌 注意事項")
         notes = script_result.get("notes", [])
-        if notes:
-            for n in notes:
-                st.markdown(f"- {n}")
-        else:
-            st.markdown("なし")
-        st.markdown(f"*判定根拠: {script_result.get('reason', '─')}*")
+        st.markdown("\n".join(f"- {n}" for n in notes) if notes else "なし")
 
         st.divider()
 
         # --- 次に確認する項目 ---
         st.markdown("##### ✅ 次に確認する項目")
+        req_questions = build_required_questions(
+            st.session_state.form, repair_type, needs_data_erase)
         for i, q in enumerate(req_questions, 1):
-            color = "#c0392b" if "必須" in q or "未入力" in q else "inherit"
-            st.markdown(
-                f'<span style="color:{color};">{i}. {q}</span>',
-                unsafe_allow_html=True,
-            )
+            color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
+            st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
+                        unsafe_allow_html=True)
 
         st.divider()
 
-        # --- 修理拠点判定 ---
+        # --- 修理拠点（終話後へ） ---
         st.markdown("##### 🏭 修理拠点判定")
         st.info("終話後処理タブで確定してください。")
 
-        # --- デバッグ情報 ---
-        with st.expander("判定デバッグ情報"):
-            st.markdown(f"**判定ソース:** {master_info['source']}")
-            st.markdown(f"**matched:** {master_info['matched']}")
-            if master_info["matched"]:
-                st.markdown(f"**matched keyword:** `{master_info['keyword']}`")
-                st.markdown(f"**priority:** {master_info['priority']}")
-                st.markdown(f"**match_target:** {master_info['match_target']}")
-                st.markdown("**CSV行の内容:**")
-                if master_info.get("_row"):
-                    st.json({k: str(v) for k, v in master_info["_row"].items()})
+        # ─── 判定デバッグ情報 ───
+        with st.expander("🔍 判定デバッグ情報（4層）"):
+            # Layer 1
+            st.markdown("**Layer 1 — 製品名エイリアス**")
+            if alias_result["matched"]:
+                st.markdown(f"- CSV: `{alias_result['csv_name']}`  priority={alias_result['priority']}")
+                st.markdown(f"- keyword: `{alias_result['keyword']}` → **{alias_result['normalized_product']}**")
             else:
-                st.info("CSVマスタ非ヒットのため既存ロジックを使用")
-                st.markdown(f"**repair_type (既存):** {repair_type}")
-                st.markdown(f"**cost_estimate (既存):** {cost_estimate}")
+                st.info("CSVにヒットなし → normalize_product() フォールバック")
+                st.markdown(f"- 結果: `{alias_result['normalized_product']}`")
+
+            st.markdown("**Layer 2 — 修理形態**")
+            if repair_result["matched"]:
+                st.markdown(f"- CSV: `{repair_result['csv_name']}`  priority={repair_result['priority']}")
+                st.markdown(f"- keyword: `{repair_result['keyword']}` → **{repair_result['repair_type']}**")
+                if repair_result["notes"]:
+                    st.markdown(f"- notes: {repair_result['notes']}")
+            else:
+                st.info("CSVにヒットなし → determine_repair_type() フォールバック")
+                st.markdown(f"- 結果: `{repair_type}`")
+
+            st.markdown("**Layer 3 — 概算費用**")
+            if repair_type == "要確認":
+                st.info("要確認のため短絡（概算費用ルールをスキップ）")
+            elif cost_result["matched"]:
+                st.markdown(f"- CSV: `{cost_result['csv_name']}`  priority={cost_result['priority']}")
+                st.markdown(f"- keyword: `{cost_result['keyword']}` → **{cost_result['cost_estimate']}**")
+                if cost_result["notes"]:
+                    st.markdown(f"- notes: {cost_result['notes']}")
+            else:
+                st.info("CSVにヒットなし → determine_cost_estimate() フォールバック")
+                st.markdown(f"- 結果: `{cost_estimate}`")
+
+            st.markdown("**Layer 4 — 修理拠点候補**")
+            if vendor_result["matched"]:
+                st.markdown(f"- CSV: `{vendor_result['csv_name']}`  priority={vendor_result['priority']}")
+                st.markdown(f"- keyword: `{vendor_result['keyword']}` → **{vendor_result['vendor_name']}**")
+                if vendor_result["notes"]:
+                    st.markdown(f"- notes: {vendor_result['notes']}")
+            else:
+                st.info("CSVにヒットなし → determine_vendor_candidate() フォールバック")
+                st.markdown(f"- 結果: `{vendor}`")
 
     # ─── 下部: 補助文 + 履歴テンプレ ───
     st.divider()
     col_a, col_b = st.columns(2)
-
     with col_a:
         st.markdown("##### 💬 お客様への概算案内補助文")
         st.caption("※ 正式スクリプト本文ではありません。概算案内の参考としてのみ使用してください。")
         st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
-
     with col_b:
-        form = st.session_state.form
-        repair_type, cost_estimate, script_result, _, __ = run_decision(form)
-        vendor       = determine_vendor_candidate(form)
-        history_tmpl = build_history_template(form, repair_type, script_result,
-                                              cost_estimate, vendor)
+        history_tmpl = build_history_template(
+            st.session_state.form, repair_type, script_result, cost_estimate, vendor)
         st.markdown("##### 📄 対応履歴テンプレ")
         st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
 
@@ -934,18 +1137,24 @@ def render_tab_call():
 # ============================================================
 def render_tab_after_call():
     st.subheader("終話後処理")
-    form = st.session_state.form
-
-    repair_type, cost_estimate, script_result, _, __ = run_decision(form)
-    vendor       = determine_vendor_candidate(form)
-    history_tmpl = build_history_template(form, repair_type, script_result,
-                                          cost_estimate, vendor)
+    form     = st.session_state.form
+    decision = run_decision(form)
+    repair_type   = decision["repair_type"]
+    cost_estimate = decision["cost_estimate"]
+    script_result = decision["script_result"]
+    vendor        = decision["vendor"]
+    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor)
 
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("##### 🏭 修理拠点候補")
-        st.info(vendor)
-
+        vr = decision["vendor_result"]
+        if vr["matched"]:
+            st.info(f"{vendor}\n\n（判定根拠: {vr.get('reason','')}）")
+            if vr["needs_escalation"]:
+                st.warning("⚠️ 担当エスカレーション推奨")
+        else:
+            st.info(vendor)
         st.markdown("##### 📋 手配方法・連絡先")
         st.markdown(
             """| 拠点 | 手配方法 | 連絡先 |
@@ -956,7 +1165,6 @@ def render_tab_after_call():
 | 宗建リノベーション | 電話依頼 | 担当確認 |
 | CER候補 | 担当エスカ | 担当確認 |"""
         )
-
     with col2:
         st.markdown("##### 📝 修理依頼票用メモ")
         memo = (
@@ -967,7 +1175,6 @@ def render_tab_after_call():
             f"拠点候補: {vendor}"
         )
         st.text_area("依頼票メモ", memo, height=120)
-
         st.markdown("##### 💬 Chatwork/Teams 報告文")
         report = (
             f"【修理受付報告】\n"
@@ -979,7 +1186,6 @@ def render_tab_after_call():
             f"症状: {form.get('symptom','─')}"
         )
         st.text_area("報告文", report, height=140)
-
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
     st.text_area("履歴テンプレ", history_tmpl, height=300, key="history_after")
@@ -989,36 +1195,76 @@ def render_tab_after_call():
 # タブ3: マスタ管理
 # ============================================================
 def render_tab_master():
-    st.subheader("マスタ管理")
-
-    # CSVマスタ現状表示
-    df = load_master_products()
-    if df.empty:
-        st.warning("CSVマスタが読み込めていません。data/master_products.csv を確認してください。")
-    else:
-        st.success(f"CSVマスタ読み込み済み: {len(df)} 行（有効行）")
-        st.markdown("##### 📄 製品マスタ（data/master_products.csv）")
-        st.dataframe(df, use_container_width=True)
-        st.caption(
-            "列の説明: priority=優先度(小さいほど先) / match_target=照合対象 / "
-            "keyword=ヒット判定キーワード / can_announce_cost=金額案内可否 / "
-            "data_erase_required=データ消去同意要否"
-        )
-
-    st.divider()
+    st.subheader("⚙️ マスタ管理")
     st.info(
         "CSVを編集してStreamlitをリロードすると反映されます。\n"
         "キャッシュをリセットする場合は右上メニューから「Clear cache」を実行してください。"
     )
 
-    # 既存ダミーロジック確認用
-    with st.expander("既存ロジック参照（フォールバック用ダミーデータ）"):
-        st.markdown("##### 修理形態ルール（既存コードのままフォールバックとして保持）")
-        st.markdown(f"- 出張修理: {sorted(VISIT_REPAIR_PRODUCTS)}")
-        st.markdown(f"- 持込修理: {sorted(CARRY_IN_REPAIR_PRODUCTS)}")
-        st.markdown(f"- 要確認: {sorted(CONFIRM_REPAIR_PRODUCTS)}")
-        st.markdown(f"- データ消去同意必要: {sorted(DATA_ERASE_PRODUCTS)}")
+    master_tabs = st.tabs([
+        "製品エイリアス", "修理形態ルール", "概算費用ルール",
+        "修理拠点ルール", "レガシーマスタ",
+    ])
 
+    with master_tabs[0]:
+        st.markdown("##### 📄 master_product_alias.csv")
+        df = load_alias_csv()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_product_alias.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("keyword → normalized_product へのエイリアス変換ルール")
+
+    with master_tabs[1]:
+        st.markdown("##### 📄 master_repair_type_rules.csv")
+        df = load_repair_type_rules()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_repair_type_rules.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("製品/メーカー/型番/条件から修理形態（出張/持込/要確認）を判定")
+
+    with master_tabs[2]:
+        st.markdown("##### 📄 master_cost_rules.csv")
+        df = load_cost_rules()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_cost_rules.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("製品/メーカー/修理形態から保証対象外概算費用を判定")
+            st.caption(f"国内PCメーカーグループ (manufacturer_group=国内PC): {sorted(DOMESTIC_PC_MAKERS)}")
+
+    with master_tabs[3]:
+        st.markdown("##### 📄 master_vendor_rules.csv")
+        df = load_vendor_rules()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_vendor_rules.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("案件区分/都道府県/エリア/製品/メーカーから修理拠点候補を判定")
+            with st.expander("エリアグループ定義"):
+                for ag, prefs in AREA_GROUPS.items():
+                    st.markdown(f"- **{ag}**: {', '.join(sorted(prefs))}")
+
+    with master_tabs[4]:
+        st.markdown("##### 📄 master_products.csv（legacy・後方互換）")
+        df = load_master_products()
+        if df.empty:
+            st.info("master_products.csv は存在しないか無効です（主判定には使いません）")
+        else:
+            st.warning(f"レガシーCSV読み込み済み: {len(df)} 行（主判定では使用しません）")
+            st.dataframe(df, use_container_width=True)
+
+    st.divider()
+    with st.expander("既存ロジック参照（各層のフォールバック用定数）"):
+        st.markdown(f"- 出張修理製品: {sorted(VISIT_REPAIR_PRODUCTS)}")
+        st.markdown(f"- 持込修理製品: {sorted(CARRY_IN_REPAIR_PRODUCTS)}")
+        st.markdown(f"- 要確認製品: {sorted(CONFIRM_REPAIR_PRODUCTS)}")
+        st.markdown(f"- データ消去同意必要: {sorted(DATA_ERASE_PRODUCTS)}")
     st.caption("※ 録音・文字起こし機能はPhase2後続コミットで実装予定。")
 
 
@@ -1034,9 +1280,7 @@ def main():
     )
     st.title("🔧 修理受付 支援ツール MVP")
     st.caption("通話中の判断補助ツール — 正式スクリプト本文は先方管理のExcelを参照してください")
-
     init_session()
-
     tab1, tab2, tab3 = st.tabs(["📞 通話中判定", "📋 終話後処理", "⚙️ マスタ管理"])
     with tab1:
         render_tab_call()
