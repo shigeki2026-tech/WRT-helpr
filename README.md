@@ -59,6 +59,24 @@ streamlit run app.py
 
 ---
 
+## 自動テスト実行
+
+```bash
+# 依存パッケージのインストール（pytest を含む）
+pip install -r requirements.txt
+
+# pytest で実行（推奨）
+python -m pytest tests/test_decision_rules.py -v
+
+# スタンドアロンで実行（pytest 不要）
+python tests/test_decision_rules.py
+```
+
+テストは 10TC / 19 アサーションで構成されています。
+`check()` 内で `assert` しているため、期待値と実際値が異なる場合は pytest が確実に FAIL を報告します。
+
+---
+
 ## 手動テスト項目
 
 動作確認時は以下のシナリオを入力して結果を確認してください。
