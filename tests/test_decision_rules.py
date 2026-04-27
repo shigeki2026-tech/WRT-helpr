@@ -373,6 +373,39 @@ def test_tc33_ac_unknown_maker_not_confirmed():
           d["cost_estimate"] != "5,000円～7,000円前後", True)
 
 
+def test_tc34_ac_only_never_falls_back_to_generic_visit_cost():
+    d = app.run_decision(make_form(product="エアコン"))
+    check("TC34 エアコンのみ → 出張修理", d["repair_type"], "出張修理")
+    check("TC34 エアコンのみ → 未確定", d["cost_estimate"], "未確定")
+    check("TC34 エアコンのみ → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC34 エアコンのみ → 金額案内不可", d["cost_result"]["can_announce_cost"], False)
+    check("TC34 エアコンのみ → メーカー確認", d["cost_result"]["required_questions"], "メーカーを確認してください")
+    check("TC34 エアコンのみ → 汎用出張費用を返さない",
+          d["cost_estimate"] != "5,000円～7,000円前後", True)
+
+
+def test_tc35_pc_only_never_falls_back_to_pc_cost():
+    d = app.run_decision(make_form(product="パソコン"))
+    check("TC35 パソコンのみ → 未確定", d["cost_estimate"], "未確定")
+    check("TC35 パソコンのみ → 金額案内不可", d["cost_result"]["can_announce_cost"], False)
+
+
+def test_tc36_product_options_from_repair_type_rules():
+    options = app.get_product_options()
+    check("TC36 product options 生成あり", bool(options), True)
+    for product in ["エアコン", "洗濯機", "ドライヤー", "パソコン"]:
+        check(f"TC36 product options に {product} を含む", product in options, True)
+
+
+def test_tc37_series_dryer_alias_reflects_product_select():
+    form = app.apply_extracted_fields_to_form(
+        {"series": "ドライヤー・ヘアアイロン"},
+        make_form(),
+    )
+    check("TC37 ドライヤー・ヘアアイロン → ドライヤー", form["product"], "ドライヤー")
+    check("TC37 原文製品名を保持", form["product_original"], "ドライヤー・ヘアアイロン")
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -411,6 +444,10 @@ _ALL_TESTS = [
     test_tc31_ac_hitachi_domestic_generic,
     test_tc32_ac_panasonic_domestic_generic,
     test_tc33_ac_unknown_maker_not_confirmed,
+    test_tc34_ac_only_never_falls_back_to_generic_visit_cost,
+    test_tc35_pc_only_never_falls_back_to_pc_cost,
+    test_tc36_product_options_from_repair_type_rules,
+    test_tc37_series_dryer_alias_reflects_product_select,
 ]
 
 if __name__ == "__main__":

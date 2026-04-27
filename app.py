@@ -34,6 +34,7 @@ FIELD_LABELS = {
     "prefecture": "都道府県",
     "address": "お客様住所",
     "product": "製品",
+    "product_original": "製品メモ / 原文製品名",
     "series": "シリーズ",
     "manufacturer": "メーカー",
     "model_number": "型番",
@@ -95,6 +96,8 @@ _MASTER_REQUIRED_COLS = [
     "script_sheet", "script_part", "can_announce_cost", "data_erase_required", "notes",
 ]
 
+PRODUCT_OTHER = "その他・要確認"
+
 
 # ============================================================
 # Generic CSV ローダー（キャッシュなし・内部用）
@@ -129,23 +132,44 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
 # キャッシュ付き CSV ローダー × 4 + legacy
 # ============================================================
 @st.cache_data
-def load_alias_csv() -> pd.DataFrame:
+def _load_alias_csv_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_product_alias.csv", _ALIAS_COLS)
 
 
 @st.cache_data
-def load_repair_type_rules() -> pd.DataFrame:
+def _load_repair_type_rules_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_repair_type_rules.csv", _REPAIR_TYPE_COLS)
 
 
 @st.cache_data
-def load_cost_rules() -> pd.DataFrame:
+def _load_cost_rules_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_cost_rules.csv", _COST_COLS)
 
 
 @st.cache_data
-def load_vendor_rules() -> pd.DataFrame:
+def _load_vendor_rules_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_vendor_rules.csv", _VENDOR_COLS)
+
+
+def _csv_mtime(filename: str) -> float:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
+    return os.path.getmtime(path) if os.path.exists(path) else 0.0
+
+
+def load_alias_csv() -> pd.DataFrame:
+    return _load_alias_csv_cached(_csv_mtime("master_product_alias.csv"))
+
+
+def load_repair_type_rules() -> pd.DataFrame:
+    return _load_repair_type_rules_cached(_csv_mtime("master_repair_type_rules.csv"))
+
+
+def load_cost_rules() -> pd.DataFrame:
+    return _load_cost_rules_cached(_csv_mtime("master_cost_rules.csv"))
+
+
+def load_vendor_rules() -> pd.DataFrame:
+    return _load_vendor_rules_cached(_csv_mtime("master_vendor_rules.csv"))
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -217,6 +241,47 @@ def get_area_group(prefecture: str) -> str:
         if pref in prefs:
             return area_group
     return ""
+
+
+def get_product_options() -> list:
+    """修理形態ルールCSVから製品selectboxの選択肢を生成する。"""
+    options = [""]
+    seen = {""}
+    df = load_repair_type_rules()
+    if not df.empty:
+        for value in df["product_keyword"].tolist():
+            product = (value or "").strip()
+            if product and product not in seen:
+                options.append(product)
+                seen.add(product)
+    fallback = [
+        "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "IH",
+        "レンジフード", "食器洗い乾燥機", "ドライヤー", "パソコン",
+        "タブレット", "掃除機", "炊飯器", "トースター", "カーナビ",
+        "ゲーム機", "Airdog", "テレビ", "プリンター", "サウンドバー",
+        "プロジェクター", "ホームシアター",
+    ]
+    for product in fallback:
+        if product not in seen:
+            options.append(product)
+            seen.add(product)
+    if PRODUCT_OTHER not in seen:
+        options.append(PRODUCT_OTHER)
+    return options
+
+
+def normalize_product_for_select(product: str) -> str:
+    """自由入力や抽出結果を製品selectboxの選択肢へ寄せる。"""
+    value = (product or "").strip()
+    if not value:
+        return ""
+    options = get_product_options()
+    if value in options:
+        return value
+    normalized = normalize_product("", value)
+    if normalized in options:
+        return normalized
+    return PRODUCT_OTHER
 
 
 @st.cache_data
@@ -360,7 +425,14 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             form[dst] = extracted[src]
     raw_series = extracted.get("series", "")
     if raw_series:
-        form["product"] = normalize_product(raw_series, "")
+        form["product_original"] = raw_series
+        form["product"] = normalize_product_for_select(normalize_product(raw_series, ""))
+    elif extracted.get("category") or extracted.get("genre"):
+        raw_product_text = extracted.get("category") or extracted.get("genre")
+        form["product_original"] = raw_product_text
+        form["product"] = normalize_product_for_select(normalize_product(raw_product_text, ""))
+    elif form.get("product"):
+        form["product"] = normalize_product_for_select(form.get("product"))
     raw_mfr = extracted.get("manufacturer", "")
     if raw_mfr:
         form["manufacturer"] = normalize_manufacturer(raw_mfr)
@@ -480,6 +552,54 @@ def determine_repair_type(form: dict) -> str:
 # ============================================================
 # Layer 3: 概算費用判定
 # ============================================================
+def _pending_cost_result(required_questions: str, internal_note: str,
+                         customer_notice: str = "確認後にご案内します",
+                         keyword: str = "安全ガード") -> dict:
+    return {
+        "matched": True,
+        "cost_estimate": "未確定",
+        "can_announce_cost": False,
+        "needs_escalation": False,
+        "cost_status": "pending",
+        "guidance_scope": "always",
+        "required_questions": required_questions,
+        "customer_notice": customer_notice,
+        "internal_note": internal_note,
+        "missing_fields": [],
+        "keyword": keyword,
+        "priority": 0,
+        "csv_name": "app.py safety guard",
+        "notes": internal_note,
+    }
+
+
+def guard_pending_cost_before_rules(form: dict):
+    """CSV/旧ロジックより優先する、誤案内防止の最終安全ガード。"""
+    product = (form.get("product") or "").strip()
+    manufacturer = normalize_manufacturer(form.get("manufacturer", "")).strip()
+    condition = (form.get("extra_condition") or "").strip()
+
+    if product == "エアコン" and not manufacturer:
+        return _pending_cost_result(
+            "メーカーを確認してください",
+            "エアコンはメーカー未確認時に概算費用を案内しない",
+            keyword="エアコンメーカー未確認ガード",
+        )
+    if product == "エアコン" and manufacturer == "ダイキン" and not condition:
+        return _pending_cost_result(
+            "家庭用/業務用を確認してください",
+            "ダイキンエアコンは家庭用/業務用未確認時に概算費用を案内しない",
+            keyword="ダイキンエアコン補足条件未確認ガード",
+        )
+    if product == "パソコン" and not manufacturer:
+        return _pending_cost_result(
+            "メーカーを確認してください",
+            "パソコンはメーカー未確認時に概算費用を案内しない",
+            keyword="パソコンメーカー未確認ガード",
+        )
+    return None
+
+
 def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     """
     master_cost_rules.csv から概算費用ルールを判定する（拡張版）。
@@ -496,6 +616,10 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     manufacturer = (form.get("manufacturer") or "").strip()
     condition    = (form.get("extra_condition") or "").strip()
     norm_mfr     = normalize_manufacturer(manufacturer)
+
+    guarded = guard_pending_cost_before_rules(form)
+    if guarded:
+        return guarded
 
     _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
@@ -809,6 +933,7 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"電話番号　　: {form.get('phone_number', '未入力')}",
         f"住所　　　　: {form.get('address', '未入力')}",
         f"製品　　　　: {form.get('product', '未入力')}",
+        f"製品原文　　: {form.get('product_original', '未入力')}",
         f"メーカー　　: {form.get('manufacturer', '未入力')}",
         f"型番　　　　: {form.get('model_number', '未入力')}",
         f"商品価格　　: {form.get('product_price', '未入力')}",
@@ -953,7 +1078,15 @@ def run_decision(form: dict) -> dict:
             cost_source = "CSVマスタ"
         else:
             cost_source = "既存ロジック"
-    cost_estimate = cost_result["cost_estimate"] or determine_cost_estimate(working_form, repair_type)
+    guarded_cost = guard_pending_cost_before_rules(working_form)
+    if guarded_cost:
+        cost_result = guarded_cost
+        cost_source = "安全ガード"
+
+    if cost_result.get("cost_status") == "pending" and not cost_result.get("can_announce_cost", True):
+        cost_estimate = cost_result.get("cost_estimate") or "未確定"
+    else:
+        cost_estimate = cost_result["cost_estimate"] or determine_cost_estimate(working_form, repair_type)
 
     # ── スクリプトルート（既存ロジック） ──
     script_result = determine_script_route(working_form, repair_type)
@@ -1102,7 +1235,21 @@ def render_tab_call():
         form["prefecture"]    = st.selectbox("都道府県", pref_opts,
             index=pref_opts.index(form.get("prefecture","")) if form.get("prefecture") in pref_opts else 0)
         form["address"]       = st.text_input("お客様住所",   form.get("address",""))
-        form["product"]       = st.text_input("製品",         form.get("product",""), placeholder="例: 洗濯機")
+        product_opts = get_product_options()
+        current_product = form.get("product", "")
+        if current_product and current_product not in product_opts:
+            form["product_original"] = form.get("product_original") or current_product
+            current_product = PRODUCT_OTHER
+        form["product"] = st.selectbox(
+            "製品",
+            product_opts,
+            index=product_opts.index(current_product) if current_product in product_opts else 0,
+        )
+        form["product_original"] = st.text_input(
+            "製品メモ / 原文製品名",
+            form.get("product_original",""),
+            placeholder="コピー抽出されたシリーズ名・分類名など",
+        )
         form["series"]        = st.text_input("シリーズ",     form.get("series",""))
         form["manufacturer"]  = st.text_input("メーカー",     form.get("manufacturer",""))
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
@@ -1420,8 +1567,12 @@ def render_tab_master():
     st.subheader("⚙️ マスタ管理")
     st.info(
         "CSVを編集してStreamlitをリロードすると反映されます。\n"
-        "キャッシュをリセットする場合は右上メニューから「Clear cache」を実行してください。"
+        "CSV更新後に古い判定が残る場合は、下の「CSVキャッシュをクリア」を押してください。"
     )
+    if st.button("CSVキャッシュをクリア", type="primary", use_container_width=True):
+        st.cache_data.clear()
+        st.success("CSVキャッシュをクリアしました。")
+        st.rerun()
 
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
