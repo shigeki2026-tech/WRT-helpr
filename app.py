@@ -208,6 +208,17 @@ def load_area_groups_dict() -> dict:
     return result
 
 
+def get_area_group(prefecture: str) -> str:
+    """都道府県から master_area_groups.csv のエリアグループ名を返す。"""
+    pref = (prefecture or "").strip()
+    if not pref:
+        return ""
+    for area_group, prefs in load_area_groups_dict().items():
+        if pref in prefs:
+            return area_group
+    return ""
+
+
 @st.cache_data
 def load_master_products() -> pd.DataFrame:
     """legacy: data/master_products.csv（後方互換・主判定には使わない）"""
@@ -624,10 +635,12 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
             if ct and ct.lower() != case_type.lower():         continue
             # prefecture: 完全一致（空=ワイルドカード）
             if pref and pref != prefecture:                     continue
-            # area_group: AREA_GROUPS マッピング（空=ワイルドカード）
+            # area_group: CSVのNTT東西エリアと既存の地域グループを両方参照（空=ワイルドカード）
             if ag:
-                group_set = AREA_GROUPS.get(ag)
-                if group_set is None or prefecture not in group_set:
+                area_groups = {**AREA_GROUPS, **load_area_groups_dict()}
+                group_set = area_groups.get(ag)
+                form_area_group = (form.get("area_group") or "").strip()
+                if ag != form_area_group and (group_set is None or prefecture not in group_set):
                     continue
             # keyword 包含一致
             if not _kw_match(mk, manufacturer):                continue
@@ -901,6 +914,8 @@ def run_decision(form: dict) -> dict:
     inferred_case_type = infer_case_type(working_form)
     if inferred_case_type:
         working_form["case_type"] = inferred_case_type
+    area_group = get_area_group(working_form.get("prefecture", ""))
+    working_form["area_group"] = area_group
 
     # ── Layer 1: 製品名エイリアス ──
     alias_result = normalize_product_from_alias(working_form)
@@ -958,6 +973,7 @@ def run_decision(form: dict) -> dict:
         "needs_data_erase":    needs_data_erase,
         "vendor":              vendor,
         "normalized_product":  working_form.get("product", ""),
+        "area_group":          area_group,
         # ── 各層の判定詳細 ──
         "alias_result":        alias_result,
         "repair_result":       repair_result,
@@ -1099,7 +1115,19 @@ def render_tab_call():
         form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
         form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
         form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
-        form["extra_condition"]= st.text_input("補足条件",    form.get("extra_condition",""))
+        form["extra_condition"] = st.text_area(
+            "補足条件・費用判定メモ",
+            form.get("extra_condition",""),
+            height=90,
+            placeholder="例: 家庭用 / 業務用 / ガス漏れ / 未確認",
+        )
+        if "エアコン" in (form.get("product") or ""):
+            q_cols = st.columns(4)
+            for idx, label in enumerate(["家庭用", "業務用", "ガス漏れ", "未確認"]):
+                if q_cols[idx].button(label, key=f"ac_extra_{label}", use_container_width=True):
+                    form["extra_condition"] = label
+                    st.session_state.form = form
+                    st.rerun()
         st.session_state.form = form
 
     # ── 判定実行（form確定後・right描画前に1回だけ）──
@@ -1117,6 +1145,7 @@ def render_tab_call():
     vendor_result       = decision["vendor_result"]
     normalized_product  = decision["normalized_product"]
     inferred_case_type  = decision.get("inferred_case_type", "")
+    area_group          = decision.get("area_group", "")
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -1137,6 +1166,14 @@ def render_tab_call():
                 f'📦 正規化製品: <b>{normalized_product}</b>'
                 + (_src_badge("CSVマスタ") if alias_result["matched"] else _src_badge("既存ロジック"))
                 + '</div>',
+                unsafe_allow_html=True,
+            )
+        if st.session_state.form.get("prefecture"):
+            st.markdown(
+                f'<div style="background:#eef6ff;color:#1f4e79;padding:8px 12px;'
+                f'border-radius:6px;margin-bottom:8px;line-height:1.7;">'
+                f'<b>都道府県:</b> {st.session_state.form.get("prefecture")}<br>'
+                f'<b>エリア:</b> {area_group or "未判定"}</div>',
                 unsafe_allow_html=True,
             )
 
