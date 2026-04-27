@@ -162,3 +162,15 @@ def test_case_variation_alt_labels():
     assert form["manufacturer"] == "Dell", dbg
     assert form["model_number"] == "XPS13", dbg
     assert decision["warranty_status"] == "active", dbg
+
+
+def test_case_ecocute_daikin_active():
+    extracted, form, decision = run_fixture("case_ecocute_daikin_active.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert form["product"] == "エコキュート", dbg
+    assert form["manufacturer"] == "ダイキン", dbg
+    assert decision["repair_type"] == "出張修理", dbg
+    assert decision["cost_estimate"] == "15,000円～20,000円前後", dbg
+    assert decision["area_group"] == "NTT西日本", dbg
+    assert decision["warranty_status"] == "active", dbg

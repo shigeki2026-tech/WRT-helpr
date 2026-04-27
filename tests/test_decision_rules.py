@@ -599,6 +599,76 @@ def test_tc62_pc_other_manufacturer_blocks_cost():
     check("TC62 パソコン+その他 → 案内不可", d["cost_result"]["can_announce_cost"], False)
 
 
+def test_tc63_ecocute_daikin_cost():
+    d = app.run_decision(make_form(product="エコキュート", manufacturer="ダイキン"))
+    check("TC63 エコキュート+ダイキン → 出張修理", d["repair_type"], "出張修理")
+    check("TC63 エコキュート+ダイキン → 15,000円～20,000円前後",
+          d["cost_estimate"], "15,000円～20,000円前後")
+
+
+def test_tc64_ecocute_panasonic_cost():
+    d = app.run_decision(make_form(product="エコキュート", manufacturer="パナソニック"))
+    check("TC64 エコキュート+パナソニック → 8,000円～10,000円前後",
+          d["cost_estimate"], "8,000円～10,000円前後")
+
+
+def test_tc65_gas_water_heater_cost():
+    d = app.run_decision(make_form(product="ガス給湯器"))
+    check("TC65 ガス給湯器 → 5,000円～7,000円前後",
+          d["cost_estimate"], "5,000円～7,000円前後")
+
+
+def test_tc66_oil_water_heater_cost():
+    d = app.run_decision(make_form(product="石油給湯器"))
+    check("TC66 石油給湯器 → 5,000円～7,000円前後",
+          d["cost_estimate"], "5,000円～7,000円前後")
+
+
+def test_tc67_hybrid_water_heater_cost():
+    d = app.run_decision(make_form(product="ハイブリッド給湯器"))
+    check("TC67 ハイブリッド給湯器 → 8,000円～10,000円前後",
+          d["cost_estimate"], "8,000円～10,000円前後")
+
+
+def test_tc68_enefarm_requires_gas_company():
+    d = app.run_decision(make_form(product="エネファーム"))
+    check("TC68 エネファーム → 5,000円～7,000円前後",
+          d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC68 required_questions にガス会社",
+          "ガス会社" in d["cost_result"]["required_questions"], True)
+    check("TC68 internal_note にガス会社",
+          "ガス会社" in d["cost_result"]["internal_note"], True)
+
+
+def test_tc69_electric_water_heater_cost():
+    d = app.run_decision(make_form(product="電気温水器"))
+    check("TC69 電気温水器 → 8,000円～10,000円前後",
+          d["cost_estimate"], "8,000円～10,000円前後")
+
+
+def test_tc70_electric_heating_water_boiler_cost():
+    d = app.run_decision(make_form(product="電気暖房温水ボイラー"))
+    check("TC70 電気暖房温水ボイラー → 8,000円～10,000円前後",
+          d["cost_estimate"], "8,000円～10,000円前後")
+
+
+def test_tc71_generic_water_heater_pending():
+    d = app.run_decision(make_form(product="給湯器"))
+    check("TC71 給湯器のみ → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC71 給湯器のみ → 未確定", d["cost_estimate"], "未確定")
+    check("TC71 required_questions に給湯器種別",
+          "ガス給湯器・石油給湯器・ハイブリッド給湯器" in d["cost_result"]["required_questions"], True)
+
+
+def test_tc72_water_heater_products_in_options():
+    options = app.get_product_options()
+    for product in [
+        "エコキュート", "ガス給湯器", "石油給湯器", "ハイブリッド給湯器",
+        "エネファーム", "電気温水器", "電気暖房温水ボイラー",
+    ]:
+        check(f"TC72 product options に {product} を含む", product in options, True)
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -666,6 +736,16 @@ _ALL_TESTS = [
     test_tc60_extract_manufacturer_daikin_preserves_original,
     test_tc61_ac_other_manufacturer_blocks_cost,
     test_tc62_pc_other_manufacturer_blocks_cost,
+    test_tc63_ecocute_daikin_cost,
+    test_tc64_ecocute_panasonic_cost,
+    test_tc65_gas_water_heater_cost,
+    test_tc66_oil_water_heater_cost,
+    test_tc67_hybrid_water_heater_cost,
+    test_tc68_enefarm_requires_gas_company,
+    test_tc69_electric_water_heater_cost,
+    test_tc70_electric_heating_water_boiler_cost,
+    test_tc71_generic_water_heater_pending,
+    test_tc72_water_heater_products_in_options,
 ]
 
 if __name__ == "__main__":
