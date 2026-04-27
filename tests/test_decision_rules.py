@@ -553,6 +553,52 @@ def test_tc54_warranty_active_accepts():
     check("TC54 can_accept True", r["can_accept"], True)
 
 
+def test_tc55_manufacturer_options_include_required_names():
+    options = app.get_manufacturer_options()
+    for manufacturer in [
+        "ダイキン", "アイリスオーヤマ", "パナソニック", "富士通",
+        "Dell", "ダイソン", "エレクトロラックス・ジャパン", "その他・要確認",
+    ]:
+        check(f"TC55 manufacturer options に {manufacturer} を含む", manufacturer in options, True)
+
+
+def test_tc56_normalize_manufacturer_for_select_daikin():
+    check("TC56 DAIKIN → ダイキン", app.normalize_manufacturer_for_select("DAIKIN"), "ダイキン")
+
+
+def test_tc57_normalize_manufacturer_for_select_panasonic():
+    check("TC57 Panasonic → パナソニック", app.normalize_manufacturer_for_select("Panasonic"), "パナソニック")
+
+
+def test_tc58_normalize_manufacturer_for_select_dyson():
+    check("TC58 Dyson → ダイソン", app.normalize_manufacturer_for_select("Dyson"), "ダイソン")
+
+
+def test_tc59_normalize_manufacturer_for_select_unknown():
+    check("TC59 不明メーカーX → その他・要確認",
+          app.normalize_manufacturer_for_select("不明メーカーX"), "その他・要確認")
+
+
+def test_tc60_extract_manufacturer_daikin_preserves_original():
+    form = app.apply_extracted_fields_to_form({"manufacturer": "DAIKIN"}, make_form())
+    check("TC60 manufacturer normalized", form["manufacturer"], "ダイキン")
+    check("TC60 manufacturer original", form["manufacturer_original"], "DAIKIN")
+
+
+def test_tc61_ac_other_manufacturer_blocks_cost():
+    d = app.run_decision(make_form(product="エアコン", manufacturer="その他・要確認"))
+    check("TC61 エアコン+その他 → 未確定", d["cost_estimate"], "未確定")
+    check("TC61 エアコン+その他 → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC61 エアコン+その他 → 案内不可", d["cost_result"]["can_announce_cost"], False)
+
+
+def test_tc62_pc_other_manufacturer_blocks_cost():
+    d = app.run_decision(make_form(product="パソコン", manufacturer="その他・要確認"))
+    check("TC62 パソコン+その他 → 未確定", d["cost_estimate"], "未確定")
+    check("TC62 パソコン+その他 → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC62 パソコン+その他 → 案内不可", d["cost_result"]["can_announce_cost"], False)
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -612,6 +658,14 @@ _ALL_TESTS = [
     test_tc52_warranty_guidance_expired_contains_unacceptable,
     test_tc53_warranty_unknown_required_questions,
     test_tc54_warranty_active_accepts,
+    test_tc55_manufacturer_options_include_required_names,
+    test_tc56_normalize_manufacturer_for_select_daikin,
+    test_tc57_normalize_manufacturer_for_select_panasonic,
+    test_tc58_normalize_manufacturer_for_select_dyson,
+    test_tc59_normalize_manufacturer_for_select_unknown,
+    test_tc60_extract_manufacturer_daikin_preserves_original,
+    test_tc61_ac_other_manufacturer_blocks_cost,
+    test_tc62_pc_other_manufacturer_blocks_cost,
 ]
 
 if __name__ == "__main__":

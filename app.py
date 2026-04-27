@@ -37,6 +37,7 @@ FIELD_LABELS = {
     "product_original": "製品メモ / 原文製品名",
     "series": "シリーズ",
     "manufacturer": "メーカー",
+    "manufacturer_original": "メーカー原文 / コピー元メーカー名",
     "model_number": "型番",
     "product_price": "商品価格",
     "warranty_plan": "保証プラン",
@@ -97,6 +98,8 @@ _MASTER_REQUIRED_COLS = [
 ]
 
 PRODUCT_OTHER = "その他・要確認"
+MANUFACTURER_OTHER = "その他・要確認"
+MANUFACTURER_UNKNOWN = "不明"
 
 
 # ============================================================
@@ -282,6 +285,53 @@ def normalize_product_for_select(product: str) -> str:
     if normalized in options:
         return normalized
     return PRODUCT_OTHER
+
+
+def get_manufacturer_options() -> list:
+    """メーカーグループCSVと費用CSVからメーカーselectbox候補を生成する。"""
+    options = [""]
+    seen = {""}
+
+    df_groups = load_manufacturer_groups_csv()
+    if not df_groups.empty:
+        for mfrs in df_groups["manufacturers"].tolist():
+            for manufacturer in (mfrs or "").split(";"):
+                name = (manufacturer or "").strip()
+                if name and name not in seen:
+                    options.append(name)
+                    seen.add(name)
+
+    df_cost = load_cost_rules()
+    if not df_cost.empty:
+        for value in df_cost["manufacturer_keyword"].tolist():
+            name = (value or "").strip()
+            if name and name not in seen:
+                options.append(name)
+                seen.add(name)
+
+    required = [
+        "ダイキン", "アイリスオーヤマ", "パナソニック", "富士通",
+        "Dell", "ダイソン", "エレクトロラックス・ジャパン",
+        MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN,
+    ]
+    for name in required:
+        if name not in seen:
+            options.append(name)
+            seen.add(name)
+    return options
+
+
+def normalize_manufacturer_for_select(manufacturer: str) -> str:
+    value = (manufacturer or "").strip()
+    if not value:
+        return ""
+    normalized = normalize_manufacturer(value)
+    options = get_manufacturer_options()
+    if normalized in options:
+        return normalized
+    if value in options:
+        return value
+    return MANUFACTURER_OTHER
 
 
 def parse_date_safe(value):
@@ -547,7 +597,10 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         form["product"] = normalize_product_for_select(form.get("product"))
     raw_mfr = extracted.get("manufacturer", "")
     if raw_mfr:
-        form["manufacturer"] = normalize_manufacturer(raw_mfr)
+        form["manufacturer_original"] = raw_mfr
+        form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
+    elif form.get("manufacturer"):
+        form["manufacturer"] = normalize_manufacturer_for_select(form.get("manufacturer"))
     genre = extracted.get("genre", "")
     if genre:
         form["appliance_type"] = "住設" if any(
@@ -690,8 +743,9 @@ def guard_pending_cost_before_rules(form: dict):
     product = (form.get("product") or "").strip()
     manufacturer = normalize_manufacturer(form.get("manufacturer", "")).strip()
     condition = (form.get("extra_condition") or "").strip()
+    manufacturer_needs_confirmation = manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
 
-    if product == "エアコン" and not manufacturer:
+    if product == "エアコン" and (not manufacturer or manufacturer_needs_confirmation):
         return _pending_cost_result(
             "メーカーを確認してください",
             "エアコンはメーカー未確認時に概算費用を案内しない",
@@ -703,9 +757,9 @@ def guard_pending_cost_before_rules(form: dict):
             "ダイキンエアコンは家庭用/業務用未確認時に概算費用を案内しない",
             keyword="ダイキンエアコン補足条件未確認ガード",
         )
-    if product == "パソコン" and not manufacturer:
+    if product == "パソコン" and (not manufacturer or manufacturer_needs_confirmation):
         return _pending_cost_result(
-            "メーカーを確認してください",
+            "国内メーカー/海外メーカーを確認してください" if manufacturer_needs_confirmation else "メーカーを確認してください",
             "パソコンはメーカー未確認時に概算費用を案内しない",
             keyword="パソコンメーカー未確認ガード",
         )
@@ -1049,6 +1103,10 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"製品　　　　: {form.get('product', '未入力')}",
         f"製品原文　　: {form.get('product_original', '未入力')}",
         f"メーカー　　: {form.get('manufacturer', '未入力')}",
+    ]
+    if form.get("manufacturer_original"):
+        lines.append(f"メーカー原文: {form.get('manufacturer_original')}")
+    lines.extend([
         f"型番　　　　: {form.get('model_number', '未入力')}",
         f"商品価格　　: {form.get('product_price', '未入力')}",
         f"保証プラン　: {form.get('warranty_plan', '未入力')}",
@@ -1075,7 +1133,7 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"注意事項　　: {' / '.join(script_result.get('notes', [])) or 'なし'}",
         f"修理拠点候補: {vendor}",
         f"次対応　　　: ",
-    ]
+    ])
     return "\n".join(lines)
 
 
@@ -1164,7 +1222,11 @@ def run_decision(form: dict) -> dict:
     """
     # ── 準備: メーカー正規化 + case_type 自動推定 ──
     working_form = form.copy()
-    working_form["manufacturer"] = normalize_manufacturer(form.get("manufacturer", ""))
+    selected_manufacturer = (form.get("manufacturer") or "").strip()
+    if selected_manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+        working_form["manufacturer"] = selected_manufacturer
+    else:
+        working_form["manufacturer"] = normalize_manufacturer(selected_manufacturer)
     inferred_case_type = infer_case_type(working_form)
     if inferred_case_type:
         working_form["case_type"] = inferred_case_type
@@ -1381,7 +1443,21 @@ def render_tab_call():
             placeholder="コピー抽出されたシリーズ名・分類名など",
         )
         form["series"]        = st.text_input("シリーズ",     form.get("series",""))
-        form["manufacturer"]  = st.text_input("メーカー",     form.get("manufacturer",""))
+        manufacturer_opts = get_manufacturer_options()
+        current_manufacturer = form.get("manufacturer", "")
+        if current_manufacturer and current_manufacturer not in manufacturer_opts:
+            form["manufacturer_original"] = form.get("manufacturer_original") or current_manufacturer
+            current_manufacturer = normalize_manufacturer_for_select(current_manufacturer)
+        form["manufacturer"] = st.selectbox(
+            "メーカー",
+            manufacturer_opts,
+            index=manufacturer_opts.index(current_manufacturer) if current_manufacturer in manufacturer_opts else 0,
+        )
+        form["manufacturer_original"] = st.text_input(
+            "メーカー原文 / コピー元メーカー名",
+            form.get("manufacturer_original",""),
+            placeholder="コピー抽出されたメーカー名など",
+        )
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
         form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
