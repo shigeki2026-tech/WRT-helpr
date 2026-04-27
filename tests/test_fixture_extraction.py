@@ -174,3 +174,22 @@ def test_case_ecocute_daikin_active():
     assert decision["cost_estimate"] == "15,000円～20,000円前後", dbg
     assert decision["area_group"] == "NTT西日本", dbg
     assert decision["warranty_status"] == "active", dbg
+
+
+def test_case_airdog_active():
+    extracted, form, decision = run_fixture("case_airdog_active.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert form["product"] == "Airdog", dbg
+    assert decision["repair_type"] == "持込修理", dbg
+    assert decision["cost_estimate"] == "7,000円～10,000円前後", dbg
+
+
+def test_case_pioneer_av_active():
+    extracted, form, decision = run_fixture("case_pioneer_av_active.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert form["product"] == "AV製品", dbg
+    assert form["manufacturer"] == "パイオニア", dbg
+    assert decision["cost_estimate"] == "16,000円前後", dbg
+    assert decision["cost_result"]["needs_escalation"] is True, dbg

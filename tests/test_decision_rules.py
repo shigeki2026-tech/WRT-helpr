@@ -669,6 +669,87 @@ def test_tc72_water_heater_products_in_options():
         check(f"TC72 product options に {product} を含む", product in options, True)
 
 
+def test_tc73_digital_camera_cost():
+    d = app.run_decision(make_form(product="デジカメ"))
+    check("TC73 デジカメ → 持込修理", d["repair_type"], "持込修理")
+    check("TC73 デジカメ → 2,000円前後", d["cost_estimate"], "2,000円前後")
+
+
+def test_tc74_slr_camera_cost():
+    d = app.run_decision(make_form(product="一眼レフカメラ"))
+    check("TC74 一眼レフカメラ → 2,000円前後", d["cost_estimate"], "2,000円前後")
+
+
+def test_tc75_video_camera_cost():
+    d = app.run_decision(make_form(product="ビデオカメラ"))
+    check("TC75 ビデオカメラ → 2,000円前後", d["cost_estimate"], "2,000円前後")
+
+
+def test_tc76_roland_electric_piano_cost():
+    d = app.run_decision(make_form(product="電子ピアノ脚なし", manufacturer="ローランド"))
+    check("TC76 電子ピアノ脚なし+ローランド → 6,000円～15,000円前後",
+          d["cost_estimate"], "6,000円～15,000円前後")
+
+
+def test_tc77_roland_piano_alias_and_cost():
+    form = make_form(product="ピアノ脚なし", manufacturer="Roland")
+    d = app.run_decision(form)
+    check("TC77 Roland正規化", d["working_form"]["manufacturer"], "ローランド")
+    check("TC77 ピアノ脚なし+Roland → 6,000円～15,000円前後",
+          d["cost_estimate"], "6,000円～15,000円前後")
+
+
+def test_tc78_non_roland_electric_piano_generic_carry_in():
+    d = app.run_decision(make_form(product="電子ピアノ脚なし", manufacturer="ヤマハ"))
+    check("TC78 ローランド以外電子ピアノ → 汎用持込",
+          d["cost_estimate"], "2,000円～5,000円前後")
+
+
+def test_tc79_airdog_cost_and_note():
+    d = app.run_decision(make_form(product="Airdog"))
+    check("TC79 Airdog → 7,000円～10,000円前後",
+          d["cost_estimate"], "7,000円～10,000円前後")
+    check("TC79 Airdog note includes送料",
+          ("返送料" in d["cost_result"]["internal_note"] or "送料" in d["cost_result"]["internal_note"]), True)
+
+
+def test_tc80_power_wave_fit_project_cost_and_note():
+    d = app.run_decision(make_form(product="パワーウエーブ", manufacturer="FITプロジェクト"))
+    check("TC80 パワーウエーブ+FIT → 4,000円～5,000円前後",
+          d["cost_estimate"], "4,000円～5,000円前後")
+    check("TC80 FIT note includes phone", "0800-919-0757" in d["cost_result"]["internal_note"], True)
+
+
+def test_tc81_power_wave_tk_create_cost():
+    d = app.run_decision(make_form(product="パワーウエーブ", manufacturer="TKクリエイト"))
+    check("TC81 パワーウエーブ+TK → 4,000円～5,000円前後",
+          d["cost_estimate"], "4,000円～5,000円前後")
+
+
+def test_tc82_pioneer_av_cost_escalation():
+    d = app.run_decision(make_form(product="AV製品", manufacturer="パイオニア"))
+    check("TC82 AV製品+パイオニア → 16,000円前後",
+          d["cost_estimate"], "16,000円前後")
+    check("TC82 needs_escalation", d["cost_result"]["needs_escalation"], True)
+    note = d["cost_result"]["internal_note"]
+    check("TC82 note includes AV撤退 or 委託先", ("AV事業から撤退" in note or "委託先" in note), True)
+
+
+def test_tc83_pioneer_car_navi_not_av_cost():
+    d = app.run_decision(make_form(product="カーナビ", manufacturer="パイオニア"))
+    check("TC83 カーナビ+パイオニア → AV費用ではない",
+          d["cost_estimate"] != "16,000円前後", True)
+
+
+def test_tc84_special_carry_in_products_in_options():
+    options = app.get_product_options()
+    for product in [
+        "デジカメ", "一眼レフカメラ", "ビデオカメラ", "電子ピアノ脚なし",
+        "ピアノ脚なし", "Airdog", "パワーウエーブ", "AV製品",
+    ]:
+        check(f"TC84 product options に {product} を含む", product in options, True)
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -746,6 +827,18 @@ _ALL_TESTS = [
     test_tc70_electric_heating_water_boiler_cost,
     test_tc71_generic_water_heater_pending,
     test_tc72_water_heater_products_in_options,
+    test_tc73_digital_camera_cost,
+    test_tc74_slr_camera_cost,
+    test_tc75_video_camera_cost,
+    test_tc76_roland_electric_piano_cost,
+    test_tc77_roland_piano_alias_and_cost,
+    test_tc78_non_roland_electric_piano_generic_carry_in,
+    test_tc79_airdog_cost_and_note,
+    test_tc80_power_wave_fit_project_cost_and_note,
+    test_tc81_power_wave_tk_create_cost,
+    test_tc82_pioneer_av_cost_escalation,
+    test_tc83_pioneer_car_navi_not_av_cost,
+    test_tc84_special_carry_in_products_in_options,
 ]
 
 if __name__ == "__main__":
