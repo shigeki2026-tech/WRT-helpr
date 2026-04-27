@@ -465,43 +465,54 @@ def _kw_match(keyword: str, target: str) -> bool:
 # ============================================================
 # テキスト抽出
 # ============================================================
+_VALUE_SEP_PATTERN = r"(?:[ \t　]*[:：][ \t　]*|[ \t　]+|\n[ \t　]*)"
+
+
+def make_label_pattern(labels: list) -> str:
+    return r"(?:%s)" % "|".join(re.escape(label) for label in labels)
+
+
+def extract_by_labels(text: str, labels: list, value_pattern: str = r"([^\t\n]+)"):
+    pattern = make_label_pattern(labels) + _VALUE_SEP_PATTERN + value_pattern
+    m = re.search(pattern, text, flags=re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
 def extract_fields_from_pasted_text(text: str) -> dict:
     """貼り付けテキストから正規表現で各フィールドを抽出する。"""
     result = {}
     date_pattern = r"([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}|[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)"
-    patterns = {
-        "operating_company": r"運営会社\s*[\t　](.+?)(?:\t|\n|　|販売店)",
-        "store_name":         r"販売店\s*[\t　](.+?)(?:\t|\n|$)",
-        "plan":               r"プラン\s*[\t　](.+?)(?:\t|\n|$)",
-        "warranty_period":    r"保証期間\s*[\t　]([^\t\n]+)",
-        "warranty_start_date":rf"保証開始日\s*[\t　 ]+{date_pattern}",
-        "warranty_end_date":  rf"保証終了日\s*[\t　 ]+{date_pattern}",
-        "payment_method":     r"支払方法\s*[\t　]([^\t\n]+)",
-        "contract_status":    r"ステータス\s*[\t　]([^\t\n]+)",
-        "customer_code":      r"お客様コード\s*[\t　]([^\t\n]+)",
-        "customer_name":      r"お名前（漢字）\s*[\t　](.+?)(?:\t|\n|お名前)",
-        "customer_name_kana": r"お名前（カナ）\s*[\t　]([^\t\n]+)",
-        "phone_number":       r"お電話番号\s*[\t　]([0-9\-()（）]+)",
-        "postal_code":        r"郵便番号\s*[\t　]([0-9\-]+)",
-        "address":            r"ご住所\s*[\t　]([^\t\n]+)",
-        "wrt_no":             r"WRT-NO\s*[\t　]([^\t\n]+)",
-        "payment_amount":     r"支払金額\s*[\t　]([0-9,]+円)",
-        "product_price":      r"商品価格\s*[\t　]([0-9,]+円)",
-        "genre":              r"ジャンル\s*[\t　](.+?)(?:\t|\n|　|分類)",
-        "category":           r"分類\s*[\t　]([^\t\n]+)",
-        "series":             r"シリーズ\s*[\t　](.+?)(?:\t|\n|　|メーカー)",
-        "manufacturer":       r"メーカー\s*[\t　]([^\t\n]+)",
-        "model_number":       r"型番\s*[\t　]([^\t\n\s]+)",
-        "serial_number":      r"製造番号\s*[\t　]([^\t\n]+)",
+    field_specs = {
+        "operating_company": (["運営会社"], r"([^\t\n]+)"),
+        "store_name": (["販売店", "店舗名", "購入店舗", "販売店名"], r"([^\t\n]+)"),
+        "plan": (["プラン"], r"([^\t\n]+)"),
+        "warranty_period": (["保証期間"], r"([^\t\n]+)"),
+        "warranty_start_date": (["保証開始日", "保証開始", "保証開始年月日"], date_pattern),
+        "warranty_end_date": (["保証終了日", "保証終了", "保証満了日", "保証満了年月日"], date_pattern),
+        "payment_method": (["支払方法"], r"([^\t\n]+)"),
+        "contract_status": (["ステータス"], r"([^\t\n]+)"),
+        "customer_code": (["お客様コード"], r"([^\t\n]+)"),
+        "customer_name": (["お名前（漢字）", "お名前", "氏名", "お客様名"], r"([^\t\n]+)"),
+        "customer_name_kana": (["お名前（カナ）"], r"([^\t\n]+)"),
+        "phone_number": (["お電話番号", "電話番号", "お電話", "TEL", "Tel"], r"([0-9\-()（）]+)"),
+        "postal_code": (["郵便番号"], r"([0-9\-]+)"),
+        "address": (["ご住所", "住所", "お客様住所"], r"([^\t\n]+)"),
+        "wrt_no": (["WRT-NO", "WRT No", "WRT番号", "受付番号"], r"([^\t\n]+)"),
+        "payment_amount": (["支払金額"], r"([0-9,]+円)"),
+        "product_price": (["商品価格", "商品金額", "購入金額", "税込価格"], r"([0-9,]+円)"),
+        "genre": (["ジャンル"], r"([^\t\n]+)"),
+        "category": (["分類"], r"([^\t\n]+)"),
+        "series": (["シリーズ", "商品名", "製品名", "品目"], r"([^\t\n]+)"),
+        "manufacturer": (["メーカー", "メーカー名", "製造メーカー"], r"([^\t\n]+)"),
+        "model_number": (["型番", "品番", "モデル", "モデル番号"], r"([^\t\n\s]+)"),
+        "serial_number": (["製造番号"], r"([^\t\n]+)"),
     }
-    for key, pattern in patterns.items():
-        m = re.search(pattern, text)
-        if m:
-            val = m.group(1).strip()
-            if key in ("warranty_start_date", "warranty_end_date"):
-                val = normalize_date_text(val) or val
-            if val:
-                result[key] = val
+    for key, (labels, value_pattern) in field_specs.items():
+        val = extract_by_labels(text, labels, value_pattern)
+        if key in ("warranty_start_date", "warranty_end_date"):
+            val = normalize_date_text(val) or val
+        if val:
+            result[key] = val
     addr = result.get("address", "")
     if addr:
         result["prefecture"] = extract_prefecture(addr)

@@ -30,6 +30,31 @@ def run_fixture(name: str):
     return extracted, form, decision
 
 
+def debug_payload(extracted: dict, form: dict, decision: dict) -> str:
+    keys = [
+        "warranty_start_date", "warranty_end_date", "customer_name",
+        "phone_number", "address", "prefecture", "wrt_no", "product_price",
+        "series", "manufacturer", "model_number", "store_name",
+    ]
+    extracted_part = {k: extracted.get(k) for k in keys if extracted.get(k)}
+    form_part = {
+        "product": form.get("product"),
+        "manufacturer": form.get("manufacturer"),
+        "manufacturer_original": form.get("manufacturer_original"),
+        "prefecture": form.get("prefecture"),
+        "model_number": form.get("model_number"),
+    }
+    decision_part = {
+        "warranty_status": decision.get("warranty_status"),
+        "can_accept": decision.get("can_accept"),
+        "area_group": decision.get("area_group"),
+        "repair_type": decision.get("repair_type"),
+        "cost_estimate": decision.get("cost_estimate"),
+        "vendor": decision.get("vendor"),
+    }
+    return f"extracted={extracted_part}\nform={form_part}\ndecision={decision_part}"
+
+
 def test_case_dryer_active():
     extracted, form, decision = run_fixture("case_dryer_active.txt")
 
@@ -99,3 +124,41 @@ def test_case_unknown_missing_dates():
     assert decision["warranty_status"] == "unknown"
     assert decision["can_accept"] is False
     assert "保証開始日・保証終了日" in decision["warranty_result"]["required_questions"]
+
+
+def test_case_variation_colon_labels():
+    extracted, form, decision = run_fixture("case_variation_colon_labels.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert extracted["warranty_start_date"] == "2026/01/01", dbg
+    assert form["product"] == "エアコン", dbg
+    assert form["manufacturer"] == "ダイキン", dbg
+    assert form["prefecture"] == "滋賀県", dbg
+    assert decision["area_group"] == "NTT西日本", dbg
+    assert decision["warranty_status"] == "active", dbg
+
+
+def test_case_variation_space_labels():
+    extracted, form, decision = run_fixture("case_variation_space_labels.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert extracted["warranty_start_date"] == "2026/01/01", dbg
+    assert form["product"] == "ドライヤー", dbg
+    assert form["manufacturer"] == "パナソニック", dbg
+    assert form["manufacturer_original"] == "Panasonic", dbg
+    assert decision["warranty_status"] == "active", dbg
+    assert decision["repair_type"] == "持込修理", dbg
+
+
+def test_case_variation_alt_labels():
+    extracted, form, decision = run_fixture("case_variation_alt_labels.txt")
+    dbg = debug_payload(extracted, form, decision)
+
+    assert extracted["phone_number"] == "03-1234-5678", dbg
+    assert extracted["address"] == "東京都新宿区西新宿1-1-1", dbg
+    assert form["prefecture"] == "東京都", dbg
+    assert extracted["warranty_end_date"] == "2030/12/31", dbg
+    assert form["product"] == "パソコン", dbg
+    assert form["manufacturer"] == "Dell", dbg
+    assert form["model_number"] == "XPS13", dbg
+    assert decision["warranty_status"] == "active", dbg

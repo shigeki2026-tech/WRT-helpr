@@ -129,6 +129,7 @@ python tests/test_decision_rules.py
 ```
 
 ロジック単体テストは `tests/test_decision_rules.py`、保証画面コピー文を想定した統合テストは `tests/test_fixture_extraction.py` に分けています。
+fixtureテストは、実コピー文のラベル名・区切り文字の表記ゆれ検証用です。新しい実コピー文を入手したら `tests/fixtures/` に追加し、ラベル揺れが見つかった場合は `extract_fields_from_pasted_text()` のラベル候補へ追加してください。
 `check()` 内で `assert` しているため、期待値と実際値が異なる場合は pytest が確実に FAIL を報告します。
 
 ---
