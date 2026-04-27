@@ -307,6 +307,14 @@ def parse_date_safe(value):
     return None
 
 
+def format_date_yyyy_mm_dd(date_value) -> str:
+    return date_value.strftime("%Y/%m/%d") if date_value else ""
+
+
+def normalize_date_text(value: str) -> str:
+    return format_date_yyyy_mm_dd(parse_date_safe(value))
+
+
 def determine_warranty_status(form: dict, today=None) -> dict:
     """保証開始日・終了日から、WRTで受付へ進めるかを判定する。"""
     today = today or date.today()
@@ -373,6 +381,15 @@ def build_warranty_guidance(warranty_result: dict) -> str:
     return "保証開始日・保証終了日を確認"
 
 
+def warranty_acceptance_label(warranty_result: dict) -> str:
+    status = warranty_result.get("warranty_status", "unknown")
+    if status == "active":
+        return "受付可"
+    if status in ("before_start", "expired"):
+        return "受付不可"
+    return "要確認"
+
+
 @st.cache_data
 def load_master_products() -> pd.DataFrame:
     """legacy: data/master_products.csv（後方互換・主判定には使わない）"""
@@ -401,13 +418,14 @@ def _kw_match(keyword: str, target: str) -> bool:
 def extract_fields_from_pasted_text(text: str) -> dict:
     """貼り付けテキストから正規表現で各フィールドを抽出する。"""
     result = {}
+    date_pattern = r"([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}|[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)"
     patterns = {
         "operating_company": r"運営会社\s*[\t　](.+?)(?:\t|\n|　|販売店)",
         "store_name":         r"販売店\s*[\t　](.+?)(?:\t|\n|$)",
         "plan":               r"プラン\s*[\t　](.+?)(?:\t|\n|$)",
         "warranty_period":    r"保証期間\s*[\t　]([^\t\n]+)",
-        "warranty_start_date":r"保証開始日\s*[\t　]([0-9]{4}/[0-9]{2}/[0-9]{2})",
-        "warranty_end_date":  r"保証終了日\s*[\t　]([0-9]{4}/[0-9]{2}/[0-9]{2})",
+        "warranty_start_date":rf"保証開始日\s*[\t　 ]+{date_pattern}",
+        "warranty_end_date":  rf"保証終了日\s*[\t　 ]+{date_pattern}",
         "payment_method":     r"支払方法\s*[\t　]([^\t\n]+)",
         "contract_status":    r"ステータス\s*[\t　]([^\t\n]+)",
         "customer_code":      r"お客様コード\s*[\t　]([^\t\n]+)",
@@ -430,6 +448,8 @@ def extract_fields_from_pasted_text(text: str) -> dict:
         m = re.search(pattern, text)
         if m:
             val = m.group(1).strip()
+            if key in ("warranty_start_date", "warranty_end_date"):
+                val = normalize_date_text(val) or val
             if val:
                 result[key] = val
     addr = result.get("address", "")
@@ -510,6 +530,9 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         if src in extracted and extracted[src]:
             if dst == "prefecture" and extracted[src] not in PREFECTURES:
                 form[dst] = ""
+                continue
+            if dst in ("warranty_start_date", "warranty_end_date"):
+                form[dst] = normalize_date_text(extracted[src]) or extracted[src]
                 continue
             form[dst] = extracted[src]
     raw_series = extracted.get("series", "")
@@ -1032,6 +1055,11 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"保証開始日　: {form.get('warranty_start_date', '未入力')}",
         f"保証終了日　: {form.get('warranty_end_date', '未入力')}",
         "",
+        "【受付可否】",
+        f"受付可否：{warranty_acceptance_label(warranty_result)}",
+        f"理由：{warranty_result.get('title', '保証期間未確認')}",
+        f"対応方針：{build_warranty_guidance(warranty_result)}",
+        "",
         "【保証期間判定】",
         f"ステータス：{warranty_result.get('title', '保証期間未確認')}",
         f"保証開始日：{form.get('warranty_start_date', '未入力') or '未入力'}",
@@ -1399,6 +1427,8 @@ def render_tab_call():
     inferred_case_type  = decision.get("inferred_case_type", "")
     area_group          = decision.get("area_group", "")
     warranty_result     = decision["warranty_result"]
+    warranty_status     = warranty_result.get("warranty_status", "unknown")
+    warranty_can_accept = warranty_result.get("can_accept", False)
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -1467,6 +1497,8 @@ def render_tab_call():
 
         # --- 修理形態 ---
         repair_color = {"出張修理": "#2ecc71", "持込修理": "#3498db", "要確認": "#e67e22"}
+        if not warranty_can_accept:
+            repair_color = {"出張修理": "#95a5a6", "持込修理": "#95a5a6", "要確認": "#95a5a6"}
         st.markdown(
             f'##### 🔧 修理形態'
             + (f'<span style="font-size:0.75em;color:#888;margin-left:8px;">({repair_source})</span>'
@@ -1475,61 +1507,73 @@ def render_tab_call():
         )
         st.markdown(
             f'<div style="background:{repair_color.get(repair_type,"#95a5a6")};'
-            f'color:white;padding:10px 16px;border-radius:8px;font-size:1.3em;'
+            f'color:white;padding:8px 14px;border-radius:8px;font-size:1.05em;'
             f'font-weight:bold;text-align:center;">{repair_type}</div>',
             unsafe_allow_html=True,
         )
+        if not warranty_can_accept:
+            st.caption("保証期間判定が優先です。修理形態は入力確認用の補助表示です。")
         if repair_result.get("needs_confirmation"):
             confirm_note = repair_result.get("notes") or "型番・詳細確認要"
             st.warning(f"⚠️ 要確認理由: {confirm_note}")
 
         # --- 概算費用（4状態: confirmed / pending / unavailable / escalation）---
         st.markdown("##### 💴 保証対象外時の概算費用")
-        # 表示状態を決定
-        _disp_status = cost_result.get("cost_status", "confirmed")
-        if not script_result.get("price_guidance_allowed", True):
-            _disp_status = "unavailable"
-        elif cost_result.get("needs_escalation") and _disp_status not in ("pending",):
-            _disp_status = "escalation"
-
-        if _disp_status == "unavailable":
-            st.error("🚫 金額案内不可 — スクリプト・担当確認に従うこと")
-        elif _disp_status == "pending":
-            st.warning("🟡 概算費用: 追加確認が必要です（未確定）")
-            rq = cost_result.get("required_questions", "").strip()
-            if rq:
-                st.markdown(f"**▶ 確認事項:** {rq}")
-            note = cost_result.get("internal_note", "").strip()
-            if note:
-                st.caption(f"内部メモ: {note}")
-        elif _disp_status == "escalation":
-            st.markdown(
-                f'<div style="background:#e67e22;color:white;padding:10px 16px;'
-                f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
-                f'{cost_estimate}</div>',
-                unsafe_allow_html=True,
-            )
-            esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
-            st.warning(f"⚠️ 高額エスカ注意: {esc_note}")
-        else:  # confirmed
-            cost_color = "#c0392b" if cost_estimate in ("要確認", "") else "#27ae60"
-            st.markdown(
-                f'<div style="background:{cost_color};color:white;padding:10px 16px;'
-                f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
-                f'{cost_estimate}</div>',
-                unsafe_allow_html=True,
-            )
-            # eu_asked_only の場合は注記を表示
-            if cost_result.get("guidance_scope") == "eu_asked_only":
-                cn = cost_result.get("customer_notice") or "EUから質問があった場合のみ案内"
-                st.caption(f"⚠️ EU質問時のみ案内: {cn}")
-
-        # --- 金額案内可否（unavailableは上で表示済み）---
-        if _disp_status != "unavailable":
+        if not warranty_can_accept:
+            warranty_cost_message = {
+                "before_start": "保証開始日前のため、WRT概算案内対象外",
+                "expired": "保証期間終了後のため、WRT概算案内対象外",
+                "unknown": "保証期間未確認のため、概算費用は補助情報です。先に保証開始日・保証終了日を確認してください。",
+            }.get(warranty_status, "保証期間判定を優先してください")
+            st.warning(warranty_cost_message)
+            if cost_estimate and cost_estimate not in ("未確定", ""):
+                st.caption(f"裏側判定の参考概算: {cost_estimate}")
+        else:
+            # 表示状態を決定
+            _disp_status = cost_result.get("cost_status", "confirmed")
             if not script_result.get("price_guidance_allowed", True):
-                st.error("🚫 金額案内不可（スクリプト・担当確認に従うこと）")
-            elif _disp_status == "confirmed" and cost_estimate not in ("要確認", "未確定", ""):
-                st.success("✅ 金額案内可")
+                _disp_status = "unavailable"
+            elif cost_result.get("needs_escalation") and _disp_status not in ("pending",):
+                _disp_status = "escalation"
+
+            if _disp_status == "unavailable":
+                st.error("🚫 金額案内不可 — スクリプト・担当確認に従うこと")
+            elif _disp_status == "pending":
+                st.warning("🟡 概算費用: 追加確認が必要です（未確定）")
+                rq = cost_result.get("required_questions", "").strip()
+                if rq:
+                    st.markdown(f"**▶ 確認事項:** {rq}")
+                note = cost_result.get("internal_note", "").strip()
+                if note:
+                    st.caption(f"内部メモ: {note}")
+            elif _disp_status == "escalation":
+                st.markdown(
+                    f'<div style="background:#e67e22;color:white;padding:10px 16px;'
+                    f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
+                    f'{cost_estimate}</div>',
+                    unsafe_allow_html=True,
+                )
+                esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
+                st.warning(f"⚠️ 高額エスカ注意: {esc_note}")
+            else:  # confirmed
+                cost_color = "#c0392b" if cost_estimate in ("要確認", "") else "#27ae60"
+                st.markdown(
+                    f'<div style="background:{cost_color};color:white;padding:10px 16px;'
+                    f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
+                    f'{cost_estimate}</div>',
+                    unsafe_allow_html=True,
+                )
+                # eu_asked_only の場合は注記を表示
+                if cost_result.get("guidance_scope") == "eu_asked_only":
+                    cn = cost_result.get("customer_notice") or "EUから質問があった場合のみ案内"
+                    st.caption(f"⚠️ EU質問時のみ案内: {cn}")
+
+            # --- 金額案内可否（unavailableは上で表示済み）---
+            if _disp_status != "unavailable":
+                if not script_result.get("price_guidance_allowed", True):
+                    st.error("🚫 金額案内不可（スクリプト・担当確認に従うこと）")
+                elif _disp_status == "confirmed" and cost_estimate not in ("要確認", "未確定", ""):
+                    st.success("✅ 金額案内可")
 
         # --- データ消去同意 ---
         if needs_data_erase:
@@ -1573,7 +1617,12 @@ def render_tab_call():
 
         # --- 修理拠点（終話後へ） ---
         st.markdown("##### 🏭 修理拠点判定")
-        st.info("終話後処理タブで確定してください。")
+        if warranty_status == "expired":
+            st.warning("受付不可のため手配対象外")
+        elif warranty_status in ("before_start", "unknown"):
+            st.caption("保証期間判定が優先です。修理拠点は日付確認後に扱ってください。")
+        else:
+            st.info("終話後処理タブで確定してください。")
 
         # ─── 判定デバッグ情報 ───
         with st.expander("🔍 判定デバッグ情報（4層）"):

@@ -489,6 +489,70 @@ def test_tc46_expired_keeps_acceptance_priority_even_when_cost_exists():
     check("TC46 guidance is受付不可", app.build_warranty_guidance(d["warranty_result"]), "保証期間終了のため受付不可")
 
 
+def test_tc47_extract_warranty_dates_slash():
+    ext = app.extract_fields_from_pasted_text("保証開始日 2026/05/01\n保証終了日 2031/04/30")
+    check("TC47 slash start", ext.get("warranty_start_date"), "2026/05/01")
+    check("TC47 slash end", ext.get("warranty_end_date"), "2031/04/30")
+
+
+def test_tc48_extract_warranty_dates_hyphen():
+    ext = app.extract_fields_from_pasted_text("保証開始日 2026-05-01\n保証終了日 2031-04-30")
+    check("TC48 hyphen start normalized", ext.get("warranty_start_date"), "2026/05/01")
+    check("TC48 hyphen end normalized", ext.get("warranty_end_date"), "2031/04/30")
+
+
+def test_tc49_extract_warranty_dates_japanese():
+    ext = app.extract_fields_from_pasted_text("保証開始日 2026年5月1日\n保証終了日 2031年4月30日")
+    check("TC49 japanese start normalized", ext.get("warranty_start_date"), "2026/05/01")
+    check("TC49 japanese end normalized", ext.get("warranty_end_date"), "2031/04/30")
+
+
+def test_tc50_normalize_date_text():
+    check("TC50 hyphen normalize", app.normalize_date_text("2026-05-01"), "2026/05/01")
+    check("TC50 japanese normalize", app.normalize_date_text("2026年5月1日"), "2026/05/01")
+
+
+def test_tc51_warranty_guidance_before_start_contains_destination():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026/05/01", warranty_end_date="2031/04/30"),
+        today=date(2026, 4, 27),
+    )
+    check("TC51 before_start", r["warranty_status"], "before_start")
+    check("TC51 can_accept False", r["can_accept"], False)
+    check("TC51 guidance contains maker destination",
+          "メーカー保証または販売店・メーカー窓口へ誘導" in app.build_warranty_guidance(r), True)
+
+
+def test_tc52_warranty_guidance_expired_contains_unacceptable():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2020/01/01", warranty_end_date="2026/04/26"),
+        today=date(2026, 4, 27),
+    )
+    check("TC52 expired", r["warranty_status"], "expired")
+    check("TC52 can_accept False", r["can_accept"], False)
+    check("TC52 guidance contains expired",
+          "保証期間終了のため受付不可" in app.build_warranty_guidance(r), True)
+
+
+def test_tc53_warranty_unknown_required_questions():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="", warranty_end_date="2031/04/30"),
+        today=date(2026, 4, 27),
+    )
+    check("TC53 unknown", r["warranty_status"], "unknown")
+    check("TC53 can_accept False", r["can_accept"], False)
+    check("TC53 required_questions contains dates", "保証開始日・保証終了日" in r["required_questions"], True)
+
+
+def test_tc54_warranty_active_accepts():
+    r = app.determine_warranty_status(
+        make_form(warranty_start_date="2026/01/01", warranty_end_date="2030/12/31"),
+        today=date(2026, 4, 27),
+    )
+    check("TC54 active", r["warranty_status"], "active")
+    check("TC54 can_accept True", r["can_accept"], True)
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -540,6 +604,14 @@ _ALL_TESTS = [
     test_tc44_warranty_japanese_date_active,
     test_tc45_run_decision_includes_warranty_result,
     test_tc46_expired_keeps_acceptance_priority_even_when_cost_exists,
+    test_tc47_extract_warranty_dates_slash,
+    test_tc48_extract_warranty_dates_hyphen,
+    test_tc49_extract_warranty_dates_japanese,
+    test_tc50_normalize_date_text,
+    test_tc51_warranty_guidance_before_start_contains_destination,
+    test_tc52_warranty_guidance_expired_contains_unacceptable,
+    test_tc53_warranty_unknown_required_questions,
+    test_tc54_warranty_active_accepts,
 ]
 
 if __name__ == "__main__":
