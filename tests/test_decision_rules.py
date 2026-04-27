@@ -751,6 +751,118 @@ def test_tc84_special_carry_in_products_in_options():
 
 
 # ============================================================
+# TC85–TC94: 判定診断パネル
+# ============================================================
+
+def _diag_area(diagnostics: dict, area: str) -> dict:
+    """指定 area のアイテムを返す。見つからなければ空 dict。"""
+    for item in diagnostics.get("items", []):
+        if item["area"] == area:
+            return item
+    return {}
+
+
+def test_tc85_diagnostics_warranty_expired_overall_error():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2026/04/26",
+    ))
+    diag = d["diagnostics"]
+    check("TC85 overall_status=error",           diag["overall_status"], "error")
+    w = _diag_area(diag, "保証期間判定")
+    check("TC85 保証期間 status=error",           w["status"],            "error")
+    check("TC85 保証期間 title 受付不可を含む",  "受付不可" in w["title"], True)
+
+
+def test_tc86_diagnostics_warranty_unknown_blank_missing_fields():
+    d = app.run_decision(make_form(
+        warranty_start_date="",
+        warranty_end_date="",
+    ))
+    diag = d["diagnostics"]
+    w = _diag_area(diag, "保証期間判定")
+    check("TC86 保証期間 status=warning",         w["status"], "warning")
+    check("TC86 warranty_start_date in missing",
+          "warranty_start_date" in w["missing_fields"], True)
+    check("TC86 warranty_end_date in missing",
+          "warranty_end_date" in w["missing_fields"], True)
+
+
+def test_tc87_diagnostics_warranty_unknown_invalid_date():
+    d = app.run_decision(make_form(
+        warranty_start_date="not-a-date",
+        warranty_end_date="2030/12/31",
+    ))
+    diag = d["diagnostics"]
+    w = _diag_area(diag, "保証期間判定")
+    check("TC87 保証期間 status=warning",         w["status"], "warning")
+    check("TC87 warranty_start_date in invalid",
+          "warranty_start_date" in w["invalid_fields"], True)
+    check("TC87 invalid_fields 非空",            bool(w["invalid_fields"]), True)
+
+
+def test_tc88_diagnostics_ac_no_mfr_cost_pending():
+    d = app.run_decision(make_form(product="エアコン"))
+    diag = d["diagnostics"]
+    c = _diag_area(diag, "概算費用判定")
+    check("TC88 概算費用 status=warning",         c["status"], "warning")
+    check("TC88 概算費用 title 未確定を含む",    "未確定" in c["title"], True)
+    check("TC88 overall_status=warning",          diag["overall_status"], "warning")
+
+
+def test_tc89_diagnostics_ac_daikin_no_type_cost_pending():
+    d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン"))
+    diag = d["diagnostics"]
+    c = _diag_area(diag, "概算費用判定")
+    check("TC89 概算費用 status=warning",         c["status"], "warning")
+    check("TC89 reason 業務用を含む",            "業務用" in c["reason"], True)
+
+
+def test_tc90_diagnostics_pc_no_mfr_cost_pending():
+    d = app.run_decision(make_form(product="パソコン"))
+    diag = d["diagnostics"]
+    c = _diag_area(diag, "概算費用判定")
+    check("TC90 概算費用 status=warning",         c["status"], "warning")
+    check("TC90 概算費用 title 未確定を含む",    "未確定" in c["title"], True)
+
+
+def test_tc91_diagnostics_kyutoki_only_pending():
+    d = app.run_decision(make_form(product="給湯器"))
+    diag = d["diagnostics"]
+    c = _diag_area(diag, "概算費用判定")
+    check("TC91 概算費用 status=warning",         c["status"], "warning")
+    check("TC91 reason 給湯器種別を含む",
+          "ガス給湯器" in c["reason"], True)
+
+
+def test_tc92_diagnostics_empty_product_repair_warning():
+    d = app.run_decision(make_form(product=""))
+    diag = d["diagnostics"]
+    r = _diag_area(diag, "修理形態判定")
+    check("TC92 修理形態 status=warning",         r["status"], "warning")
+    check("TC92 product in missing_fields",
+          "product" in r["missing_fields"], True)
+
+
+def test_tc93_diagnostics_empty_prefecture_vendor_warning():
+    d = app.run_decision(make_form(product="洗濯機", prefecture=""))
+    diag = d["diagnostics"]
+    v = _diag_area(diag, "修理拠点判定")
+    check("TC93 修理拠点 status=warning",         v["status"], "warning")
+    check("TC93 prefecture in missing_fields",
+          "prefecture" in v["missing_fields"], True)
+
+
+def test_tc94_diagnostics_pioneer_av_escalation_warning():
+    d = app.run_decision(make_form(product="AV製品", manufacturer="パイオニア"))
+    diag = d["diagnostics"]
+    c = _diag_area(diag, "概算費用判定")
+    check("TC94 概算費用 status=warning (escalation)", c["status"], "warning")
+    check("TC94 title 高額エスカを含む",         "高額エスカ" in c["title"], True)
+
+
+# ============================================================
 # Standalone runner
 # ============================================================
 
@@ -839,6 +951,16 @@ _ALL_TESTS = [
     test_tc82_pioneer_av_cost_escalation,
     test_tc83_pioneer_car_navi_not_av_cost,
     test_tc84_special_carry_in_products_in_options,
+    test_tc85_diagnostics_warranty_expired_overall_error,
+    test_tc86_diagnostics_warranty_unknown_blank_missing_fields,
+    test_tc87_diagnostics_warranty_unknown_invalid_date,
+    test_tc88_diagnostics_ac_no_mfr_cost_pending,
+    test_tc89_diagnostics_ac_daikin_no_type_cost_pending,
+    test_tc90_diagnostics_pc_no_mfr_cost_pending,
+    test_tc91_diagnostics_kyutoki_only_pending,
+    test_tc92_diagnostics_empty_product_repair_warning,
+    test_tc93_diagnostics_empty_prefecture_vendor_warning,
+    test_tc94_diagnostics_pioneer_av_escalation_warning,
 ]
 
 if __name__ == "__main__":

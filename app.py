@@ -1123,7 +1123,8 @@ def build_customer_cost_guidance(repair_type: str, cost_estimate: str,
 # ============================================================
 def build_history_template(form: dict, repair_type: str, script_result: dict,
                             cost_estimate: str, vendor: str,
-                            warranty_result: dict = None) -> str:
+                            warranty_result: dict = None,
+                            diagnostics: dict = None) -> str:
     warranty_result = warranty_result or determine_warranty_status(form)
     lines = [
         "■対応履歴",
@@ -1166,7 +1167,272 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"修理拠点候補: {vendor}",
         f"次対応　　　: ",
     ])
+    # ── 判定診断サマリー ──
+    if diagnostics:
+        _status_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
+        overall = diagnostics.get("overall_status", "ok")
+        lines.append("")
+        lines.append("【判定診断】")
+        lines.append(f"総合ステータス: {_status_icon.get(overall, '?')} {overall.upper()}")
+        for item in diagnostics.get("items", []):
+            icon = _status_icon.get(item["status"], "?")
+            lines.append(f"{icon} {item['area']}: {item['title']}")
     return "\n".join(lines)
+
+
+# ============================================================
+# 判定診断パネル
+# ============================================================
+def build_decision_diagnostics(form: dict, result: dict) -> dict:
+    """
+    フォームと run_decision() の戻り値から判定診断アイテムのリストを生成する。
+
+    戻り値:
+        {
+            "overall_status": "ok" / "warning" / "error",
+            "items": [
+                {
+                    "area": str,           # 判定エリア名
+                    "status": str,         # "ok" / "warning" / "error"
+                    "title": str,          # 短いタイトル
+                    "reason": str,         # 詳細理由
+                    "missing_fields": [],  # 未入力フィールドキー名リスト
+                    "invalid_fields": [],  # 不正値フィールドキー名リスト
+                    "next_action": str,    # 次に取るべきアクション
+                },
+                ...
+            ]
+        }
+    """
+    items = []
+
+    def _item(area, status, title, reason, missing_fields=None, invalid_fields=None, next_action=""):
+        return {
+            "area": area,
+            "status": status,
+            "title": title,
+            "reason": reason,
+            "missing_fields": missing_fields or [],
+            "invalid_fields": invalid_fields or [],
+            "next_action": next_action,
+        }
+
+    # ── 1. 保証期間判定 ──────────────────────────────────────────
+    warranty_result = result.get("warranty_result", {})
+    w_status = warranty_result.get("warranty_status", "unknown")
+    start_raw = (form.get("warranty_start_date") or "").strip()
+    end_raw   = (form.get("warranty_end_date") or "").strip()
+    # 未入力 vs フォーマット不正を区別する
+    invalid_dates: list = []
+    missing_dates: list = []
+    if not start_raw:
+        missing_dates.append("warranty_start_date")
+    elif parse_date_safe(start_raw) is None:
+        invalid_dates.append("warranty_start_date")
+    if not end_raw:
+        missing_dates.append("warranty_end_date")
+    elif parse_date_safe(end_raw) is None:
+        invalid_dates.append("warranty_end_date")
+
+    if w_status == "active":
+        items.append(_item(
+            "保証期間判定", "ok", "保証期間内",
+            "保証期間内のため、受付判定へ進めます。",
+            next_action="修理形態・費用の確認へ進む",
+        ))
+    elif w_status == "before_start":
+        items.append(_item(
+            "保証期間判定", "warning", "保証開始日前",
+            "保証開始日前のためWRT受付不可。メーカー保証または販売店・メーカー窓口へ誘導してください。",
+            next_action="メーカー保証期間・窓口を案内",
+        ))
+    elif w_status == "expired":
+        items.append(_item(
+            "保証期間判定", "error", "保証期間終了 — 受付不可",
+            "保証期間終了後のためWRT受付不可。受付不可として案内してください。",
+            next_action="受付不可を案内して終話",
+        ))
+    else:  # unknown
+        reason_parts = []
+        if missing_dates:
+            reason_parts.append(
+                "日付が未入力: " + "、".join(FIELD_LABELS.get(f, f) for f in missing_dates)
+            )
+        if invalid_dates:
+            reason_parts.append(
+                "日付フォーマット不正（YYYY/MM/DD）: "
+                + "、".join(FIELD_LABELS.get(f, f) for f in invalid_dates)
+            )
+        if not reason_parts:
+            reason_parts.append("保証開始日・保証終了日が確認できません")
+        items.append(_item(
+            "保証期間判定", "warning", "保証期間未確認",
+            " / ".join(reason_parts),
+            missing_fields=missing_dates,
+            invalid_fields=invalid_dates,
+            next_action="保証開始日・保証終了日を確認",
+        ))
+
+    # ── 2. 参照スクリプト判定 ────────────────────────────────────
+    script_result = result.get("script_result", {})
+    sheet = (script_result.get("sheet_name") or "").strip()
+    part  = (script_result.get("part") or "").strip()
+    escalation_needed = script_result.get("escalation_needed", False)
+
+    if sheet and sheet != "要確認":
+        items.append(_item(
+            "参照スクリプト判定", "ok", "スクリプト確認済み",
+            f"シート: {sheet} / パート: {part or '─'}",
+            next_action="当該シートの当該パートを参照",
+        ))
+    else:
+        missing_for_script: list = []
+        reasons: list = []
+        if not (form.get("product") or "").strip():
+            missing_for_script.append("product")
+            reasons.append("製品が未選択")
+        if not (form.get("appliance_type") or "").strip():
+            missing_for_script.append("appliance_type")
+            reasons.append("家電/住設が未選択")
+        repair_type = result.get("repair_type", "")
+        if not repair_type or repair_type == "要確認":
+            reasons.append("修理形態が要確認または未確定")
+        if escalation_needed:
+            reasons.append("エスカレーションが必要")
+        reason_str = " / ".join(reasons) if reasons else "スクリプト参照先が確定していません"
+        items.append(_item(
+            "参照スクリプト判定", "warning", "スクリプト参照先が未確定",
+            reason_str,
+            missing_fields=missing_for_script,
+            next_action="製品・家電/住設区分を入力してSV確認",
+        ))
+
+    # ── 3. 概算費用判定 ──────────────────────────────────────────
+    cost_result   = result.get("cost_result", {})
+    cost_status   = cost_result.get("cost_status", "confirmed")
+    needs_esc     = cost_result.get("needs_escalation", False)
+    price_ok      = script_result.get("price_guidance_allowed", True)
+
+    # UIと同じ表示状態を計算
+    disp_cost = cost_status
+    if not price_ok:
+        disp_cost = "unavailable"
+    elif needs_esc and cost_status not in ("pending",):
+        disp_cost = "escalation"
+
+    if disp_cost == "unavailable":
+        items.append(_item(
+            "概算費用判定", "warning", "金額案内不可",
+            "案件区分により金額案内は行いません（スクリプト・担当確認に従う）。",
+            next_action="スクリプトに従い金額を案内しない",
+        ))
+    elif disp_cost == "pending":
+        missing_cost = cost_result.get("missing_fields", [])
+        rq = (cost_result.get("required_questions") or "").strip()
+        reason_str = (f"費用確定のための必須入力が不足しています。{rq}"
+                      if rq else "費用確定のための情報が不足しています")
+        items.append(_item(
+            "概算費用判定", "warning", "概算費用: 未確定（追加確認が必要）",
+            reason_str,
+            missing_fields=missing_cost,
+            next_action=rq or "不足フィールドを入力して費用を確定",
+        ))
+    elif disp_cost == "escalation":
+        cost_estimate = result.get("cost_estimate", "")
+        items.append(_item(
+            "概算費用判定", "warning", f"高額エスカ注意: {cost_estimate}",
+            "費用が高額のため概算案内には注意が必要です。エスカレーション推奨。",
+            next_action="SVへエスカレーション",
+        ))
+    else:  # confirmed
+        cost_estimate = result.get("cost_estimate", "")
+        if cost_estimate and cost_estimate not in ("", "要確認", "未確定"):
+            eu_note = " ※EUから質問があった場合のみ案内" if cost_result.get("guidance_scope") == "eu_asked_only" else ""
+            items.append(_item(
+                "概算費用判定", "ok", f"概算費用確定: {cost_estimate}",
+                f"費用の案内が可能です。{eu_note}",
+                next_action="必要に応じてお客様へ概算を案内",
+            ))
+        else:
+            items.append(_item(
+                "概算費用判定", "warning", "概算費用: 要確認",
+                "修理形態または製品情報が不足しているため費用を確定できません。",
+                next_action="製品・修理形態を確認",
+            ))
+
+    # ── 4. 修理形態判定 ──────────────────────────────────────────
+    repair_type   = result.get("repair_type", "")
+    repair_result = result.get("repair_result", {})
+    product_val   = (form.get("product") or "").strip()
+    mfr_val       = (form.get("manufacturer") or "").strip()
+
+    if repair_type in ("出張修理", "持込修理"):
+        next_rt = ("訪問先住所・設置場所を確認"
+                   if repair_type == "出張修理" else "付属品・返送先住所を確認")
+        items.append(_item(
+            "修理形態判定", "ok", f"修理形態: {repair_type}",
+            "修理形態が確定しました。",
+            next_action=next_rt,
+        ))
+    else:
+        reasons: list = []
+        missing_repair: list = []
+        if not product_val or product_val == PRODUCT_OTHER:
+            reasons.append("製品が未選択または「その他・要確認」")
+            missing_repair.append("product")
+        if mfr_val in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+            reasons.append("メーカーが「その他・要確認」または「不明」")
+        if repair_result.get("needs_confirmation"):
+            note = (repair_result.get("notes") or "型番・詳細確認要").strip()
+            reasons.append(f"確認要: {note}")
+        if not reasons:
+            reasons.append("修理形態が「要確認」または未確定です")
+        items.append(_item(
+            "修理形態判定", "warning", "修理形態: 要確認",
+            " / ".join(reasons),
+            missing_fields=missing_repair,
+            next_action="SV/担当に確認",
+        ))
+
+    # ── 5. 修理拠点判定 ──────────────────────────────────────────
+    vendor        = result.get("vendor", "")
+    vendor_result = result.get("vendor_result", {})
+
+    if "担当エスカ" in vendor or vendor_result.get("needs_escalation", False):
+        missing_vendor: list = []
+        reasons_v: list = []
+        if not (form.get("prefecture") or "").strip():
+            missing_vendor.append("prefecture")
+            reasons_v.append("都道府県が未選択")
+        if not product_val:
+            if "product" not in missing_vendor:
+                missing_vendor.append("product")
+            reasons_v.append("製品が未選択")
+        if not reasons_v:
+            reasons_v.append("修理拠点が確定していません。担当にエスカレーションしてください。")
+        items.append(_item(
+            "修理拠点判定", "warning", f"修理拠点: 要確認 ({vendor})",
+            " / ".join(reasons_v),
+            missing_fields=missing_vendor,
+            next_action="担当にエスカレーションして拠点を確定",
+        ))
+    else:
+        items.append(_item(
+            "修理拠点判定", "ok", f"修理拠点: {vendor}",
+            "修理拠点が確定しました。",
+            next_action="終話後処理タブで手配を進める",
+        ))
+
+    # ── overall_status 計算 ──────────────────────────────────────
+    statuses = [item["status"] for item in items]
+    if "error" in statuses:
+        overall_status = "error"
+    elif "warning" in statuses:
+        overall_status = "warning"
+    else:
+        overall_status = "ok"
+
+    return {"overall_status": overall_status, "items": items}
 
 
 # ============================================================
@@ -1322,7 +1588,7 @@ def run_decision(form: dict) -> dict:
     else:
         vendor = determine_vendor_candidate(working_form)
 
-    return {
+    _result_core = {
         # ── 主要判定結果 ──
         "repair_type":         repair_type,
         "cost_estimate":       cost_estimate,
@@ -1346,6 +1612,11 @@ def run_decision(form: dict) -> dict:
         # ── working_form（デバッグ用） ──
         "working_form":        working_form,
     }
+    # ── 判定診断パネル ──
+    diagnostics = build_decision_diagnostics(working_form, _result_core)
+    _result_core["diagnostics"]    = diagnostics
+    _result_core["overall_status"] = diagnostics["overall_status"]
+    return _result_core
 
 
 # ============================================================
@@ -1537,6 +1808,7 @@ def render_tab_call():
     warranty_result     = decision["warranty_result"]
     warranty_status     = warranty_result.get("warranty_status", "unknown")
     warranty_can_accept = warranty_result.get("can_accept", False)
+    diagnostics         = decision.get("diagnostics", {})
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -1732,6 +2004,44 @@ def render_tab_call():
         else:
             st.info("終話後処理タブで確定してください。")
 
+        # --- 判定診断パネル ---
+        _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
+        _overall   = diagnostics.get("overall_status", "ok")
+        _diag_label = {"ok": "すべての判定項目が確定しています",
+                       "warning": "確認が必要な項目があります",
+                       "error": "受付不可の項目があります"}.get(_overall, "")
+        with st.expander(
+            f"📊 判定診断パネル  {_diag_icon.get(_overall,'')} {_diag_label}",
+            expanded=(_overall != "ok"),
+        ):
+            if _overall == "ok":
+                st.success(f"✅ {_diag_label}")
+            elif _overall == "error":
+                st.error(f"❌ {_diag_label}")
+            else:
+                st.warning(f"⚠️ {_diag_label}")
+            for _d in diagnostics.get("items", []):
+                _icon = _diag_icon.get(_d["status"], "?")
+                _header = f"{_icon} **{_d['area']}** — {_d['title']}"
+                if _d["status"] == "ok":
+                    st.success(_header)
+                elif _d["status"] == "error":
+                    st.error(_header)
+                    if _d.get("reason"):
+                        st.markdown(f"　{_d['reason']}")
+                else:
+                    st.warning(_header)
+                    if _d.get("reason"):
+                        st.markdown(f"　{_d['reason']}")
+                if _d.get("missing_fields"):
+                    lbl = "、".join(FIELD_LABELS.get(f, f) for f in _d["missing_fields"])
+                    st.caption(f"　📝 未入力: {lbl}")
+                if _d.get("invalid_fields"):
+                    lbl = "、".join(FIELD_LABELS.get(f, f) for f in _d["invalid_fields"])
+                    st.caption(f"　⚠️ フォーマット不正: {lbl}")
+                if _d.get("next_action"):
+                    st.caption(f"　▶ 次のアクション: {_d['next_action']}")
+
         # ─── 判定デバッグ情報 ───
         with st.expander("🔍 判定デバッグ情報（4層）"):
             # Layer 1
@@ -1784,7 +2094,8 @@ def render_tab_call():
         st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
     with col_b:
         history_tmpl = build_history_template(
-            st.session_state.form, repair_type, script_result, cost_estimate, vendor, warranty_result)
+            st.session_state.form, repair_type, script_result, cost_estimate, vendor,
+            warranty_result, diagnostics)
         st.markdown("##### 📄 対応履歴テンプレ")
         st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
 
@@ -1801,7 +2112,8 @@ def render_tab_after_call():
     script_result = decision["script_result"]
     vendor        = decision["vendor"]
     warranty_result = decision["warranty_result"]
-    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor, warranty_result)
+    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor,
+                                            warranty_result, decision.get("diagnostics"))
 
     col1, col2 = st.columns(2)
     with col1:
