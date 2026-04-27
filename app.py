@@ -354,6 +354,9 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     form = current_form.copy()
     for src, dst in mapping.items():
         if src in extracted and extracted[src]:
+            if dst == "prefecture" and extracted[src] not in PREFECTURES:
+                form[dst] = ""
+                continue
             form[dst] = extracted[src]
     raw_series = extracted.get("series", "")
     if raw_series:

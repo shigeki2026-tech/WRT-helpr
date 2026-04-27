@@ -299,62 +299,77 @@ def test_tc21_tokyo_ntt_east():
     check("TC21 東京都 → area_group=NTT東日本", d["area_group"], "NTT東日本")
 
 
-def test_tc22_ac_only_pending_repair_type_visit():
+def test_tc22_blank_prefecture_no_area_group():
+    d = app.run_decision(make_form(prefecture=""))
+    check("TC22 都道府県未選択 → area_group空", d["area_group"], "")
+
+
+def test_tc23_extract_prefecture_shiga_from_address():
+    check("TC23 住所から滋賀県を抽出",
+          app.extract_prefecture("滋賀県大津市浜大津1-1-1"), "滋賀県")
+
+
+def test_tc24_extract_prefecture_tokyo_from_address():
+    check("TC24 住所から東京都を抽出",
+          app.extract_prefecture("東京都新宿区西新宿1-1-1"), "東京都")
+
+
+def test_tc25_ac_only_pending_repair_type_visit():
     d = app.run_decision(make_form(product="エアコン"))
-    check("TC22 エアコンのみ → 出張修理", d["repair_type"], "出張修理")
-    check("TC22 エアコンのみ → pending", d["cost_result"]["cost_status"], "pending")
-    check("TC22 エアコンのみ → 未確定", d["cost_estimate"], "未確定")
-    check("TC22 エアコンのみ → 金額案内不可", d["cost_result"]["can_announce_cost"], False)
-    check("TC22 エアコンのみ → メーカー確認", d["cost_result"]["required_questions"], "メーカーを確認してください")
+    check("TC25 エアコンのみ → 出張修理", d["repair_type"], "出張修理")
+    check("TC25 エアコンのみ → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC25 エアコンのみ → 未確定", d["cost_estimate"], "未確定")
+    check("TC25 エアコンのみ → 金額案内不可", d["cost_result"]["can_announce_cost"], False)
+    check("TC25 エアコンのみ → メーカー確認", d["cost_result"]["required_questions"], "メーカーを確認してください")
 
 
-def test_tc23_ac_daikin_only_pending_type_question():
+def test_tc26_ac_daikin_only_pending_type_question():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン"))
-    check("TC23 エアコン+ダイキンのみ → pending", d["cost_result"]["cost_status"], "pending")
-    check("TC23 エアコン+ダイキンのみ → 未確定", d["cost_estimate"], "未確定")
-    check("TC23 家庭用/業務用確認", d["cost_result"]["required_questions"], "家庭用/業務用を確認してください")
+    check("TC26 エアコン+ダイキンのみ → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC26 エアコン+ダイキンのみ → 未確定", d["cost_estimate"], "未確定")
+    check("TC26 家庭用/業務用確認", d["cost_result"]["required_questions"], "家庭用/業務用を確認してください")
 
 
-def test_tc24_ac_daikin_home():
+def test_tc27_ac_daikin_home():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン", extra_condition="家庭用"))
-    check("TC24 ダイキン家庭用 → 7,000円～16,000円前後", d["cost_estimate"], "7,000円～16,000円前後")
-    check("TC24 ダイキン家庭用 → confirmed", d["cost_result"]["cost_status"], "confirmed")
+    check("TC27 ダイキン家庭用 → 7,000円～16,000円前後", d["cost_estimate"], "7,000円～16,000円前後")
+    check("TC27 ダイキン家庭用 → confirmed", d["cost_result"]["cost_status"], "confirmed")
 
 
-def test_tc25_ac_daikin_business():
+def test_tc28_ac_daikin_business():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン", extra_condition="業務用"))
-    check("TC25 ダイキン業務用 → 15,000円～22,000円前後", d["cost_estimate"], "15,000円～22,000円前後")
-    check("TC25 ダイキン業務用 → confirmed", d["cost_result"]["cost_status"], "confirmed")
+    check("TC28 ダイキン業務用 → 15,000円～22,000円前後", d["cost_estimate"], "15,000円～22,000円前後")
+    check("TC28 ダイキン業務用 → confirmed", d["cost_result"]["cost_status"], "confirmed")
 
 
-def test_tc26_ac_daikin_gas_leak():
+def test_tc29_ac_daikin_gas_leak():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン", extra_condition="ガス漏れ"))
-    check("TC26 ダイキンガス漏れ → 30,000円前後", d["cost_estimate"], "30,000円前後")
-    check("TC26 ダイキンガス漏れ → eu_asked_only", d["cost_result"]["guidance_scope"], "eu_asked_only")
+    check("TC29 ダイキンガス漏れ → 30,000円前後", d["cost_estimate"], "30,000円前後")
+    check("TC29 ダイキンガス漏れ → eu_asked_only", d["cost_result"]["guidance_scope"], "eu_asked_only")
 
 
-def test_tc27_ac_iris():
+def test_tc30_ac_iris():
     d = app.run_decision(make_form(product="エアコン", manufacturer="アイリスオーヤマ"))
-    check("TC27 アイリスオーヤマ → 15,000円前後", d["cost_estimate"], "15,000円前後")
+    check("TC30 アイリスオーヤマ → 15,000円前後", d["cost_estimate"], "15,000円前後")
 
 
-def test_tc28_ac_hitachi_domestic_generic():
+def test_tc31_ac_hitachi_domestic_generic():
     d = app.run_decision(make_form(product="エアコン", manufacturer="日立"))
-    check("TC28 日立 → 5,000円～7,000円前後", d["cost_estimate"], "5,000円～7,000円前後")
-    check("TC28 日立 → confirmed", d["cost_result"]["cost_status"], "confirmed")
+    check("TC31 日立 → 5,000円～7,000円前後", d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC31 日立 → confirmed", d["cost_result"]["cost_status"], "confirmed")
 
 
-def test_tc29_ac_panasonic_domestic_generic():
+def test_tc32_ac_panasonic_domestic_generic():
     d = app.run_decision(make_form(product="エアコン", manufacturer="パナソニック"))
-    check("TC29 パナソニック → 5,000円～7,000円前後", d["cost_estimate"], "5,000円～7,000円前後")
-    check("TC29 パナソニック → confirmed", d["cost_result"]["cost_status"], "confirmed")
+    check("TC32 パナソニック → 5,000円～7,000円前後", d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC32 パナソニック → confirmed", d["cost_result"]["cost_status"], "confirmed")
 
 
-def test_tc30_ac_unknown_maker_not_confirmed():
+def test_tc33_ac_unknown_maker_not_confirmed():
     d = app.run_decision(make_form(product="エアコン", manufacturer="不明メーカー"))
-    check("TC30 不明メーカー → pending", d["cost_result"]["cost_status"], "pending")
-    check("TC30 不明メーカー → 未確定", d["cost_estimate"], "未確定")
-    check("TC30 不明メーカー → 国内汎用金額を確定表示しない",
+    check("TC33 不明メーカー → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC33 不明メーカー → 未確定", d["cost_estimate"], "未確定")
+    check("TC33 不明メーカー → 国内汎用金額を確定表示しない",
           d["cost_estimate"] != "5,000円～7,000円前後", True)
 
 
@@ -384,15 +399,18 @@ _ALL_TESTS = [
     test_tc19_sofmap_store_infer,
     test_tc20_shiga_ntt_west,
     test_tc21_tokyo_ntt_east,
-    test_tc22_ac_only_pending_repair_type_visit,
-    test_tc23_ac_daikin_only_pending_type_question,
-    test_tc24_ac_daikin_home,
-    test_tc25_ac_daikin_business,
-    test_tc26_ac_daikin_gas_leak,
-    test_tc27_ac_iris,
-    test_tc28_ac_hitachi_domestic_generic,
-    test_tc29_ac_panasonic_domestic_generic,
-    test_tc30_ac_unknown_maker_not_confirmed,
+    test_tc22_blank_prefecture_no_area_group,
+    test_tc23_extract_prefecture_shiga_from_address,
+    test_tc24_extract_prefecture_tokyo_from_address,
+    test_tc25_ac_only_pending_repair_type_visit,
+    test_tc26_ac_daikin_only_pending_type_question,
+    test_tc27_ac_daikin_home,
+    test_tc28_ac_daikin_business,
+    test_tc29_ac_daikin_gas_leak,
+    test_tc30_ac_iris,
+    test_tc31_ac_hitachi_domestic_generic,
+    test_tc32_ac_panasonic_domestic_generic,
+    test_tc33_ac_unknown_maker_not_confirmed,
 ]
 
 if __name__ == "__main__":
