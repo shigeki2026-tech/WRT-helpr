@@ -1026,6 +1026,147 @@ def test_tc105_diagnostics_items_sorted_by_impact_then_status_then_area():
 
 
 # ============================================================
+# TC106–TC112: 不足項目リンク・STEP表示・スクリプトリンク
+# ============================================================
+
+def test_tc106_next_action_steps_aircon_no_manufacturer():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        prefecture="東京都",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    steps = app.build_next_action_steps(d["diagnostics"])
+    check("TC106 steps にメーカー確認を含む",
+          "メーカーを確認してください" in steps, True)
+
+
+def test_tc107_next_action_steps_daikin_missing_extra_condition():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="ダイキン",
+        prefecture="東京都",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    steps = app.build_next_action_steps(d["diagnostics"])
+    check("TC107 steps に家庭用/業務用確認を含む",
+          "家庭用/業務用を確認してください" in steps, True)
+
+
+def test_tc108_next_action_steps_warranty_unknown():
+    d = app.run_decision(make_form(product="洗濯機", prefecture="滋賀県", appliance_type="家電"))
+    steps = app.build_next_action_steps(d["diagnostics"])
+    check("TC108 steps に保証日確認を含む",
+          "保証開始日・保証終了日を確認" in steps, True)
+
+
+def test_tc109_after_call_steps_do_not_mix_into_call_time_steps():
+    d = app.run_decision(make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        prefecture="",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    call_steps = app.build_next_action_steps(d["diagnostics"])
+    after_steps = app.build_after_call_steps(d["diagnostics"])
+    check("TC109 call_time steps に終話後拠点確定を含めない",
+          any("終話後に担当へエスカレーション" in s for s in call_steps), False)
+    check("TC109 after_call steps に終話後拠点確定を含む",
+          any("終話後に担当へエスカレーション" in s for s in after_steps), True)
+
+
+def test_tc110_missing_field_link_generation():
+    check("TC110 manufacturer field link",
+          app.field_link("manufacturer"), "[メーカー欄へ移動](#field-manufacturer)")
+    check("TC110 warranty_start_date field link",
+          app.field_link("warranty_start_date"), "[保証開始日欄へ移動](#field-warranty_start_date)")
+
+
+def test_tc111_master_script_links_csv_exists():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "data", "master_script_links.csv")
+    check("TC111 master_script_links.csv exists", os.path.exists(path), True)
+
+
+def test_tc112_script_link_lookup_registered_and_blank_url():
+    registered = app.lookup_script_link({
+        "sheet_name": "家電出張・持込・新築住設",
+        "part": "家電・出張修理",
+    })
+    blank = app.lookup_script_link({
+        "sheet_name": "住設【既築／中古のみ】",
+        "part": "住設受付",
+    })
+    check("TC112 registered script link matched", registered["matched"], True)
+    check("TC112 registered script link has URL", bool(registered["url"]), True)
+    check("TC112 blank URL is not matched", blank["matched"], False)
+
+
+# ============================================================
+# TC113–TC120: 保証日付カレンダー入力用ヘルパー
+# ============================================================
+
+def test_tc113_form_date_text_to_date_slash():
+    check("TC113 2026/01/01 -> date",
+          app.form_date_text_to_date("2026/01/01"), date(2026, 1, 1))
+
+
+def test_tc114_form_date_text_to_date_hyphen():
+    check("TC114 2026-01-01 -> date",
+          app.form_date_text_to_date("2026-01-01"), date(2026, 1, 1))
+
+
+def test_tc115_form_date_text_to_date_japanese():
+    check("TC115 2026年1月1日 -> date",
+          app.form_date_text_to_date("2026年1月1日"), date(2026, 1, 1))
+
+
+def test_tc116_date_to_form_date_text():
+    check("TC116 date -> YYYY/MM/DD",
+          app.date_to_form_date_text(date(2026, 1, 1)), "2026/01/01")
+
+
+def test_tc117_blank_date_helpers_do_not_default_today():
+    check("TC117 blank -> None", app.form_date_text_to_date(""), None)
+    check("TC117 None date -> blank text", app.date_to_form_date_text(None), "")
+
+
+def test_tc118_unknown_warranty_when_dates_blank():
+    d = app.determine_warranty_status(
+        {"warranty_start_date": "", "warranty_end_date": ""},
+        today=date(2026, 4, 30),
+    )
+    check("TC118 blank dates warranty_status=unknown", d["warranty_status"], "unknown")
+    check("TC118 blank dates can_accept=False", d["can_accept"], False)
+
+
+def test_tc119_extracted_dates_convert_for_date_input():
+    extracted = app.extract_fields_from_pasted_text(
+        "保証開始日\t2026-05-01\n保証終了日\t2031年4月30日\n"
+    )
+    check("TC119 extracted start normalized", extracted["warranty_start_date"], "2026/05/01")
+    check("TC119 extracted end normalized", extracted["warranty_end_date"], "2031/04/30")
+    check("TC119 start converts to date_input date",
+          app.form_date_text_to_date(extracted["warranty_start_date"]), date(2026, 5, 1))
+    check("TC119 end converts to date_input date",
+          app.form_date_text_to_date(extracted["warranty_end_date"]), date(2031, 4, 30))
+
+
+def test_tc120_empty_form_does_not_auto_fill_today_for_warranty():
+    form = app.empty_form()
+    check("TC120 empty form start remains blank", form["warranty_start_date"], "")
+    check("TC120 empty form end remains blank", form["warranty_end_date"], "")
+    d = app.run_decision(make_form(product="洗濯機", prefecture="滋賀県", appliance_type="家電"))
+    check("TC120 run_decision blank dates warranty_status=unknown",
+          d["warranty_status"], "unknown")
+
+
+# ============================================================
 # Standalone runner
 # ============================================================
 
@@ -1135,6 +1276,21 @@ _ALL_TESTS = [
     test_tc103_generic_water_heater_is_call_time_required,
     test_tc104_after_call_vendor_warning_keeps_overall_ok,
     test_tc105_diagnostics_items_sorted_by_impact_then_status_then_area,
+    test_tc106_next_action_steps_aircon_no_manufacturer,
+    test_tc107_next_action_steps_daikin_missing_extra_condition,
+    test_tc108_next_action_steps_warranty_unknown,
+    test_tc109_after_call_steps_do_not_mix_into_call_time_steps,
+    test_tc110_missing_field_link_generation,
+    test_tc111_master_script_links_csv_exists,
+    test_tc112_script_link_lookup_registered_and_blank_url,
+    test_tc113_form_date_text_to_date_slash,
+    test_tc114_form_date_text_to_date_hyphen,
+    test_tc115_form_date_text_to_date_japanese,
+    test_tc116_date_to_form_date_text,
+    test_tc117_blank_date_helpers_do_not_default_today,
+    test_tc118_unknown_warranty_when_dates_blank,
+    test_tc119_extracted_dates_convert_for_date_input,
+    test_tc120_empty_form_does_not_auto_fill_today_for_warranty,
 ]
 
 if __name__ == "__main__":
