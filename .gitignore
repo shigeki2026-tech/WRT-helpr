@@ -4,3 +4,4 @@ __pycache__/
 .env
 .pytest_cache/
 .codex_tmp/
+.codex_test_deps/
