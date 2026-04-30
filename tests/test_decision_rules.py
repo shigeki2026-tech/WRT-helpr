@@ -863,6 +863,169 @@ def test_tc94_diagnostics_pioneer_av_escalation_warning():
 
 
 # ============================================================
+# TC95–TC99: 診断パネル表示用の並び替え・ラベル
+# ============================================================
+
+def test_tc95_diagnostics_items_sorted_error_warning_ok():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        prefecture="滋賀県",
+        appliance_type="家電",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2026/04/26",
+    ))
+    items = d["diagnostics"]["items"]
+    order = {"error": 0, "warning": 1, "ok": 2}
+    sorted_statuses = sorted([i["status"] for i in items], key=lambda s: order[s])
+    check("TC95 diagnostics status order error/warning/ok",
+          [i["status"] for i in items], sorted_statuses)
+    check("TC95 error内で保証期間判定が先頭", items[0]["area"], "保証期間判定")
+
+
+def test_tc96_field_label_warranty_start_date():
+    check("TC96 warranty_start_date → 保証開始日",
+          app.field_label("warranty_start_date"), "保証開始日")
+    check("TC96 missing_fields 日本語結合",
+          app.format_field_labels(["warranty_start_date", "warranty_end_date"]),
+          "保証開始日、保証終了日")
+
+
+def test_tc97_diagnostics_overall_error_expired_warranty():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        prefecture="滋賀県",
+        appliance_type="家電",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2026/04/26",
+    ))
+    check("TC97 expired保証 overall_status=error",
+          d["diagnostics"]["overall_status"], "error")
+
+
+def test_tc98_diagnostics_overall_warning_aircon_no_manufacturer():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        prefecture="東京都",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    c = _diag_area(d["diagnostics"], "概算費用判定")
+    check("TC98 エアコン+メーカー未入力 overall_status=warning",
+          d["diagnostics"]["overall_status"], "warning")
+    check("TC98 概算費用 next_action=メーカー確認",
+          c["next_action"], "メーカーを確認してください")
+
+
+def test_tc99_diagnostics_overall_ok_active_washer():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    check("TC99 保証期間内+必要項目あり overall_status=ok",
+          d["diagnostics"]["overall_status"], "ok")
+    check("TC99 diagnostics items all ok",
+          all(i["status"] == "ok" for i in d["diagnostics"]["items"]), True)
+
+
+# ============================================================
+# TC100–TC105: 診断 impact と実務向け overall_status
+# ============================================================
+
+def test_tc100_vendor_only_warning_is_after_call_and_overall_ok():
+    d = app.run_decision(make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        prefecture="",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    v = _diag_area(d["diagnostics"], "修理拠点判定")
+    check("TC100 修理拠点のみ未確定 status=warning", v["status"], "warning")
+    check("TC100 修理拠点 impact=after_call_ok", v["impact"], "after_call_ok")
+    check("TC100 修理拠点のみ未確定 overall_status=ok",
+          d["diagnostics"]["overall_status"], "ok")
+
+
+def test_tc101_ac_no_manufacturer_cost_is_call_time_required():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        prefecture="東京都",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    c = _diag_area(d["diagnostics"], "概算費用判定")
+    check("TC101 エアコンメーカー未入力 概算費用 status=warning", c["status"], "warning")
+    check("TC101 概算費用 impact=call_time_required", c["impact"], "call_time_required")
+    check("TC101 overall_status=warning", d["diagnostics"]["overall_status"], "warning")
+
+
+def test_tc102_expired_warranty_is_blocking_error():
+    d = app.run_decision(make_form(
+        product="洗濯機",
+        prefecture="滋賀県",
+        appliance_type="家電",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2026/04/26",
+    ))
+    w = _diag_area(d["diagnostics"], "保証期間判定")
+    check("TC102 保証期間終了 status=error", w["status"], "error")
+    check("TC102 保証期間終了 impact=blocking", w["impact"], "blocking")
+    check("TC102 overall_status=error", d["diagnostics"]["overall_status"], "error")
+
+
+def test_tc103_generic_water_heater_is_call_time_required():
+    d = app.run_decision(make_form(
+        product="給湯器",
+        prefecture="東京都",
+        appliance_type="住設",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    c = _diag_area(d["diagnostics"], "概算費用判定")
+    check("TC103 給湯器のみ 概算費用 status=warning", c["status"], "warning")
+    check("TC103 給湯器のみ impact=call_time_required", c["impact"], "call_time_required")
+    check("TC103 overall_status=warning", d["diagnostics"]["overall_status"], "warning")
+
+
+def test_tc104_after_call_vendor_warning_keeps_overall_ok():
+    d = app.run_decision(make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        prefecture="",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    v = _diag_area(d["diagnostics"], "修理拠点判定")
+    check("TC104 修理拠点判定は終話後確認", "終話後確認" in v["title"], True)
+    check("TC104 修理拠点 impact=after_call_ok", v["impact"], "after_call_ok")
+    check("TC104 overall_status=ok", d["diagnostics"]["overall_status"], "ok")
+
+
+def test_tc105_diagnostics_items_sorted_by_impact_then_status_then_area():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        prefecture="",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2030/12/31",
+    ))
+    items = d["diagnostics"]["items"]
+    sorted_items = app.sort_diagnostic_items(list(items))
+    check("TC105 diagnostics impact順ソート",
+          [(i["impact"], i["status"], i["area"]) for i in items],
+          [(i["impact"], i["status"], i["area"]) for i in sorted_items])
+    check("TC105 先頭は通話中確認の概算費用", items[0]["area"], "概算費用判定")
+
+
+# ============================================================
 # Standalone runner
 # ============================================================
 
@@ -961,6 +1124,17 @@ _ALL_TESTS = [
     test_tc92_diagnostics_empty_product_repair_warning,
     test_tc93_diagnostics_empty_prefecture_vendor_warning,
     test_tc94_diagnostics_pioneer_av_escalation_warning,
+    test_tc95_diagnostics_items_sorted_error_warning_ok,
+    test_tc96_field_label_warranty_start_date,
+    test_tc97_diagnostics_overall_error_expired_warranty,
+    test_tc98_diagnostics_overall_warning_aircon_no_manufacturer,
+    test_tc99_diagnostics_overall_ok_active_washer,
+    test_tc100_vendor_only_warning_is_after_call_and_overall_ok,
+    test_tc101_ac_no_manufacturer_cost_is_call_time_required,
+    test_tc102_expired_warranty_is_blocking_error,
+    test_tc103_generic_water_heater_is_call_time_required,
+    test_tc104_after_call_vendor_warning_keeps_overall_ok,
+    test_tc105_diagnostics_items_sorted_by_impact_then_status_then_area,
 ]
 
 if __name__ == "__main__":

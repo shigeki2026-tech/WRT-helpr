@@ -61,7 +61,13 @@ streamlit run app.py
 
 `build_decision_diagnostics(form, result)` が呼び出され、`run_decision()` の戻り値に `diagnostics`・`overall_status` として含まれます。  
 `overall_status` は `"ok"` / `"warning"` / `"error"` のいずれかです。  
-`build_history_template()` の対応履歴テンプレ末尾に **【判定診断】** セクションが自動付加されます。
+各診断には `impact` があり、`blocking` / `call_time_required` / `after_call_ok` / `info` のいずれかです。`blocking` は受付不可・重大NG、`call_time_required` は通話中に確認必須、`after_call_ok` は終話後確認でよい項目、`info` は補足情報です。
+`overall_status` は impact ベースで計算します。`blocking` かつ `error` は `overall_status=error`、`call_time_required` かつ `warning/error` は `overall_status=warning` になります。`after_call_ok` / `info` の warning は原則として全体 warning にしません。
+修理拠点判定は原則 `after_call_ok` とし、担当エスカや拠点未確定でも通話中判定全体は warning にしません。通話中に確認が必要な保証期間・概算費用・修理形態などを優先します。
+判定診断パネルでは `blocking` → `call_time_required` → `after_call_ok` → `info` の順に表示します。同じ impact 内では `error` → `warning` → `ok`、さらに保証期間判定、概算費用判定、参照スクリプト判定、修理形態判定、修理拠点判定の順です。
+不足項目・形式不正項目は `warranty_start_date` のような内部名ではなく、「保証開始日」「保証終了日」「メーカー」「補足条件」などの日本語ラベルで表示します。
+各カードの `next_action` は「次に確認」として、オペレーターが次に聞くべき内容を強調表示します。
+`build_history_template()` の対応履歴テンプレ末尾に **【判定診断】** セクションが自動付加されます。履歴側は詳細を増やしすぎず、各判定の `OK` / `未確定` / `要確認` / `受付不可` の短いサマリーに留めます。
 
 ---
 

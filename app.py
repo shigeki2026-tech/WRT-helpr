@@ -54,6 +54,79 @@ FIELD_LABELS = {
     "extra_condition": "補足条件",
 }
 
+DIAGNOSTIC_STATUS_ORDER = {"error": 0, "warning": 1, "ok": 2}
+DIAGNOSTIC_IMPACT_ORDER = {
+    "blocking": 0,
+    "call_time_required": 1,
+    "after_call_ok": 2,
+    "info": 3,
+}
+DIAGNOSTIC_IMPACT_LABELS = {
+    "blocking": "受付不可",
+    "call_time_required": "通話中確認",
+    "after_call_ok": "終話後確認",
+    "info": "補足",
+}
+DIAGNOSTIC_AREA_ORDER = {
+    "保証期間判定": 0,
+    "概算費用判定": 1,
+    "参照スクリプト判定": 2,
+    "修理形態判定": 3,
+    "修理拠点判定": 4,
+}
+DIAGNOSTIC_OVERALL_DISPLAY = {
+    "ok": {
+        "icon": "✅",
+        "title": "判定診断：OK",
+        "message": "主要判定は成立しています",
+    },
+    "warning": {
+        "icon": "⚠️",
+        "title": "判定診断：要確認あり",
+        "message": "不足項目または確認事項があります",
+    },
+    "error": {
+        "icon": "❌",
+        "title": "判定診断：受付不可 / 重大確認あり",
+        "message": "受付不可または重大な未確定項目があります",
+    },
+}
+
+
+def field_label(field_name: str) -> str:
+    """Internal field key -> operator-facing Japanese label."""
+    return FIELD_LABELS.get(field_name, field_name)
+
+
+def format_field_labels(field_names: list) -> str:
+    """Join field keys after converting them to Japanese labels."""
+    return "、".join(field_label(f) for f in field_names)
+
+
+def sort_diagnostic_items(items: list) -> list:
+    """Show business-impacting items first, then severity and stable area priority."""
+    return sorted(
+        items,
+        key=lambda item: (
+            DIAGNOSTIC_IMPACT_ORDER.get(item.get("impact", "info"), 99),
+            DIAGNOSTIC_STATUS_ORDER.get(item.get("status", "ok"), 99),
+            DIAGNOSTIC_AREA_ORDER.get(item.get("area", ""), 99),
+        ),
+    )
+
+
+def diagnostic_history_status(item: dict) -> str:
+    """Short status for the history template; details stay in the UI panel."""
+    status = item.get("status")
+    title = item.get("title", "")
+    if status == "ok":
+        return "OK"
+    if status == "error":
+        return "受付不可"
+    if "未確定" in title:
+        return "未確定"
+    return "要確認"
+
 # 国内PCメーカー判定グループ
 DOMESTIC_PC_MAKERS = {
     "パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー", "NEC", "VAIO",
@@ -1169,14 +1242,13 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
     ])
     # ── 判定診断サマリー ──
     if diagnostics:
-        _status_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
-        overall = diagnostics.get("overall_status", "ok")
         lines.append("")
         lines.append("【判定診断】")
-        lines.append(f"総合ステータス: {_status_icon.get(overall, '?')} {overall.upper()}")
-        for item in diagnostics.get("items", []):
-            icon = _status_icon.get(item["status"], "?")
-            lines.append(f"{icon} {item['area']}: {item['title']}")
+        by_area = {item.get("area", ""): item for item in diagnostics.get("items", [])}
+        for area in DIAGNOSTIC_AREA_ORDER:
+            item = by_area.get(area)
+            if item:
+                lines.append(f"{area}：{diagnostic_history_status(item)}")
     return "\n".join(lines)
 
 
@@ -1199,6 +1271,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
                     "missing_fields": [],  # 未入力フィールドキー名リスト
                     "invalid_fields": [],  # 不正値フィールドキー名リスト
                     "next_action": str,    # 次に取るべきアクション
+                    "impact": str,         # blocking / call_time_required / after_call_ok / info
                 },
                 ...
             ]
@@ -1206,7 +1279,8 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     """
     items = []
 
-    def _item(area, status, title, reason, missing_fields=None, invalid_fields=None, next_action=""):
+    def _item(area, status, title, reason, missing_fields=None, invalid_fields=None,
+              next_action="", impact="info"):
         return {
             "area": area,
             "status": status,
@@ -1215,6 +1289,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "missing_fields": missing_fields or [],
             "invalid_fields": invalid_fields or [],
             "next_action": next_action,
+            "impact": impact,
         }
 
     # ── 1. 保証期間判定 ──────────────────────────────────────────
@@ -1239,18 +1314,21 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "保証期間判定", "ok", "保証期間内",
             "保証期間内のため、受付判定へ進めます。",
             next_action="修理形態・費用の確認へ進む",
+            impact="info",
         ))
     elif w_status == "before_start":
         items.append(_item(
             "保証期間判定", "warning", "保証開始日前",
             "保証開始日前のためWRT受付不可。メーカー保証または販売店・メーカー窓口へ誘導してください。",
             next_action="メーカー保証期間・窓口を案内",
+            impact="call_time_required",
         ))
     elif w_status == "expired":
         items.append(_item(
             "保証期間判定", "error", "保証期間終了 — 受付不可",
             "保証期間終了後のためWRT受付不可。受付不可として案内してください。",
             next_action="受付不可を案内して終話",
+            impact="blocking",
         ))
     else:  # unknown
         reason_parts = []
@@ -1271,6 +1349,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             missing_fields=missing_dates,
             invalid_fields=invalid_dates,
             next_action="保証開始日・保証終了日を確認",
+            impact="call_time_required",
         ))
 
     # ── 2. 参照スクリプト判定 ────────────────────────────────────
@@ -1284,6 +1363,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "参照スクリプト判定", "ok", "スクリプト確認済み",
             f"シート: {sheet} / パート: {part or '─'}",
             next_action="当該シートの当該パートを参照",
+            impact="info",
         ))
     else:
         missing_for_script: list = []
@@ -1305,6 +1385,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             reason_str,
             missing_fields=missing_for_script,
             next_action="製品・家電/住設区分を入力してSV確認",
+            impact="call_time_required" if missing_for_script else "after_call_ok",
         ))
 
     # ── 3. 概算費用判定 ──────────────────────────────────────────
@@ -1325,6 +1406,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "概算費用判定", "warning", "金額案内不可",
             "案件区分により金額案内は行いません（スクリプト・担当確認に従う）。",
             next_action="スクリプトに従い金額を案内しない",
+            impact="call_time_required",
         ))
     elif disp_cost == "pending":
         missing_cost = cost_result.get("missing_fields", [])
@@ -1336,6 +1418,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             reason_str,
             missing_fields=missing_cost,
             next_action=rq or "不足フィールドを入力して費用を確定",
+            impact="call_time_required",
         ))
     elif disp_cost == "escalation":
         cost_estimate = result.get("cost_estimate", "")
@@ -1343,6 +1426,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "概算費用判定", "warning", f"高額エスカ注意: {cost_estimate}",
             "費用が高額のため概算案内には注意が必要です。エスカレーション推奨。",
             next_action="SVへエスカレーション",
+            impact="call_time_required",
         ))
     else:  # confirmed
         cost_estimate = result.get("cost_estimate", "")
@@ -1352,12 +1436,14 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
                 "概算費用判定", "ok", f"概算費用確定: {cost_estimate}",
                 f"費用の案内が可能です。{eu_note}",
                 next_action="必要に応じてお客様へ概算を案内",
+                impact="info",
             ))
         else:
             items.append(_item(
                 "概算費用判定", "warning", "概算費用: 要確認",
                 "修理形態または製品情報が不足しているため費用を確定できません。",
                 next_action="製品・修理形態を確認",
+                impact="call_time_required",
             ))
 
     # ── 4. 修理形態判定 ──────────────────────────────────────────
@@ -1373,6 +1459,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "修理形態判定", "ok", f"修理形態: {repair_type}",
             "修理形態が確定しました。",
             next_action=next_rt,
+            impact="info",
         ))
     else:
         reasons: list = []
@@ -1392,6 +1479,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             " / ".join(reasons),
             missing_fields=missing_repair,
             next_action="SV/担当に確認",
+            impact="call_time_required",
         ))
 
     # ── 5. 修理拠点判定 ──────────────────────────────────────────
@@ -1411,28 +1499,32 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
         if not reasons_v:
             reasons_v.append("修理拠点が確定していません。担当にエスカレーションしてください。")
         items.append(_item(
-            "修理拠点判定", "warning", f"修理拠点: 要確認 ({vendor})",
-            " / ".join(reasons_v),
+            "修理拠点判定", "warning", f"修理拠点: 終話後確認 ({vendor})",
+            "修理拠点は終話後に担当確認してください。" + (" / " + " / ".join(reasons_v) if reasons_v else ""),
             missing_fields=missing_vendor,
-            next_action="担当にエスカレーションして拠点を確定",
+            next_action="終話後に担当へエスカレーションして拠点確定",
+            impact="after_call_ok",
         ))
     else:
         items.append(_item(
             "修理拠点判定", "ok", f"修理拠点: {vendor}",
             "修理拠点が確定しました。",
             next_action="終話後処理タブで手配を進める",
+            impact="after_call_ok",
         ))
 
-    # ── overall_status 計算 ──────────────────────────────────────
-    statuses = [item["status"] for item in items]
-    if "error" in statuses:
+    # ── overall_status 計算（impact ベース）──────────────────────
+    if any(item["impact"] == "blocking" and item["status"] == "error" for item in items):
         overall_status = "error"
-    elif "warning" in statuses:
+    elif any(
+        item["impact"] == "call_time_required" and item["status"] in ("warning", "error")
+        for item in items
+    ):
         overall_status = "warning"
     else:
         overall_status = "ok"
 
-    return {"overall_status": overall_status, "items": items}
+    return {"overall_status": overall_status, "items": sort_diagnostic_items(items)}
 
 
 # ============================================================
@@ -1863,12 +1955,20 @@ def render_tab_call():
 
         # --- 参照スクリプト（最重要） ---
         st.markdown("##### 📖 参照スクリプト")
-        sheet = script_result["sheet_name"] or "─"
-        part  = script_result["part"] or "─"
+        raw_sheet = script_result["sheet_name"] or ""
+        raw_part  = script_result["part"] or ""
+        sheet = "未確定" if raw_sheet == "要確認" else (raw_sheet or "─")
+        part  = "担当確認" if raw_part == "SV/担当確認" else (raw_part or "─")
+        script_notes = script_result.get("notes") or []
+        script_note = script_result.get("script_note") or " / ".join(script_notes)
+        if not script_note:
+            script_note = "正式スクリプトの該当箇所を確認してください"
         st.markdown(
             f'<div style="background:#1e3a5f;color:#fff;padding:12px 16px;'
             f'border-radius:8px;font-size:1.1em;line-height:2.0;">'
-            f'<b>シート名:</b> {sheet}<br><b>該当パート:</b> {part}</div>',
+            f'<b>シート名:</b> {sheet}<br>'
+            f'<b>該当パート:</b> {part}<br>'
+            f'<b>補足確認:</b> {script_note}</div>',
             unsafe_allow_html=True,
         )
         st.text_input("シート名コピー用", sheet, key="copy_sheet", label_visibility="collapsed")
@@ -2007,21 +2107,26 @@ def render_tab_call():
         # --- 判定診断パネル ---
         _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
         _overall   = diagnostics.get("overall_status", "ok")
-        _diag_label = {"ok": "すべての判定項目が確定しています",
-                       "warning": "確認が必要な項目があります",
-                       "error": "受付不可の項目があります"}.get(_overall, "")
+        _overall_display = DIAGNOSTIC_OVERALL_DISPLAY.get(
+            _overall, DIAGNOSTIC_OVERALL_DISPLAY["warning"]
+        )
+        _overall_header = f"{_overall_display['icon']} {_overall_display['title']}"
+        _overall_message = _overall_display["message"]
+        if _overall == "ok":
+            st.success(f"### {_overall_header}\n{_overall_message}")
+        elif _overall == "error":
+            st.error(f"### {_overall_header}\n{_overall_message}")
+        else:
+            st.warning(f"### {_overall_header}\n{_overall_message}")
+
         with st.expander(
-            f"📊 判定診断パネル  {_diag_icon.get(_overall,'')} {_diag_label}",
+            f"📊 判定診断パネル  {_overall_header}",
             expanded=(_overall != "ok"),
         ):
-            if _overall == "ok":
-                st.success(f"✅ {_diag_label}")
-            elif _overall == "error":
-                st.error(f"❌ {_diag_label}")
-            else:
-                st.warning(f"⚠️ {_diag_label}")
             for _d in diagnostics.get("items", []):
                 _icon = _diag_icon.get(_d["status"], "?")
+                _impact = _d.get("impact", "info")
+                _impact_label = DIAGNOSTIC_IMPACT_LABELS.get(_impact, _impact)
                 _header = f"{_icon} **{_d['area']}** — {_d['title']}"
                 if _d["status"] == "ok":
                     st.success(_header)
@@ -2033,14 +2138,15 @@ def render_tab_call():
                     st.warning(_header)
                     if _d.get("reason"):
                         st.markdown(f"　{_d['reason']}")
+                st.caption(f"ラベル：{_impact_label}")
                 if _d.get("missing_fields"):
-                    lbl = "、".join(FIELD_LABELS.get(f, f) for f in _d["missing_fields"])
-                    st.caption(f"　📝 未入力: {lbl}")
+                    lbl = format_field_labels(_d["missing_fields"])
+                    st.info(f"不足項目：{lbl}")
                 if _d.get("invalid_fields"):
-                    lbl = "、".join(FIELD_LABELS.get(f, f) for f in _d["invalid_fields"])
-                    st.caption(f"　⚠️ フォーマット不正: {lbl}")
+                    lbl = format_field_labels(_d["invalid_fields"])
+                    st.warning(f"形式不正：{lbl}")
                 if _d.get("next_action"):
-                    st.caption(f"　▶ 次のアクション: {_d['next_action']}")
+                    st.info(f"**次に確認：{_d['next_action']}**")
 
         # ─── 判定デバッグ情報 ───
         with st.expander("🔍 判定デバッグ情報（4層）"):
