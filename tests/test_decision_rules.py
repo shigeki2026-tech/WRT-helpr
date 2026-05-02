@@ -34,8 +34,9 @@ import app  # noqa: E402  (must come after sys.modules patch)
 
 def make_form(
     product="", series="", manufacturer="", model_number="",
-    prefecture="", case_type="", appliance_type="",
+    prefecture="", call_line="", appliance_type="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
+    is_over_10years=False,
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -45,12 +46,13 @@ def make_form(
         manufacturer=manufacturer,
         model_number=model_number,
         prefecture=prefecture,
-        case_type=case_type,
+        call_line=call_line,
         appliance_type=appliance_type,
         extra_condition=extra_condition,
         store_name=store_name,
         warranty_start_date=warranty_start_date,
         warranty_end_date=warranty_end_date,
+        is_over_10years=is_over_10years,
     )
     return form
 
@@ -179,7 +181,7 @@ def test_tc09_okinawa():
 # ============================================================
 
 def test_tc10_bic_camera():
-    d = app.run_decision(make_form(case_type="ビックカメラ案件"))
+    d = app.run_decision(make_form(call_line="ビックカメラ"))
     check("TC10 修理拠点 → ソフマップ修理センター",  d["vendor"], "ソフマップ修理センター")
     check("TC10 金額案内不可",
           d["script_result"]["price_guidance_allowed"], False)
@@ -264,26 +266,26 @@ def test_tc17_pc_dell():
 
 
 # ============================================================
-# TC18: 販売店名に「ビックカメラ」→ case_type 自動推定
+# TC18: 販売店名に「ビックカメラ」→ 回線属性推定
 # ============================================================
 
 def test_tc18_bic_store_infer():
     d = app.run_decision(make_form(store_name="ビックカメラ新宿店"))
-    check("TC18 case_type自動推定 → ビックカメラ案件",
-          d["inferred_case_type"], "ビックカメラ案件")
-    # case_type が自動設定されるため vendor もソフマップになる
+    check("TC18 ビック/ソフマップ属性 → True",
+          d["inferred_call_line_attrs"]["is_bic_sofmap"], True)
+    # store_name からビック/ソフマップ属性が立つため vendor もソフマップになる
     check("TC18 vendor → ソフマップ修理センター",
           d["vendor"], "ソフマップ修理センター")
 
 
 # ============================================================
-# TC19: 販売店名に「ソフマップ」→ case_type 自動推定
+# TC19: 販売店名に「ソフマップ」→ 回線属性推定
 # ============================================================
 
 def test_tc19_sofmap_store_infer():
     d = app.run_decision(make_form(store_name="ソフマップAkiba"))
-    check("TC19 case_type自動推定 → ソフマップ案件",
-          d["inferred_case_type"], "ソフマップ案件")
+    check("TC19 ビック/ソフマップ属性 → True",
+          d["inferred_call_line_attrs"]["is_bic_sofmap"], True)
     check("TC19 vendor → ソフマップ修理センター",
           d["vendor"], "ソフマップ修理センター")
 
@@ -1172,11 +1174,41 @@ def test_tc_template_code_options_loaded():
     assert "template_code" in df.columns
 
 
-def test_tc_case_type_options_from_csv():
-    options = app.get_case_type_options()
-    assert "持込修理" in options
-    assert "出張修理" in options
-    assert "GIGA案件" in options
+def test_tc_call_line_options_from_csv():
+    options = app.get_call_line_options()
+    assert "ビックカメラ" in options
+    assert "住設業務" in options
+    assert "GIGA案件" not in options
+
+
+def test_tc_call_line_options_loaded():
+    options = app.get_call_line_options()
+    assert "ビックカメラ" in options
+    assert "住設業務" in options
+    assert "京阪不動産" in options
+
+
+def test_tc_bic_camera_call_line_vendor():
+    d = app.run_decision(make_form(call_line="ビックカメラ", product="洗濯機"))
+    assert d["vendor"] == "ソフマップ修理センター"
+
+
+def test_tc_is_over_10years_rentals_tokyo():
+    d = app.run_decision(make_form(
+        call_line="住設業務",
+        prefecture="東京都",
+        is_over_10years=True,
+    ))
+    assert d["vendor"] == "㈱リファテック"
+
+
+def test_tc_is_under_10years_rentals_tokyo():
+    d = app.run_decision(make_form(
+        call_line="住設業務",
+        prefecture="東京都",
+        is_over_10years=False,
+    ))
+    assert d["vendor"] == "ユナイトサービス㈱"
 
 
 # ============================================================
@@ -1305,7 +1337,11 @@ _ALL_TESTS = [
     test_tc119_extracted_dates_convert_for_date_input,
     test_tc120_empty_form_does_not_auto_fill_today_for_warranty,
     test_tc_template_code_options_loaded,
-    test_tc_case_type_options_from_csv,
+    test_tc_call_line_options_from_csv,
+    test_tc_call_line_options_loaded,
+    test_tc_bic_camera_call_line_vendor,
+    test_tc_is_over_10years_rentals_tokyo,
+    test_tc_is_under_10years_rentals_tokyo,
 ]
 
 if __name__ == "__main__":

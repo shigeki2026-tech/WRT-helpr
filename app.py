@@ -30,7 +30,7 @@ PREFECTURES = [
 
 FIELD_LABELS = {
     "call_type": "入電種別",
-    "case_type": "案件区分",
+    "call_line": "回線名",
     "appliance_type": "家電/住設",
     "prefecture": "都道府県",
     "address": "お客様住所",
@@ -53,6 +53,7 @@ FIELD_LABELS = {
     "maker_warranty_period": "メーカー保証期間",
     "install_type": "設置形態",
     "extra_condition": "補足条件",
+    "is_over_10years": "製造10年以上",
     "template_code": "テンプレートコード",
     "template_label": "テンプレートラベル",
 }
@@ -209,13 +210,15 @@ _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_ke
 _MFR_GROUP_COLS    = ["group_name", "manufacturers", "notes"]
 _AREA_GROUP_COLS   = ["area_group", "prefectures", "notes"]
 _SCRIPT_LINK_COLS   = ["script_sheet", "script_part", "display_name", "url", "notes"]
-_VENDOR_COLS       = ["priority", "enabled", "case_type", "prefecture", "area_group",
+_VENDOR_COLS       = ["priority", "enabled", "call_line", "prefecture", "area_group",
                       "manufacturer_keyword", "product_keyword", "store_keyword",
-                      "repair_type", "vendor_name", "reason", "needs_escalation", "notes"]
+                      "repair_type", "is_over_10years", "vendor_name", "reason",
+                      "needs_escalation", "notes"]
 _TEMPLATE_CODE_COLS = [
     "priority", "enabled", "template_code", "category",
     "label", "data_erase_required", "cost_guidance_allowed", "notes"
 ]
+_CALL_LINE_COLS = ["priority", "enabled", "call_line", "line_group", "notes"]
 # legacy
 _MASTER_REQUIRED_COLS = [
     "priority", "enabled", "match_target", "keyword",
@@ -299,6 +302,11 @@ def _load_template_codes_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_template_codes.csv", _TEMPLATE_CODE_COLS)
 
 
+@st.cache_data
+def _load_call_lines_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_call_lines.csv", _CALL_LINE_COLS)
+
+
 def _csv_mtime(filename: str) -> float:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
     return os.path.getmtime(path) if os.path.exists(path) else 0.0
@@ -322,6 +330,10 @@ def load_vendor_rules() -> pd.DataFrame:
 
 def load_template_codes() -> pd.DataFrame:
     return _load_template_codes_cached(_csv_mtime("master_template_codes.csv"))
+
+
+def load_call_lines() -> pd.DataFrame:
+    return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -453,21 +465,28 @@ def get_product_options() -> list:
     return options
 
 
-def get_case_type_options() -> list:
-    """master_template_codes.csv の category から案件区分候補を生成する。"""
+def get_call_line_options() -> list:
+    """master_call_lines.csv の call_line から回線名候補を生成する。"""
     options = [""]
     seen = {""}
-    df = load_template_codes()
+    df = load_call_lines()
     if not df.empty:
-        for cat in df["category"].tolist():
-            if cat and cat not in seen:
-                options.append(cat)
-                seen.add(cat)
-    for fallback in ["通常", "ビックカメラ案件", "ソフマップ案件", "既築中古", "ヤマダオリジナル"]:
-        if fallback not in seen:
-            options.append(fallback)
-            seen.add(fallback)
+        for val in df["call_line"].tolist():
+            if val and val not in seen:
+                options.append(val)
+                seen.add(val)
     return options
+
+
+def get_line_group(call_line: str) -> str:
+    """回線名からline_group（家電/住設/その他）を返す。"""
+    df = load_call_lines()
+    if df.empty:
+        return ""
+    rows = df[df["call_line"] == call_line]
+    if rows.empty:
+        return ""
+    return rows.iloc[0].get("line_group", "")
 
 
 def normalize_product_for_select(product: str) -> str:
@@ -1147,12 +1166,12 @@ def determine_cost_estimate(form: dict, repair_type: str) -> str:
 def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
     """
     master_vendor_rules.csv を使って修理拠点候補を判定する。
-    - case_type / prefecture は完全一致（空=ワイルドカード）
+    - call_line / prefecture は完全一致（空=ワイルドカード）
     - area_group は AREA_GROUPS マッピングで都道府県が含まれるか判定
     - その他フィールドは keyword in target の包含一致
     """
     df = load_vendor_rules()
-    case_type    = (form.get("case_type") or "").strip()
+    call_line    = (form.get("call_line") or "").strip()
     prefecture   = (form.get("prefecture") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
     product      = (form.get("product") or "").strip()
@@ -1160,16 +1179,17 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
 
     if not df.empty:
         for _, row in df.iterrows():
-            ct   = (row.get("case_type") or "").strip()
+            cl   = (row.get("call_line") or "").strip()
             pref = (row.get("prefecture") or "").strip()
             ag   = (row.get("area_group") or "").strip()
             mk   = (row.get("manufacturer_keyword") or "").strip()
             pk   = (row.get("product_keyword") or "").strip()
             sk   = (row.get("store_keyword") or "").strip()
             rt   = (row.get("repair_type") or "").strip()
+            io10 = (row.get("is_over_10years") or "").strip()
 
-            # case_type: 完全一致（空=ワイルドカード）
-            if ct and ct.lower() != case_type.lower():         continue
+            # call_line: 完全一致（空=ワイルドカード）
+            if cl and cl.lower() != call_line.lower():         continue
             # prefecture: 完全一致（空=ワイルドカード）
             if pref and pref != prefecture:                     continue
             # area_group: CSVのNTT東西エリアと既存の地域グループを両方参照（空=ワイルドカード）
@@ -1185,13 +1205,17 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
             if not _kw_match(sk, store):                       continue
             # repair_type: 完全一致（空=ワイルドカード）
             if rt and rt != repair_type:                       continue
+            # is_over_10years: 空=ワイルドカード / "0"=10年未満 / "1"=10年以上
+            form_over = form.get("is_over_10years", False)
+            if io10 == "1" and not form_over:                  continue
+            if io10 == "0" and form_over:                      continue
 
             return {
                 "matched":          True,
                 "vendor_name":      (row.get("vendor_name") or "担当エスカ（要確認）").strip(),
                 "reason":           (row.get("reason") or "").strip(),
                 "needs_escalation": str(row.get("needs_escalation", "0")).strip() == "1",
-                "keyword":          ct or pref or ag or mk or pk,
+                "keyword":          cl or pref or ag or mk or pk,
                 "priority":         int(row.get("priority", 999)),
                 "csv_name":         "master_vendor_rules.csv",
                 "notes":            (row.get("notes") or "").strip(),
@@ -1208,10 +1232,10 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
 def determine_vendor_candidate(form: dict) -> str:
     prefecture   = form.get("prefecture", "")
     product      = form.get("product", "")
-    case_type    = form.get("case_type", "")
+    call_line    = form.get("call_line", "")
     manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
     extra        = form.get("extra_condition", "")
-    if case_type in ["ビックカメラ案件", "ソフマップ案件"]: return "ソフマップ修理センター"
+    if call_line in ["ビックカメラ", "ソフマップ"]: return "ソフマップ修理センター"
     if "ヤマダオリジナル" in extra:                         return "㈱ヤマダデンキ"
     if prefecture == "沖縄県":                              return "宗建リノベーション"
     if prefecture in {"福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県"}:
@@ -1222,45 +1246,49 @@ def determine_vendor_candidate(form: dict) -> str:
 
 
 # ============================================================
-# case_type 自動推定（販売店名 → 案件区分）
+# call_line 属性推定（回線名 + 販売店名）
 # ============================================================
-def infer_case_type(form: dict) -> str:
+def infer_call_line_attrs(form: dict) -> dict:
     """
-    case_type が未入力の場合に、販売店名・運営会社名から自動推定する。
-    すでに case_type が設定されていればそのまま返す。
+    call_line と store_name から案件属性を自動推定する。
+    戻り値: {"call_line": str, "is_bic_sofmap": bool}
     """
-    existing = (form.get("case_type") or "").strip()
-    if existing:
-        return existing
+    call_line = (form.get("call_line") or "").strip()
     store = (form.get("store_name") or "").strip()
-    if "ビックカメラ" in store or "ビックカメラ" in store.lower():
-        return "ビックカメラ案件"
-    if "ビック" in store and "カメラ" in store:
-        return "ビックカメラ案件"
-    if "ソフマップ" in store:
-        return "ソフマップ案件"
-    return ""
+    inferred_call_line = call_line
+    if not inferred_call_line:
+        if "ビックカメラ" in store or ("ビック" in store and "カメラ" in store):
+            inferred_call_line = "ビックカメラ"
+        elif "ソフマップ" in store:
+            inferred_call_line = "ソフマップ"
+    is_bic_sofmap = (
+        "ビックカメラ" in inferred_call_line or
+        "ソフマップ" in inferred_call_line or
+        "ビックカメラ" in store or
+        "ソフマップ" in store
+    )
+    return {"call_line": inferred_call_line, "is_bic_sofmap": is_bic_sofmap}
 
 
 # ============================================================
 # スクリプトルート判定（既存ロジック・削除しない）
 # ============================================================
 def determine_script_route(form: dict, repair_type: str) -> dict:
-    case_type      = form.get("case_type", "")
+    call_line      = form.get("call_line", "")
     appliance_type = form.get("appliance_type", "")
     result = {
         "sheet_name": "", "part": "", "price_guidance_allowed": True,
         "notes": [], "escalation_needed": False, "reason": "",
     }
-    if case_type in ["ビックカメラ案件", "ソフマップ案件"]:
+    if call_line in ["ビックカメラ", "ソフマップ"]:
         result.update(sheet_name="⑩-1ビックカメラ・ソフマップ", part="案件別受付",
                       price_guidance_allowed=False,
                       notes=["保証対象外時の概算費用・上限金額などの金額案内はしない"],
-                      reason="ビックカメラ/ソフマップ案件のため金額案内不可")
+                      reason="ビックカメラ/ソフマップ回線のため金額案内不可")
         return result
-    if case_type == "既築中古":
+    if get_line_group(call_line) == "住設":
         result.update(sheet_name="住設【既築／中古のみ】", part="既築・中古住設受付",
-                      reason="既築中古案件")
+                      reason="住設回線")
         return result
     if appliance_type == "住設":
         result.update(sheet_name="住設【既築／中古のみ】", part="住設受付", reason="住設製品")
@@ -1341,6 +1369,8 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
     lines = [
         "■対応履歴",
         f"WRT-NO　　　: {form.get('wrt_no', '未入力')}",
+        f"回線名　　　: {form.get('call_line', '未選択')}",
+        f"製造10年以上: {'はい' if form.get('is_over_10years') else 'いいえ / 未確認'}",
         f"テンプレートコード: {form.get('template_code', '未選択')}",
         f"テンプレート: {form.get('template_label', '未選択')}",
         f"お客様コード: {form.get('customer_code', '未入力')}",
@@ -1751,16 +1781,16 @@ def run_decision(form: dict) -> dict:
       + determine_data_erase_consent      (データ消去同意)
     各層でCSVにヒットしなければ既存ロジックにフォールバック。
     """
-    # ── 準備: メーカー正規化 + case_type 自動推定 ──
+    # ── 準備: メーカー正規化 + call_line 属性推定 ──
     working_form = form.copy()
     selected_manufacturer = (form.get("manufacturer") or "").strip()
     if selected_manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
         working_form["manufacturer"] = selected_manufacturer
     else:
         working_form["manufacturer"] = normalize_manufacturer(selected_manufacturer)
-    inferred_case_type = infer_case_type(working_form)
-    if inferred_case_type:
-        working_form["case_type"] = inferred_case_type
+    inferred_call_line_attrs = infer_call_line_attrs(working_form)
+    if inferred_call_line_attrs.get("call_line"):
+        working_form["call_line"] = inferred_call_line_attrs["call_line"]
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -1841,7 +1871,7 @@ def run_decision(form: dict) -> dict:
         "cost_source":         cost_source,
         "vendor_result":       vendor_result,
         # ── 自動推定 ──
-        "inferred_case_type":  inferred_case_type,
+        "inferred_call_line_attrs": inferred_call_line_attrs,
         # ── working_form（デバッグ用） ──
         "working_form":        working_form,
     }
@@ -1963,6 +1993,7 @@ def render_warranty_date_input(field_name: str, label: str, form: dict,
 
 def empty_form() -> dict:
     form = {k: "" for k in FIELD_LABELS}
+    form["is_over_10years"] = False
     form["genre"] = ""
     form["category"] = ""
     return form
@@ -2075,20 +2106,20 @@ def render_tab_call():
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
 
         call_type_opts    = ["", "新規入電", "折り返し", "再入電", "その他"]
-        case_type_opts    = get_case_type_options()
+        call_line_opts    = get_call_line_options()
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
         form["call_type"]     = st.selectbox("入電種別", call_type_opts,
             index=call_type_opts.index(form.get("call_type","")) if form.get("call_type") in call_type_opts else 0)
-        render_field_marker("case_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["case_type"]     = st.selectbox("案件区分", case_type_opts,
-            index=case_type_opts.index(form.get("case_type","")) if form.get("case_type") in case_type_opts else 0)
-        # テンプレートコード選択（案件区分に連動）
+        render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
+        form["call_line"]     = st.selectbox("回線名", call_line_opts,
+            index=call_line_opts.index(form.get("call_line","")) if form.get("call_line") in call_line_opts else 0)
+        # テンプレートコード選択（回線名に連動）
         df_tpl = load_template_codes()
-        case_type_val = form.get("case_type", "")
-        if case_type_val and not df_tpl.empty:
-            filtered = df_tpl[df_tpl["category"] == case_type_val]
+        call_line_val = form.get("call_line", "")
+        if call_line_val and not df_tpl.empty:
+            filtered = df_tpl[df_tpl["category"] == call_line_val]
             if not filtered.empty:
                 tpl_labels = [""] + filtered["label"].tolist()
                 if st.session_state.get("tpl_label_select") not in tpl_labels:
@@ -2159,6 +2190,20 @@ def render_tab_call():
             "warranty_start_date", "保証開始日",
             form, missing_fields_set, invalid_fields_set, pre_diagnostics,
         )
+        # 製造10年以上チェック（賃貸・既築案件の業者判定に使用）
+        warranty_start = form.get("warranty_start_date", "")
+        years_hint = ""
+        if warranty_start:
+            start_dt = parse_date_safe(warranty_start)
+            if start_dt:
+                years = (date.today() - start_dt).days // 365
+                years_hint = f"（保証開始日から約 {years} 年）"
+        form["is_over_10years"] = st.checkbox(
+            f"製造10年以上 {years_hint}",
+            value=form.get("is_over_10years", False),
+            key="is_over_10years_cb",
+            help="賃貸・既築案件の修理業者判定に使用します。製造年が不明な場合はお客様に確認してください。",
+        )
         render_warranty_date_input(
             "warranty_end_date", "保証終了日",
             form, missing_fields_set, invalid_fields_set, pre_diagnostics,
@@ -2202,7 +2247,7 @@ def render_tab_call():
     vendor              = decision["vendor"]
     vendor_result       = decision["vendor_result"]
     normalized_product  = decision["normalized_product"]
-    inferred_case_type  = decision.get("inferred_case_type", "")
+    inferred_call_line_attrs = decision.get("inferred_call_line_attrs", {})
     area_group          = decision.get("area_group", "")
     warranty_result     = decision["warranty_result"]
     warranty_status     = warranty_result.get("warranty_status", "unknown")
@@ -2537,7 +2582,8 @@ def render_tab_master():
 
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
-        "修理拠点ルール", "テンプレートコード", "メーカーグループ", "エリアグループ", "レガシーマスタ",
+        "修理拠点ルール", "テンプレートコード", "回線名マスタ",
+        "メーカーグループ", "エリアグループ", "レガシーマスタ",
     ])
 
     with master_tabs[0]:
@@ -2595,6 +2641,16 @@ def render_tab_master():
             st.caption("業者送付テンプレートコードと案件区分候補")
 
     with master_tabs[5]:
+        st.markdown("##### 📄 master_call_lines.csv")
+        df = load_call_lines()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_call_lines.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("入電回線名と回線グループ")
+
+    with master_tabs[6]:
         st.markdown("##### 📄 master_manufacturer_groups.csv")
         df_mg = load_manufacturer_groups_csv()
         if df_mg.empty:
@@ -2608,7 +2664,7 @@ def render_tab_master():
                 for gname, mfrs in mfr_dict.items():
                     st.markdown(f"- **{gname}**: {', '.join(sorted(mfrs))}")
 
-    with master_tabs[6]:
+    with master_tabs[7]:
         st.markdown("##### 📄 master_area_groups.csv（NTT東西エリア等）")
         df_ag = load_area_groups_csv()
         if df_ag.empty:
@@ -2622,7 +2678,7 @@ def render_tab_master():
                 for aname, prefs in area_dict.items():
                     st.markdown(f"- **{aname}** ({len(prefs)}県): {', '.join(sorted(prefs))}")
 
-    with master_tabs[7]:
+    with master_tabs[8]:
         st.markdown("##### 📄 master_products.csv（legacy・後方互換）")
         df = load_master_products()
         if df.empty:
