@@ -5,7 +5,7 @@ import re
 import os
 import csv  # CSV読み込み改善
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
 import pandas as pd
 
 try:
@@ -29,6 +29,7 @@ PREFECTURES = [
 ]
 
 FIELD_LABELS = {
+    "operator_name": "オペレーター名",
     "call_type": "入電種別",
     "call_line": "回線名",
     "appliance_type": "家電/住設",
@@ -49,6 +50,9 @@ FIELD_LABELS = {
     "customer_code": "お客様コード",
     "customer_name": "お客様名",
     "phone_number": "電話番号",
+    "contact_phone": "日程調整時の連絡先",
+    "caller_type": "発信者区分",
+    "extracted_time": "入電時刻",
     "symptom": "症状",
     "maker_warranty_period": "メーカー保証期間",
     "install_type": "設置形態",
@@ -56,6 +60,7 @@ FIELD_LABELS = {
     "is_over_10years": "製造10年以上",
     "template_code": "テンプレートコード",
     "template_label": "テンプレートラベル",
+    "rakuteru_no": "楽テルNO",
 }
 
 DIAGNOSTIC_STATUS_ORDER = {"error": 0, "warning": 1, "ok": 2}
@@ -334,6 +339,39 @@ def load_template_codes() -> pd.DataFrame:
 
 def load_call_lines() -> pd.DataFrame:
     return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
+
+
+def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, df_tpl: pd.DataFrame) -> str:
+    """
+    call_line + repair_type + warranty_plan からテンプレートラベルを自動選択。
+    - warranty_plan に「物損」「ダブル」「DP」のいずれかを含む → ダブルプロテクト系を優先
+    - repair_type == "出張修理" → 【出張修理】系
+    - repair_type == "持込修理" → 【持込修理】系
+    - マッチしなければ "" を返す
+    """
+    if df_tpl.empty or not call_line:
+        return ""
+    filtered = df_tpl[df_tpl["category"] == call_line]
+    if filtered.empty:
+        return ""
+    plan = (warranty_plan or "").strip()
+    is_dp = any(kw in plan for kw in ["物損", "ダブル", "DP"])
+    repair_kw = (
+        "出張修理" if repair_type == "出張修理"
+        else "持込修理" if repair_type == "持込修理"
+        else ""
+    )
+    if is_dp and repair_kw:
+        for _, row in filtered.iterrows():
+            label = row["label"]
+            if repair_kw in label and "ダブル" in label:
+                return label
+    if repair_kw:
+        for _, row in filtered.iterrows():
+            label = row["label"]
+            if repair_kw in label and "ダブル" not in label and "物損" not in label:
+                return label
+    return ""
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -1993,6 +2031,11 @@ def render_warranty_date_input(field_name: str, label: str, form: dict,
 
 def empty_form() -> dict:
     form = {k: "" for k in FIELD_LABELS}
+    form["operator_name"] = ""
+    form["rakuteru_no"] = ""
+    form["contact_phone"] = ""
+    form["caller_type"] = "加入者"
+    form["extracted_time"] = ""
     form["is_over_10years"] = False
     form["genre"] = ""
     form["category"] = ""
@@ -2002,6 +2045,9 @@ def empty_form() -> dict:
 def init_session():
     if "form" not in st.session_state:
         st.session_state.form = empty_form()
+    else:
+        for key, value in empty_form().items():
+            st.session_state.form.setdefault(key, value)
     if "extracted" not in st.session_state:
         st.session_state.extracted = {}
     if "pasted_text" not in st.session_state:
@@ -2057,6 +2103,10 @@ def render_tab_call():
                             if extracted:
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
+                            from datetime import datetime
+                            now = datetime.now()
+                            time_str = f"{now.year}/{now.month}/{now.day} {now.hour:02d}：{now.minute:02d}"
+                            st.session_state["form"]["extracted_time"] = time_str
                             st.session_state["copy_panel_open"] = False
                             st.rerun()
                     except Exception as e:
@@ -2076,6 +2126,10 @@ def render_tab_call():
             if st.button("🔍 抽出する", use_container_width=True, type="primary"):
                 if pasted.strip():
                     st.session_state.extracted = extract_fields_from_pasted_text(pasted)
+                    from datetime import datetime
+                    now = datetime.now()
+                    time_str = f"{now.year}/{now.month}/{now.day} {now.hour:02d}：{now.minute:02d}"
+                    st.session_state.form["extracted_time"] = time_str
                 else:
                     st.warning("テキストを貼り付けてください。")
 
@@ -2111,6 +2165,12 @@ def render_tab_call():
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
+        form["operator_name"] = st.text_input(
+            "オペレーター名",
+            form.get("operator_name", ""),
+            placeholder="例: 大濱",
+            key="operator_name_input",
+        )
         form["call_type"]     = st.selectbox("入電種別", call_type_opts,
             index=call_type_opts.index(form.get("call_type","")) if form.get("call_type") in call_type_opts else 0)
         render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
@@ -2508,18 +2568,27 @@ def render_tab_after_call():
     history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor,
                                             warranty_result, decision.get("diagnostics"))
 
+    selected_label = ""
+    selected_notes = ""
+    selected_code = ""
     col1, col2 = st.columns(2)
+
     with col1:
-        # テンプレート選択（終話後処理）
         st.markdown("##### 📋 テンプレート（業者送付コード）")
         df_tpl = load_template_codes()
         call_line_val = form.get("call_line", "")
+        repair_type_val = decision["repair_type"]
+        warranty_plan_val = form.get("warranty_plan", "")
+
         if call_line_val and not df_tpl.empty:
             filtered = df_tpl[df_tpl["category"] == call_line_val]
             if not filtered.empty:
                 tpl_labels = [""] + filtered["label"].tolist()
-                current_label = form.get("template_label", "")
+                auto_label = _auto_select_template(
+                    call_line_val, repair_type_val, warranty_plan_val, df_tpl)
+                current_label = form.get("template_label", "") or auto_label
                 idx = tpl_labels.index(current_label) if current_label in tpl_labels else 0
+
                 selected_label = st.selectbox(
                     "テンプレートを選択",
                     tpl_labels,
@@ -2530,15 +2599,17 @@ def render_tab_after_call():
                     matched = filtered[filtered["label"] == selected_label]
                     if not matched.empty:
                         row = matched.iloc[0]
-                        st.code(row["template_code"], language=None)
-                        if row["notes"]:
-                            st.info(f"📋 備考: {row['notes']}")
-                        if row["data_erase_required"] == "条件付き":
+                        selected_code = row["template_code"]
+                        selected_notes = (row.get("notes") or "").strip()
+                        st.code(selected_code, language=None)
+                        if selected_notes:
+                            st.info(f"📋 備考: {selected_notes}")
+                        if row.get("data_erase_required") == "条件付き":
                             st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
-                        if row["cost_guidance_allowed"] == "不可":
+                        if row.get("cost_guidance_allowed") == "不可":
                             st.error("🚫 金額案内不可案件")
-                        form["template_code"] = row["template_code"]
-                        form["template_label"] = row["label"]
+                        form["template_code"] = selected_code
+                        form["template_label"] = selected_label
                         st.session_state.form = form
                 else:
                     form["template_code"] = ""
@@ -2547,7 +2618,20 @@ def render_tab_after_call():
                 st.caption("回線名を選択するとテンプレートが表示されます")
         else:
             st.caption("回線名を選択するとテンプレートが表示されます")
+
         st.divider()
+
+        rakuteru_val = st.text_input(
+            "楽テルNO",
+            value=form.get("rakuteru_no", ""),
+            key="rakuteru_no_input",
+            placeholder="楽テル登録後に入力",
+        )
+        form["rakuteru_no"] = rakuteru_val
+        st.session_state.form = form
+
+        st.divider()
+
         st.markdown("##### 🏭 修理拠点候補")
         vr = decision["vendor_result"]
         if vr["matched"]:
@@ -2556,6 +2640,7 @@ def render_tab_after_call():
                 st.warning("⚠️ 担当エスカレーション推奨")
         else:
             st.info(vendor)
+
         st.markdown("##### 📋 手配方法・連絡先")
         st.markdown(
             """| 拠点 | 手配方法 | 連絡先 |
@@ -2567,7 +2652,35 @@ def render_tab_after_call():
 | CER候補 | 担当エスカ | 担当確認 |"""
         )
     with col2:
+        caller_options = ["加入者", "販売店", "修理業者"]
+        caller_default = form.get("caller_type", "加入者")
+        caller_type = st.selectbox(
+            "発信者区分",
+            caller_options,
+            index=caller_options.index(caller_default) if caller_default in caller_options else 0,
+            key="caller_type_select",
+        )
+        form["caller_type"] = caller_type
+
+        contact_phone = st.text_input(
+            "日程調整時の連絡先",
+            value=form.get("contact_phone", "") or form.get("phone_number", ""),
+            key="contact_phone_input",
+            placeholder="電話番号（デフォルトはフォームの電話番号）",
+        )
+        form["contact_phone"] = contact_phone
+        st.session_state.form = form
+
         st.markdown("##### 📝 修理依頼票用メモ")
+
+        store = (form.get("store_name") or "").strip()
+        phone = (form.get("phone_number") or "").strip()
+        notes_filled = selected_notes
+        if store:
+            notes_filled = notes_filled.replace("〇〇〇〇〇", store)
+        if phone:
+            notes_filled = notes_filled.replace("TEL：", f"TEL：{phone}")
+
         memo = (
             f"WRT-NO: {form.get('wrt_no','─')}\n"
             f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
@@ -2577,20 +2690,41 @@ def render_tab_after_call():
             f"症状: {form.get('symptom','─')}\n"
             f"拠点候補: {vendor}"
         )
-        st.text_area("依頼票メモ", memo, height=220)
-        st.markdown("##### 💬 Chatwork/Teams 報告文")
-        report = (
-            f"【修理受付報告】\n"
-            f"WRT-NO: {form.get('wrt_no','─')}\n"
-            f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
-            f"お客様名: {form.get('customer_name','─')}\n"
-            f"製品: {form.get('product','─')}（{form.get('manufacturer','─')} {form.get('model_number','─')}）\n"
-            f"保証期間判定: {warranty_result.get('title','─')}\n"
-            f"修理形態: {repair_type} / 概算: {cost_estimate}\n"
-            f"拠点候補: {vendor}\n"
-            f"症状: {form.get('symptom','─')}"
+        if notes_filled:
+            memo += f"\n\n【備考】\n{notes_filled}"
+
+        st.text_area("依頼票メモ", memo, height=260, key="memo_after")
+
+        st.markdown("##### 💬 Teams 報告文")
+
+        operator = (form.get("operator_name") or "").strip() or "●●"
+        extracted_time = (form.get("extracted_time") or "").strip()
+        contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
+        rakuteru = (form.get("rakuteru_no") or "").strip()
+        line_group = get_line_group(form.get("call_line", ""))
+        if not line_group:
+            cl = (form.get("call_line") or "").strip()
+            if "住設" in cl or "不動産" in cl or "工務店" in cl:
+                line_group = "住設"
+            elif cl:
+                line_group = "家電"
+        line_label = (
+            "家電回線" if line_group == "家電"
+            else "住設回線" if line_group == "住設"
+            else "回線"
         )
-        st.text_area("報告文", report, height=220)
+
+        teams_report = (
+            f"【{line_label}へ受電】\n"
+            f"{extracted_time} {caller_type}→MPG{operator}\n"
+            f"【修理受付済】\n"
+            f"※保証対象外の事例ご案内済\n"
+            f"日程調整時の連絡先：{contact}"
+        )
+        if rakuteru:
+            teams_report += f"\n楽テルNO：{rakuteru}"
+
+        st.text_area("Teams報告文", teams_report, height=180, key="teams_report_display")
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
     st.text_area("履歴テンプレ", history_tmpl, height=300, key="history_after")
