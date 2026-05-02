@@ -2057,6 +2057,7 @@ def render_tab_call():
                             if extracted:
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
+                            st.session_state["copy_panel_open"] = False
                             st.rerun()
                     except Exception as e:
                         st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
@@ -2115,32 +2116,6 @@ def render_tab_call():
         render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["call_line"]     = st.selectbox("回線名", call_line_opts,
             index=call_line_opts.index(form.get("call_line","")) if form.get("call_line") in call_line_opts else 0)
-        # テンプレートコード選択（回線名に連動）
-        df_tpl = load_template_codes()
-        call_line_val = form.get("call_line", "")
-        if call_line_val and not df_tpl.empty:
-            filtered = df_tpl[df_tpl["category"] == call_line_val]
-            if not filtered.empty:
-                tpl_labels = [""] + filtered["label"].tolist()
-                if st.session_state.get("tpl_label_select") not in tpl_labels:
-                    st.session_state["tpl_label_select"] = ""
-                selected_label = st.selectbox("テンプレート（業者送付コード）", tpl_labels, key="tpl_label_select")
-                if selected_label:
-                    matched = filtered[filtered["label"] == selected_label]
-                    if not matched.empty:
-                        row = matched.iloc[0]
-                        st.code(row["template_code"], language=None)
-                        if row["notes"]:
-                            st.info(f"📋 備考: {row['notes']}")
-                        if row["data_erase_required"] == "条件付き":
-                            st.warning("⚠️ 対象製品はデータ消去同意【データ消去同意済】を依頼書へ記載してください")
-                        if row["cost_guidance_allowed"] == "不可":
-                            st.error("🚫 金額案内不可案件")
-                        form["template_code"] = row["template_code"]
-                        form["template_label"] = row["label"]
-                else:
-                    form["template_code"] = ""
-                    form["template_label"] = ""
         render_field_marker("appliance_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["appliance_type"]= st.selectbox("家電/住設", appliance_type_opts,
             index=appliance_type_opts.index(form.get("appliance_type","")) if form.get("appliance_type") in appliance_type_opts else 0)
@@ -2286,14 +2261,7 @@ def render_tab_call():
         else:
             st.success("保証期間内 — 受付判定へ進む")
 
-        # UI改修: 次に聞くことSTEPをゾーンB直下に表示
-        if next_action_steps:
-            for idx, step in enumerate(next_action_steps, 1):  # UI v3
-                st.markdown(f"**STEP {idx}.** {step}")  # UI v3
-
-        # UI v3: ゾーンC（判定サマリー大カード3枚）
-        if warranty_status == "expired":
-            st.caption("参考値（受付不可）")
+        # UI v3: ゾーンC（判定サマリー大カード4枚）
 
         cost_status = cost_result.get("cost_status", "confirmed")
         if not script_result.get("price_guidance_allowed", True):
@@ -2333,10 +2301,6 @@ def render_tab_call():
             repair_card_color = "#784212"  # UI v3
             repair_card_value = "要確認"  # UI v3
             repair_card_status = "⚠️ SV確認"  # UI v3
-        st.markdown(  # UI v3
-            _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),  # UI v3
-            unsafe_allow_html=True,  # UI v3
-        )  # UI v3
 
         if cost_status == "pending":  # UI v3
             cost_card_color = "#7d6608"  # UI v3
@@ -2355,10 +2319,6 @@ def render_tab_call():
             cost_card_color = "#1e8449"  # UI v3
             cost_card_value = cost_estimate or "要確認"  # UI v3
             cost_card_status = "✅ 案内可"  # UI v3
-        st.markdown(  # UI v3
-            _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),  # UI v3
-            unsafe_allow_html=True,  # UI v3
-        )  # UI v3
 
         script_link = lookup_script_link(script_result)  # UI v3
         script_sheet = script_result.get("sheet_name") or "未確定"  # UI v3
@@ -2374,10 +2334,40 @@ def render_tab_call():
             script_card_color = "#2c3e50"  # UI v3
             script_card_value = f"{script_sheet} / {script_part}"  # UI v3
             script_status = "URL未登録（手動で参照）"  # UI v3
-        st.markdown(  # UI v3
-            _ui_v3_card("参照スクリプト", script_card_value, script_status, script_card_color),  # UI v3
-            unsafe_allow_html=True,  # UI v3
-        )  # UI v3
+
+        card_cols = st.columns(4)
+        product_display = decision.get("normalized_product") or form.get("product") or "未選択"
+        manufacturer_display = (form.get("manufacturer") or "").strip()
+        model_display = (form.get("model_number") or "").strip()
+        product_sub = " ".join(filter(None, [manufacturer_display, model_display])) or "─"
+        with card_cols[0]:
+            st.markdown(
+                _ui_v3_card("製品", product_display, product_sub, "#2e4057"),
+                unsafe_allow_html=True,
+            )
+        with card_cols[1]:
+            st.markdown(
+                _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),
+                unsafe_allow_html=True,
+            )
+        with card_cols[2]:
+            st.markdown(
+                _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),
+                unsafe_allow_html=True,
+            )
+        with card_cols[3]:
+            st.markdown(
+                _ui_v3_card("参照スクリプト", script_card_value, script_status, script_card_color),
+                unsafe_allow_html=True,
+            )
+
+        if warranty_status == "expired":
+            st.caption("参考値（受付不可）")
+
+        # UI改修: 次に聞くことSTEPを判定サマリー直下に表示
+        if next_action_steps:
+            for idx, step in enumerate(next_action_steps, 1):  # UI v3
+                st.markdown(f"**STEP {idx}.** {step}")  # UI v3
 
         if "担当エスカ" in (vendor or ""):  # UI v3
             st.warning(f"🏭 修理拠点: {vendor}（終話後確認）")  # UI v3
@@ -2520,6 +2510,44 @@ def render_tab_after_call():
 
     col1, col2 = st.columns(2)
     with col1:
+        # テンプレート選択（終話後処理）
+        st.markdown("##### 📋 テンプレート（業者送付コード）")
+        df_tpl = load_template_codes()
+        call_line_val = form.get("call_line", "")
+        if call_line_val and not df_tpl.empty:
+            filtered = df_tpl[df_tpl["category"] == call_line_val]
+            if not filtered.empty:
+                tpl_labels = [""] + filtered["label"].tolist()
+                current_label = form.get("template_label", "")
+                idx = tpl_labels.index(current_label) if current_label in tpl_labels else 0
+                selected_label = st.selectbox(
+                    "テンプレートを選択",
+                    tpl_labels,
+                    index=idx,
+                    key="tpl_label_select_after",
+                )
+                if selected_label:
+                    matched = filtered[filtered["label"] == selected_label]
+                    if not matched.empty:
+                        row = matched.iloc[0]
+                        st.code(row["template_code"], language=None)
+                        if row["notes"]:
+                            st.info(f"📋 備考: {row['notes']}")
+                        if row["data_erase_required"] == "条件付き":
+                            st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
+                        if row["cost_guidance_allowed"] == "不可":
+                            st.error("🚫 金額案内不可案件")
+                        form["template_code"] = row["template_code"]
+                        form["template_label"] = row["label"]
+                        st.session_state.form = form
+                else:
+                    form["template_code"] = ""
+                    form["template_label"] = ""
+            else:
+                st.caption("回線名を選択するとテンプレートが表示されます")
+        else:
+            st.caption("回線名を選択するとテンプレートが表示されます")
+        st.divider()
         st.markdown("##### 🏭 修理拠点候補")
         vr = decision["vendor_result"]
         if vr["matched"]:
@@ -2542,17 +2570,19 @@ def render_tab_after_call():
         st.markdown("##### 📝 修理依頼票用メモ")
         memo = (
             f"WRT-NO: {form.get('wrt_no','─')}\n"
+            f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
             f"製品: {form.get('product','─')} / {form.get('manufacturer','─')} {form.get('model_number','─')}\n"
             f"保証期間判定: {warranty_result.get('title','─')}\n"
             f"修理形態: {repair_type}\n"
             f"症状: {form.get('symptom','─')}\n"
             f"拠点候補: {vendor}"
         )
-        st.text_area("依頼票メモ", memo, height=120)
+        st.text_area("依頼票メモ", memo, height=220)
         st.markdown("##### 💬 Chatwork/Teams 報告文")
         report = (
             f"【修理受付報告】\n"
             f"WRT-NO: {form.get('wrt_no','─')}\n"
+            f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
             f"お客様名: {form.get('customer_name','─')}\n"
             f"製品: {form.get('product','─')}（{form.get('manufacturer','─')} {form.get('model_number','─')}）\n"
             f"保証期間判定: {warranty_result.get('title','─')}\n"
@@ -2560,7 +2590,7 @@ def render_tab_after_call():
             f"拠点候補: {vendor}\n"
             f"症状: {form.get('symptom','─')}"
         )
-        st.text_area("報告文", report, height=140)
+        st.text_area("報告文", report, height=220)
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
     st.text_area("履歴テンプレ", history_tmpl, height=300, key="history_after")
