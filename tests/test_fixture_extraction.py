@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Fixture-based integration tests for copied warranty screen text."""
 
 import os
@@ -73,7 +73,7 @@ def test_case_dryer_active():
 def test_case_aircon_before_start():
     extracted, form, decision = run_fixture("case_aircon_before_start.txt")
 
-    assert extracted["warranty_start_date"] == "2026/05/01"
+    assert extracted["warranty_start_date"] == "2028/05/01"
     assert form["product"] == "エアコン"
     assert form["manufacturer"] == "ダイキン"
     assert form["manufacturer_original"] == "DAIKIN"

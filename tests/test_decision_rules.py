@@ -1166,6 +1166,19 @@ def test_tc120_empty_form_does_not_auto_fill_today_for_warranty():
           d["warranty_status"], "unknown")
 
 
+def test_tc_template_code_options_loaded():
+    df = app.load_template_codes()
+    assert not df.empty
+    assert "template_code" in df.columns
+
+
+def test_tc_case_type_options_from_csv():
+    options = app.get_case_type_options()
+    assert "持込修理" in options
+    assert "出張修理" in options
+    assert "GIGA案件" in options
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -1291,6 +1304,8 @@ _ALL_TESTS = [
     test_tc118_unknown_warranty_when_dates_blank,
     test_tc119_extracted_dates_convert_for_date_input,
     test_tc120_empty_form_does_not_auto_fill_today_for_warranty,
+    test_tc_template_code_options_loaded,
+    test_tc_case_type_options_from_csv,
 ]
 
 if __name__ == "__main__":

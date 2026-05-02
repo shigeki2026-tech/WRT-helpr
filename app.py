@@ -53,6 +53,8 @@ FIELD_LABELS = {
     "maker_warranty_period": "メーカー保証期間",
     "install_type": "設置形態",
     "extra_condition": "補足条件",
+    "template_code": "テンプレートコード",
+    "template_label": "テンプレートラベル",
 }
 
 DIAGNOSTIC_STATUS_ORDER = {"error": 0, "warning": 1, "ok": 2}
@@ -210,6 +212,10 @@ _SCRIPT_LINK_COLS   = ["script_sheet", "script_part", "display_name", "url", "no
 _VENDOR_COLS       = ["priority", "enabled", "case_type", "prefecture", "area_group",
                       "manufacturer_keyword", "product_keyword", "store_keyword",
                       "repair_type", "vendor_name", "reason", "needs_escalation", "notes"]
+_TEMPLATE_CODE_COLS = [
+    "priority", "enabled", "template_code", "category",
+    "label", "data_erase_required", "cost_guidance_allowed", "notes"
+]
 # legacy
 _MASTER_REQUIRED_COLS = [
     "priority", "enabled", "match_target", "keyword",
@@ -288,6 +294,11 @@ def _load_vendor_rules_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_vendor_rules.csv", _VENDOR_COLS)
 
 
+@st.cache_data
+def _load_template_codes_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_template_codes.csv", _TEMPLATE_CODE_COLS)
+
+
 def _csv_mtime(filename: str) -> float:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
     return os.path.getmtime(path) if os.path.exists(path) else 0.0
@@ -307,6 +318,10 @@ def load_cost_rules() -> pd.DataFrame:
 
 def load_vendor_rules() -> pd.DataFrame:
     return _load_vendor_rules_cached(_csv_mtime("master_vendor_rules.csv"))
+
+
+def load_template_codes() -> pd.DataFrame:
+    return _load_template_codes_cached(_csv_mtime("master_template_codes.csv"))
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -435,6 +450,23 @@ def get_product_options() -> list:
             seen.add(product)
     if PRODUCT_OTHER not in seen:
         options.append(PRODUCT_OTHER)
+    return options
+
+
+def get_case_type_options() -> list:
+    """master_template_codes.csv の category から案件区分候補を生成する。"""
+    options = [""]
+    seen = {""}
+    df = load_template_codes()
+    if not df.empty:
+        for cat in df["category"].tolist():
+            if cat and cat not in seen:
+                options.append(cat)
+                seen.add(cat)
+    for fallback in ["通常", "ビックカメラ案件", "ソフマップ案件", "既築中古", "ヤマダオリジナル"]:
+        if fallback not in seen:
+            options.append(fallback)
+            seen.add(fallback)
     return options
 
 
@@ -1309,6 +1341,8 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
     lines = [
         "■対応履歴",
         f"WRT-NO　　　: {form.get('wrt_no', '未入力')}",
+        f"テンプレートコード: {form.get('template_code', '未選択')}",
+        f"テンプレート: {form.get('template_label', '未選択')}",
         f"お客様コード: {form.get('customer_code', '未入力')}",
         f"お客様名　　: {form.get('customer_name', '未入力')}",
         f"電話番号　　: {form.get('phone_number', '未入力')}",
@@ -2041,8 +2075,7 @@ def render_tab_call():
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
 
         call_type_opts    = ["", "新規入電", "折り返し", "再入電", "その他"]
-        case_type_opts    = ["", "通常", "ビックカメラ案件", "ソフマップ案件",
-                             "既築中古", "ヤマダオリジナル", "その他"]
+        case_type_opts    = get_case_type_options()
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
@@ -2051,6 +2084,32 @@ def render_tab_call():
         render_field_marker("case_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["case_type"]     = st.selectbox("案件区分", case_type_opts,
             index=case_type_opts.index(form.get("case_type","")) if form.get("case_type") in case_type_opts else 0)
+        # テンプレートコード選択（案件区分に連動）
+        df_tpl = load_template_codes()
+        case_type_val = form.get("case_type", "")
+        if case_type_val and not df_tpl.empty:
+            filtered = df_tpl[df_tpl["category"] == case_type_val]
+            if not filtered.empty:
+                tpl_labels = [""] + filtered["label"].tolist()
+                if st.session_state.get("tpl_label_select") not in tpl_labels:
+                    st.session_state["tpl_label_select"] = ""
+                selected_label = st.selectbox("テンプレート（業者送付コード）", tpl_labels, key="tpl_label_select")
+                if selected_label:
+                    matched = filtered[filtered["label"] == selected_label]
+                    if not matched.empty:
+                        row = matched.iloc[0]
+                        st.code(row["template_code"], language=None)
+                        if row["notes"]:
+                            st.info(f"📋 備考: {row['notes']}")
+                        if row["data_erase_required"] == "条件付き":
+                            st.warning("⚠️ 対象製品はデータ消去同意【データ消去同意済】を依頼書へ記載してください")
+                        if row["cost_guidance_allowed"] == "不可":
+                            st.error("🚫 金額案内不可案件")
+                        form["template_code"] = row["template_code"]
+                        form["template_label"] = row["label"]
+                else:
+                    form["template_code"] = ""
+                    form["template_label"] = ""
         render_field_marker("appliance_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["appliance_type"]= st.selectbox("家電/住設", appliance_type_opts,
             index=appliance_type_opts.index(form.get("appliance_type","")) if form.get("appliance_type") in appliance_type_opts else 0)
@@ -2478,7 +2537,7 @@ def render_tab_master():
 
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
-        "修理拠点ルール", "メーカーグループ", "エリアグループ", "レガシーマスタ",
+        "修理拠点ルール", "テンプレートコード", "メーカーグループ", "エリアグループ", "レガシーマスタ",
     ])
 
     with master_tabs[0]:
@@ -2526,6 +2585,16 @@ def render_tab_master():
                     st.markdown(f"- **{ag}**: {', '.join(sorted(prefs))}")
 
     with master_tabs[4]:
+        st.markdown("##### 📄 master_template_codes.csv")
+        df = load_template_codes()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_template_codes.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("業者送付テンプレートコードと案件区分候補")
+
+    with master_tabs[5]:
         st.markdown("##### 📄 master_manufacturer_groups.csv")
         df_mg = load_manufacturer_groups_csv()
         if df_mg.empty:
@@ -2539,7 +2608,7 @@ def render_tab_master():
                 for gname, mfrs in mfr_dict.items():
                     st.markdown(f"- **{gname}**: {', '.join(sorted(mfrs))}")
 
-    with master_tabs[5]:
+    with master_tabs[6]:
         st.markdown("##### 📄 master_area_groups.csv（NTT東西エリア等）")
         df_ag = load_area_groups_csv()
         if df_ag.empty:
@@ -2553,7 +2622,7 @@ def render_tab_master():
                 for aname, prefs in area_dict.items():
                     st.markdown(f"- **{aname}** ({len(prefs)}県): {', '.join(sorted(prefs))}")
 
-    with master_tabs[6]:
+    with master_tabs[7]:
         st.markdown("##### 📄 master_products.csv（legacy・後方互換）")
         df = load_master_products()
         if df.empty:
