@@ -1932,69 +1932,89 @@ def init_session():
 # タブ1: 通話中判定
 # ============================================================
 def render_tab_call():
-    col_left, col_center, col_right = st.columns([1.2, 1.5, 1.5], gap="medium")
+    # UI改修: 通話中判定タブ専用の表示密度を調整
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stHorizontalBlock"] {
+            gap: 16px;
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 1.1rem;
+        }
+        div[data-testid="stMetricDelta"] {
+            font-size: 0.9rem;
+        }
+        div[data-testid="stAlert"] {
+            padding-top: 0.45rem;
+            padding-bottom: 0.45rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # ─── 左カラム: コピー情報取り込み ───
-    with col_left:
-        st.subheader("📋 コピー情報取り込み")
+    # UI改修: 左=入力パネル、右=判定結果の2カラム構成
+    col_input, col_result = st.columns([1, 2], gap="medium")
 
-        if _PYPERCLIP_AVAILABLE:
-            st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
-            if st.button("📋 クリップボードから直接抽出", use_container_width=True):
-                try:
-                    text = pyperclip.paste()
-                    if not text or not text.strip():
-                        st.warning("クリップボードが空です。手動貼り付け欄を使ってください。")
-                    else:
-                        st.session_state["pasted_text"] = text
-                        extracted = extract_fields_from_pasted_text(text)
-                        st.session_state["extracted"] = extracted
-                        if extracted:
-                            st.session_state["form"] = apply_extracted_fields_to_form(
-                                extracted, st.session_state["form"])
-                        st.rerun()
-                except Exception as e:
-                    st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
-        else:
-            st.info("pyperclip が使えません。手動貼り付け欄を使ってください。")
-
-        pasted = st.text_area(
-            "保証画面などのテキストを貼り付け",
-            value=st.session_state.pasted_text,
-            height=190,
-            key="paste_area",
-            placeholder="ここにコピーしたテキストを貼り付けてください...",
-        )
-        st.session_state.pasted_text = pasted
-
-        if st.button("🔍 抽出する", use_container_width=True, type="primary"):
-            if pasted.strip():
-                st.session_state.extracted = extract_fields_from_pasted_text(pasted)
+    # UI改修: 左カラムにコピー取り込みとフォームを集約
+    with col_input:
+        with st.expander("📋 コピー情報取り込み", expanded=False):
+            if _PYPERCLIP_AVAILABLE:
+                st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
+                if st.button("📋 クリップボードから直接抽出", use_container_width=True):
+                    try:
+                        text = pyperclip.paste()
+                        if not text or not text.strip():
+                            st.warning("クリップボードが空です。手動貼り付け欄を使ってください。")
+                        else:
+                            st.session_state["pasted_text"] = text
+                            extracted = extract_fields_from_pasted_text(text)
+                            st.session_state["extracted"] = extracted
+                            if extracted:
+                                st.session_state["form"] = apply_extracted_fields_to_form(
+                                    extracted, st.session_state["form"])
+                            st.rerun()
+                    except Exception as e:
+                        st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
             else:
-                st.warning("テキストを貼り付けてください。")
+                st.info("pyperclip が使えません。手動貼り付け欄を使ってください。")
 
-        if st.session_state.extracted:
-            st.markdown("**抽出結果**")
-            ext = st.session_state.extracted
-            label_map = {
-                "plan": "保証プラン", "warranty_start_date": "保証開始日",
-                "warranty_end_date": "保証終了日", "customer_code": "お客様コード",
-                "customer_name": "お客様名", "phone_number": "電話番号",
-                "address": "住所", "prefecture": "都道府県",
-                "wrt_no": "WRT-NO", "product_price": "商品価格",
-                "manufacturer": "メーカー", "model_number": "型番",
-                "series": "シリーズ", "store_name": "販売店",
-            }
-            rows = [f"- **{lbl}**: {ext.get(k,'') or '─'}" for k, lbl in label_map.items()]
-            st.markdown("\n".join(rows))
-            if st.button("📥 フォームへ反映", use_container_width=True):
-                st.session_state.form = apply_extracted_fields_to_form(
-                    st.session_state.extracted, st.session_state.form)
-                st.success("フォームへ反映しました。")
-                st.rerun()
+            pasted = st.text_area(
+                "保証画面などのテキストを貼り付け",
+                value=st.session_state.pasted_text,
+                height=190,
+                key="paste_area",
+                placeholder="ここにコピーしたテキストを貼り付けてください...",
+            )
+            st.session_state.pasted_text = pasted
 
-    # ─── 中央カラム: 受付情報フォーム ───
-    with col_center:
+            if st.button("🔍 抽出する", use_container_width=True, type="primary"):
+                if pasted.strip():
+                    st.session_state.extracted = extract_fields_from_pasted_text(pasted)
+                else:
+                    st.warning("テキストを貼り付けてください。")
+
+            if st.session_state.extracted:
+                st.markdown("**抽出結果**")
+                ext = st.session_state.extracted
+                label_map = {
+                    "plan": "保証プラン", "warranty_start_date": "保証開始日",
+                    "warranty_end_date": "保証終了日", "customer_code": "お客様コード",
+                    "customer_name": "お客様名", "phone_number": "電話番号",
+                    "address": "住所", "prefecture": "都道府県",
+                    "wrt_no": "WRT-NO", "product_price": "商品価格",
+                    "manufacturer": "メーカー", "model_number": "型番",
+                    "series": "シリーズ", "store_name": "販売店",
+                }
+                rows = [f"- **{lbl}**: {ext.get(k,'') or '─'}" for k, lbl in label_map.items()]
+                st.markdown("\n".join(rows))
+                if st.button("📥 フォームへ反映", use_container_width=True):
+                    st.session_state.form = apply_extracted_fields_to_form(
+                        st.session_state.extracted, st.session_state.form)
+                    st.success("フォームへ反映しました。")
+                    st.rerun()
+
         st.subheader("📝 受付情報フォーム")
         form = st.session_state.form
         pre_decision = run_decision(form)
@@ -2114,239 +2134,121 @@ def render_tab_call():
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
 
-    # ─── 右カラム: 通話中判定結果 ───
-    with col_right:
+    # UI改修: 右カラムはゾーンB/C/Dの順で判定結果を表示
+    with col_result:
         st.subheader("⚡ 通話中判定結果")
         next_action_steps = build_next_action_steps(diagnostics)
         after_call_steps = build_after_call_steps(diagnostics)
-        if next_action_steps:
-            render_step_list("次に聞くこと", next_action_steps)
-        if after_call_steps:
-            with st.expander("終話後対応", expanded=False):
-                for idx, step in enumerate(after_call_steps, 1):
-                    st.markdown(f"**{idx}.** {step}")
-        if next_action_steps or after_call_steps:
-            st.divider()
 
-        # --- 保証期間判定（受付可否の最優先表示） ---
-        st.markdown("##### 🛡️ 保証期間判定")
-        warranty_color = {
-            "ok": "#27ae60",
-            "warning": "#f39c12",
-            "error": "#c0392b",
-        }.get(warranty_result.get("severity"), "#7f8c8d")
-        st.markdown(
-            f'<div style="background:{warranty_color};color:white;padding:12px 16px;'
-            f'border-radius:8px;font-size:1.15em;font-weight:bold;line-height:1.7;">'
-            f'{warranty_result.get("title", "保証期間未確認")}<br>'
-            f'<span style="font-size:0.9em;font-weight:normal;">{warranty_result.get("message", "")}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        if not warranty_result.get("can_accept", False):
-            st.error(f"受付可否: 受付不可 / 最優先対応: {build_warranty_guidance(warranty_result)}")
-        else:
-            st.success("受付可否: 受付判定へ進めます")
-        st.divider()
+        # UI改修: ゾーンB（最優先アラート）
+        missing_warranty_fields = []
+        if not st.session_state.form.get("warranty_start_date"):
+            missing_warranty_fields.append("保証開始日")
+        if not st.session_state.form.get("warranty_end_date"):
+            missing_warranty_fields.append("保証終了日")
 
-        # --- case_type 自動推定バッジ ---
-        if inferred_case_type and not (st.session_state.form.get("case_type") or "").strip():
-            st.warning(f"⚠️ 案件区分を自動推定しました: **{inferred_case_type}** （フォームで確認してください）")
-
-        # --- 正規化製品 ---
-        if normalized_product:
-            st.markdown(
-                f'<div style="background:#2c3e50;color:#ecf0f1;padding:6px 14px;'
-                f'border-radius:6px;font-size:1.0em;margin-bottom:6px;">'
-                f'📦 正規化製品: <b>{normalized_product}</b>'
-                + (_src_badge("CSVマスタ") if alias_result["matched"] else _src_badge("既存ロジック"))
-                + '</div>',
-                unsafe_allow_html=True,
-            )
-        if st.session_state.form.get("prefecture"):
-            st.markdown(
-                f'<div style="background:#eef6ff;color:#1f4e79;padding:8px 12px;'
-                f'border-radius:6px;margin-bottom:8px;line-height:1.7;">'
-                f'<b>都道府県:</b> {st.session_state.form.get("prefecture")}<br>'
-                f'<b>エリア:</b> {area_group or "未判定"}</div>',
-                unsafe_allow_html=True,
-            )
-
-        # --- 参照スクリプト（最重要） ---
-        st.markdown("##### 📖 参照スクリプト")
-        script_link = lookup_script_link(script_result)
-        raw_sheet = script_result["sheet_name"] or ""
-        raw_part  = script_result["part"] or ""
-        sheet = "未確定" if raw_sheet == "要確認" else (raw_sheet or "─")
-        part  = "担当確認" if raw_part == "SV/担当確認" else (raw_part or "─")
-        script_notes = script_result.get("notes") or []
-        script_note = script_result.get("script_note") or " / ".join(script_notes)
-        if not script_note:
-            script_note = "正式スクリプトの該当箇所を確認してください"
-        st.markdown(
-            f'<div style="background:#1e3a5f;color:#fff;padding:12px 16px;'
-            f'border-radius:8px;font-size:1.1em;line-height:2.0;">'
-            f'<b>シート名:</b> {sheet}<br>'
-            f'<b>該当パート:</b> {part}<br>'
-            f'<b>補足確認:</b> {script_note}</div>',
-            unsafe_allow_html=True,
-        )
-        if script_link.get("matched"):
-            st.markdown(f"参照リンク：[{script_link['display_name']}を開く]({script_link['url']})")
-        else:
-            st.caption("参照リンク：未登録 → シート名・該当パートを確認してください")
-        st.text_input("シート名コピー用", sheet, key="copy_sheet", label_visibility="collapsed")
-
-        st.divider()
-
-        # --- 修理形態 ---
-        repair_color = {"出張修理": "#2ecc71", "持込修理": "#3498db", "要確認": "#e67e22"}
-        if not warranty_can_accept:
-            repair_color = {"出張修理": "#95a5a6", "持込修理": "#95a5a6", "要確認": "#95a5a6"}
-        st.markdown(
-            f'##### 🔧 修理形態'
-            + (f'<span style="font-size:0.75em;color:#888;margin-left:8px;">({repair_source})</span>'
-               if True else ""),
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f'<div style="background:{repair_color.get(repair_type,"#95a5a6")};'
-            f'color:white;padding:8px 14px;border-radius:8px;font-size:1.05em;'
-            f'font-weight:bold;text-align:center;">{repair_type}</div>',
-            unsafe_allow_html=True,
-        )
-        if not warranty_can_accept:
-            st.caption("保証期間判定が優先です。修理形態は入力確認用の補助表示です。")
-        if repair_result.get("needs_confirmation"):
-            confirm_note = repair_result.get("notes") or "型番・詳細確認要"
-            st.warning(f"⚠️ 要確認理由: {confirm_note}")
-
-        # --- 概算費用（4状態: confirmed / pending / unavailable / escalation）---
-        st.markdown("##### 💴 保証対象外時の概算費用")
-        if not warranty_can_accept:
-            warranty_cost_message = {
-                "before_start": "保証開始日前のため、WRT概算案内対象外",
-                "expired": "保証期間終了後のため、WRT概算案内対象外",
-                "unknown": "保証期間未確認のため、概算費用は補助情報です。先に保証開始日・保証終了日を確認してください。",
-            }.get(warranty_status, "保証期間判定を優先してください")
-            st.warning(warranty_cost_message)
-            if cost_estimate and cost_estimate not in ("未確定", ""):
-                st.caption(f"裏側判定の参考概算: {cost_estimate}")
-        else:
-            # 表示状態を決定
-            _disp_status = cost_result.get("cost_status", "confirmed")
-            if not script_result.get("price_guidance_allowed", True):
-                _disp_status = "unavailable"
-            elif cost_result.get("needs_escalation") and _disp_status not in ("pending",):
-                _disp_status = "escalation"
-
-            if _disp_status == "unavailable":
-                st.error("🚫 金額案内不可 — スクリプト・担当確認に従うこと")
-            elif _disp_status == "pending":
-                st.warning("🟡 概算費用: 追加確認が必要です（未確定）")
-                rq = cost_result.get("required_questions", "").strip()
-                if rq:
-                    st.markdown(f"**▶ 確認事項:** {rq}")
-                note = cost_result.get("internal_note", "").strip()
-                if note:
-                    st.caption(f"内部メモ: {note}")
-            elif _disp_status == "escalation":
-                st.markdown(
-                    f'<div style="background:#e67e22;color:white;padding:10px 16px;'
-                    f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
-                    f'{cost_estimate}</div>',
-                    unsafe_allow_html=True,
-                )
-                esc_note = cost_result.get("notes") or "費用が高額のため概算案内に注意"
-                st.warning(f"⚠️ 高額エスカ注意: {esc_note}")
-            else:  # confirmed
-                cost_color = "#c0392b" if cost_estimate in ("要確認", "") else "#27ae60"
-                st.markdown(
-                    f'<div style="background:{cost_color};color:white;padding:10px 16px;'
-                    f'border-radius:8px;font-size:1.4em;font-weight:bold;text-align:center;">'
-                    f'{cost_estimate}</div>',
-                    unsafe_allow_html=True,
-                )
-                # eu_asked_only の場合は注記を表示
-                if cost_result.get("guidance_scope") == "eu_asked_only":
-                    cn = cost_result.get("customer_notice") or "EUから質問があった場合のみ案内"
-                    st.caption(f"⚠️ EU質問時のみ案内: {cn}")
-
-            # --- 金額案内可否（unavailableは上で表示済み）---
-            if _disp_status != "unavailable":
-                if not script_result.get("price_guidance_allowed", True):
-                    st.error("🚫 金額案内不可（スクリプト・担当確認に従うこと）")
-                elif _disp_status == "confirmed" and cost_estimate not in ("要確認", "未確定", ""):
-                    st.success("✅ 金額案内可")
-
-        # --- データ消去同意 ---
-        if needs_data_erase:
-            st.warning("⚠️ データ消去同意が必要な製品です")
-
-        # --- スクリプトエスカレーション ---
-        if script_result["escalation_needed"]:
-            st.error("🔺 エスカレーション必要 — SV/担当確認")
-
-        st.divider()
-
-        # --- 注意事項 ---
-        st.markdown("##### 📌 注意事項")
-        notes = script_result.get("notes", [])
-        st.markdown("\n".join(f"- {n}" for n in notes) if notes else "なし")
-
-        st.divider()
-
-        # --- 次に確認する項目 ---
-        st.markdown("##### ✅ 次に確認する項目")
-        req_questions = build_required_questions(
-            st.session_state.form, repair_type, needs_data_erase)
-        if warranty_result.get("warranty_status") == "before_start":
-            req_questions.insert(0, "メーカー保証期間を確認")
-            req_questions.insert(1, "メーカーまたは販売店窓口への誘導")
-        elif warranty_result.get("warranty_status") == "unknown":
-            req_questions.insert(0, "保証開始日・保証終了日を確認")
-        elif warranty_result.get("warranty_status") == "expired":
-            req_questions.insert(0, "受付不可。保証期間終了後であることを案内")
-        # 費用未確定の場合は確認事項を先頭に追加
-        if cost_result.get("cost_status") == "pending":
-            cost_rq = cost_result.get("required_questions", "").strip()
-            if cost_rq:
-                req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
-        for i, q in enumerate(req_questions, 1):
-            color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
-            st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
-                        unsafe_allow_html=True)
-
-        st.divider()
-
-        # --- 修理拠点（終話後へ） ---
-        st.markdown("##### 🏭 修理拠点判定")
         if warranty_status == "expired":
-            st.warning("受付不可のため手配対象外")
-        elif warranty_status in ("before_start", "unknown"):
-            st.caption("保証期間判定が優先です。修理拠点は日付確認後に扱ってください。")
+            st.error("### 保証期間終了 — 受付不可\n次のアクション：受付不可を案内して終話")
+        elif warranty_status == "before_start":
+            st.warning(
+                "### 保証開始日前 — メーカー保証または販売店・メーカー窓口へ誘導\n"
+                "次のアクション：メーカー保証期間・窓口を案内"
+            )
+        elif warranty_status == "unknown":
+            missing_text = "、".join(missing_warranty_fields) if missing_warranty_fields else "保証期間情報"
+            st.warning(
+                "### 保証期間未確認 — 保証開始日・保証終了日を確認してください\n"
+                f"不足項目：{missing_text}"
+            )
         else:
-            st.info("終話後処理タブで確定してください。")
+            st.success("保証期間内 — 受付判定へ進む")
 
-        # --- 判定診断パネル ---
-        _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
-        _overall   = diagnostics.get("overall_status", "ok")
-        _overall_display = DIAGNOSTIC_OVERALL_DISPLAY.get(
-            _overall, DIAGNOSTIC_OVERALL_DISPLAY["warning"]
+        # UI改修: 次に聞くことSTEPをゾーンB直下に表示
+        if next_action_steps:
+            for step in next_action_steps:
+                st.info(step)
+
+        # UI改修: ゾーンC（判定サマリー3カード）
+        if warranty_status == "expired":
+            st.caption("参考値（受付不可）")
+
+        cost_status = cost_result.get("cost_status", "confirmed")
+        if not script_result.get("price_guidance_allowed", True):
+            cost_status = "unavailable"
+        elif cost_result.get("needs_escalation") and cost_status not in ("pending",):
+            cost_status = "escalation"
+
+        if cost_status == "pending":
+            cost_value = "確認中"
+        elif cost_status == "unavailable":
+            cost_value = "案内不可"
+        else:
+            cost_value = cost_estimate or "要確認"
+
+        repair_delta = {
+            "出張修理": "出張",
+            "持込修理": "持込",
+            "要確認": "要確認",
+        }.get(repair_type, "要確認")
+        script_sheet = script_result.get("sheet_name") or "未確定"
+        script_value = script_sheet[:6] if script_sheet else "未確定"
+        script_part = script_result.get("part") or "未確定"
+
+        metric_cols = st.columns(3)
+        metric_cols[0].metric(
+            label="修理形態",
+            value=repair_type,
+            delta=repair_delta,
+            delta_color="off",
         )
-        _overall_header = f"{_overall_display['icon']} {_overall_display['title']}"
-        _overall_message = _overall_display["message"]
-        if _overall == "ok":
-            st.success(f"### {_overall_header}\n{_overall_message}")
-        elif _overall == "error":
-            st.error(f"### {_overall_header}\n{_overall_message}")
-        else:
-            st.warning(f"### {_overall_header}\n{_overall_message}")
+        metric_cols[1].metric(
+            label="概算費用（保証対象外）",
+            value=cost_value,
+            delta="",
+            delta_color="off",
+        )
+        metric_cols[2].metric(
+            label="参照スクリプト",
+            value=script_value,
+            delta=script_part,
+            delta_color="off",
+        )
 
-        with st.expander(
-            f"📊 判定診断パネル  {_overall_header}",
-            expanded=(_overall != "ok"),
-        ):
+        # UI改修: ゾーンD（詳細）は折りたたみ
+        with st.expander("✅ 確認項目リスト", expanded=False):
+            req_questions = build_required_questions(
+                st.session_state.form, repair_type, needs_data_erase)
+            if warranty_result.get("warranty_status") == "before_start":
+                req_questions.insert(0, "メーカー保証期間を確認")
+                req_questions.insert(1, "メーカーまたは販売店窓口への誘導")
+            elif warranty_result.get("warranty_status") == "unknown":
+                req_questions.insert(0, "保証開始日・保証終了日を確認")
+            elif warranty_result.get("warranty_status") == "expired":
+                req_questions.insert(0, "受付不可。保証期間終了後であることを案内")
+            if cost_result.get("cost_status") == "pending":
+                cost_rq = cost_result.get("required_questions", "").strip()
+                if cost_rq:
+                    req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
+            for i, q in enumerate(req_questions, 1):
+                color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
+                st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
+                            unsafe_allow_html=True)
+
+        with st.expander("📊 判定診断パネル", expanded=False):
+            _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
+            _overall   = diagnostics.get("overall_status", "ok")
+            _overall_display = DIAGNOSTIC_OVERALL_DISPLAY.get(
+                _overall, DIAGNOSTIC_OVERALL_DISPLAY["warning"]
+            )
+            _overall_header = f"{_overall_display['icon']} {_overall_display['title']}"
+            _overall_message = _overall_display["message"]
+            if _overall == "ok":
+                st.success(f"### {_overall_header}\n{_overall_message}")
+            elif _overall == "error":
+                st.error(f"### {_overall_header}\n{_overall_message}")
+            else:
+                st.warning(f"### {_overall_header}\n{_overall_message}")
+
             for _d in diagnostics.get("items", []):
                 _icon = _diag_icon.get(_d["status"], "?")
                 _impact = _d.get("impact", "info")
@@ -2371,6 +2273,38 @@ def render_tab_call():
                     st.warning("形式不正：\n" + "\n".join(f"- {link}" for link in links))
                 if _d.get("next_action"):
                     st.info(f"**次に確認：{_d['next_action']}**")
+
+        with st.expander("🏭 修理拠点", expanded=False):
+            if warranty_status == "expired":
+                st.warning("受付不可のため手配対象外")
+            elif warranty_status in ("before_start", "unknown"):
+                st.caption("保証期間判定が優先です。修理拠点は日付確認後に扱ってください。")
+            else:
+                st.info("終話後処理タブで確定してください。")
+            st.markdown(f"**修理拠点候補:** {vendor}")
+            if vendor_result["matched"]:
+                st.markdown(f"- CSV: `{vendor_result['csv_name']}`  priority={vendor_result['priority']}")
+                st.markdown(f"- keyword: `{vendor_result['keyword']}` → **{vendor_result['vendor_name']}**")
+                if vendor_result["notes"]:
+                    st.markdown(f"- notes: {vendor_result['notes']}")
+            else:
+                st.info("CSVにヒットなし → determine_vendor_candidate() フォールバック")
+                st.markdown(f"- 結果: `{vendor}`")
+
+        with st.expander("💬 履歴テンプレ・概算案内補助文", expanded=False):
+            st.markdown("##### 💬 お客様への概算案内補助文")
+            st.caption("※ 正式スクリプト本文ではありません。概算案内の参考としてのみ使用してください。")
+            st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
+            history_tmpl = build_history_template(
+                st.session_state.form, repair_type, script_result, cost_estimate, vendor,
+                warranty_result, diagnostics)
+            st.markdown("##### 📄 対応履歴テンプレ")
+            st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
+
+        if after_call_steps:
+            with st.expander("終話後対応", expanded=False):
+                for idx, step in enumerate(after_call_steps, 1):
+                    st.markdown(f"**{idx}.** {step}")
 
         # ─── 判定デバッグ情報 ───
         with st.expander("🔍 判定デバッグ情報（4層）"):
@@ -2414,20 +2348,6 @@ def render_tab_call():
             else:
                 st.info("CSVにヒットなし → determine_vendor_candidate() フォールバック")
                 st.markdown(f"- 結果: `{vendor}`")
-
-    # ─── 下部: 補助文 + 履歴テンプレ ───
-    st.divider()
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("##### 💬 お客様への概算案内補助文")
-        st.caption("※ 正式スクリプト本文ではありません。概算案内の参考としてのみ使用してください。")
-        st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
-    with col_b:
-        history_tmpl = build_history_template(
-            st.session_state.form, repair_type, script_result, cost_estimate, vendor,
-            warranty_result, diagnostics)
-        st.markdown("##### 📄 対応履歴テンプレ")
-        st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
 
 
 # ============================================================
