@@ -1,6 +1,21 @@
 script_sheet,script_part,display_name,url,notes
-家電出張・持込・新築住設,家電・出張修理,家電出張修理 該当箇所,https://docs.google.com/spreadsheets/d/xxxxx/edit#gid=0&range=A1,正式スクリプトの該当箇所
-家電出張・持込・新築住設,家電・持込修理,家電持込修理 該当箇所,https://docs.google.com/spreadsheets/d/xxxxx/edit#gid=0&range=A50,正式スクリプトの該当箇所
-住設【既築／中古のみ】,住設受付,住設受付 該当箇所,,本番URL未登録
-住設【既築／中古のみ】,既築・中古住設受付,既築・中古住設受付 該当箇所,,本番URL未登録
-⑩-1ビックカメラ・ソフマップ,案件別受付,ビックカメラ・ソフマップ案件受付 該当箇所,,本番URL未登録
+家電出張・持込・新築住設,家電・出張修理,家電出張修理 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=898484067,0099回線（家電/新築）
+家電出張・持込・新築住設,家電・持込修理,家電持込修理 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=898484067,0099回線（家電/新築）
+住設【既築／中古のみ】,住設受付,住設受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=539693209,0099回線（既築・中古）
+住設【既築／中古のみ】,既築・中古住設受付,既築・中古住設受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=539693209,0099回線（既築・中古）
+住設【賃貸】,賃貸住設受付,賃貸住設受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=1758292955,0099回線（賃貸）
+駆けつけサービス,駆けつけ受付,駆けつけ受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=778778469,0099回線（駆けつけ）
+⑩-1ビックカメラ・ソフマップ,案件別受付,ビックカメラ・ソフマップ案件受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=439430462,ビックカメラ・ソフマップ
+ビックカメラ官舎向け,官舎向け受付,ビックカメラ官舎向け 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=316092027,ビックカメラ官舎向け（ムラカミ）
+なかやしき,なかやしき受付,なかやしき 該当箇所,https://docs.google.com/spreadsheets/d/1zjlB4yr3ju_Zij5ENJUhJlUiJfUVsz91wc3J6eAU4UU/edit?gid=975369740,なかやしき
+コーナン家電,コーナン家電受付,コーナン家電 該当箇所,https://docs.google.com/spreadsheets/d/1hZ4Ph0W1dhc37rClwCMOG31FqQNGDJv86A7_oq3OG8Q/edit?gid=2012991600,コーナン家電
+コーナン住設,コーナン住設受付,コーナン住設 該当箇所,https://docs.google.com/spreadsheets/d/1YdVJupRTxaqiaZn1ADAyUqEsCMBxVs6yxAIZ0uzNUqM/edit?gid=1267412413,コーナン住設
+トライアル・アークランズ,トライアル受付,トライアル・アークランズ 該当箇所,https://docs.google.com/spreadsheets/d/18Ogqmip4IrI1te8FnFeX3zVlQKS9AHG_G2xodzXT5mo/edit?gid=975369740,トライアル・アークランズ
+マッハ・YUCAKO,マッハ・YUCAKO受付,マッハ・YUCAKO 該当箇所,https://docs.google.com/spreadsheets/d/1pjWHtHOOF0S0mTwEATDE4DLBDz1SjbT1bttt8E9IeC0/edit?gid=1054213746,マッハ・YUCAKO
+LG,LG受付,LG 該当箇所,https://docs.google.com/spreadsheets/d/1jsDM1ne2Q1CjZspzEVIhOAimVNQfCpXt0GZUBy82SHc/edit?gid=2023604868,LG
+TOKAI,TOKAI受付,TOKAI 該当箇所,https://docs.google.com/spreadsheets/d/1rxjipBAH5JebfXcGvAw0gDp666cmDOHsCTon2jx9bzQ/edit?gid=975369740,TOKAI
+大成有楽不動産,大成有楽受付,大成有楽不動産 該当箇所,https://docs.google.com/spreadsheets/d/1tBm3c9jPWJz-TD_ilf9tno2BIOlcUoeP7b56h4G-ktA/edit?gid=558873968,大成有楽不動産
+ライフデザイン・カバヤ,カバヤ受付,ライフデザイン・カバヤ 該当箇所,https://docs.google.com/spreadsheets/d/1uP8WlN--arfCZIJinPhY8WBLeGBPa9vGtOTG4w1rE5w/edit?gid=2002715995,ライフデザイン・カバヤ
+住宅資材センター,住宅資材センター受付,住宅資材センター 該当箇所,https://docs.google.com/spreadsheets/d/1CrKevvbH7yVBDJ9-cspLFM2XVpDdc4qzdq53EazltfY/edit?gid=1528652795,住宅資材センター
+電算システム,電算システム受付,電算システム 該当箇所,https://docs.google.com/spreadsheets/d/1A5NYvQA5UAyn3ESeo-2WhLrMrvybRLnKIgoH2zWnSTY/edit?gid=1812366743,電算システム
+TKクリエイト,TKクリエイト受付,TKクリエイト 該当箇所,https://docs.google.com/spreadsheets/d/1zmXsKQG1Ahb04yK9qLEVa5KOAw0G2UvX49oyS8Meyk0/edit?gid=0,TKクリエイト

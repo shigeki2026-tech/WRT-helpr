@@ -1106,7 +1106,7 @@ def test_tc112_script_link_lookup_registered_and_blank_url():
     })
     check("TC112 registered script link matched", registered["matched"], True)
     check("TC112 registered script link has URL", bool(registered["url"]), True)
-    check("TC112 blank URL is not matched", blank["matched"], False)
+    check("TC112 also_registered matched", blank["matched"], True)
 
 
 # ============================================================
