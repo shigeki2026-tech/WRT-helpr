@@ -2017,8 +2017,8 @@ def render_tab_call():
 
         st.subheader("📝 受付情報フォーム")
         form = st.session_state.form
-        pre_decision = run_decision(form)
-        pre_diagnostics = pre_decision.get("diagnostics", {})
+        pre_decision = run_decision(form)  # UI修正v2
+        pre_diagnostics = pre_decision.get("diagnostics", {})  # UI修正v2
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
 
         call_type_opts    = ["", "新規入電", "折り返し", "再入電", "その他"]
@@ -2111,7 +2111,7 @@ def render_tab_call():
         st.session_state.form = form
 
     # ── 判定実行（form確定後・right描画前に1回だけ）──
-    decision = run_decision(st.session_state.form)
+    decision = pre_decision  # UI修正v2
     repair_type      = decision["repair_type"]
     cost_estimate    = decision["cost_estimate"]
     script_result    = decision["script_result"]
@@ -2129,7 +2129,7 @@ def render_tab_call():
     warranty_result     = decision["warranty_result"]
     warranty_status     = warranty_result.get("warranty_status", "unknown")
     warranty_can_accept = warranty_result.get("can_accept", False)
-    diagnostics         = decision.get("diagnostics", {})
+    diagnostics         = pre_diagnostics  # UI修正v2
 
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
@@ -2165,8 +2165,8 @@ def render_tab_call():
 
         # UI改修: 次に聞くことSTEPをゾーンB直下に表示
         if next_action_steps:
-            for step in next_action_steps:
-                st.info(step)
+            for idx, step in enumerate(next_action_steps, 1):  # UI修正v2
+                st.markdown(f"**STEP {idx}.** {step}")  # UI修正v2
 
         # UI改修: ゾーンC（判定サマリー3カード）
         if warranty_status == "expired":
@@ -2185,11 +2185,12 @@ def render_tab_call():
         else:
             cost_value = cost_estimate or "要確認"
 
-        repair_delta = {
-            "出張修理": "出張",
-            "持込修理": "持込",
-            "要確認": "要確認",
-        }.get(repair_type, "要確認")
+        cost_delta = {  # UI修正v2
+            "confirmed": "案内可",
+            "pending": "要確認",
+            "escalation": "エスカ注意",
+            "unavailable": "案内不可",
+        }.get(cost_status, "要確認")
         script_sheet = script_result.get("sheet_name") or "未確定"
         script_value = script_sheet[:6] if script_sheet else "未確定"
         script_part = script_result.get("part") or "未確定"
@@ -2198,13 +2199,13 @@ def render_tab_call():
         metric_cols[0].metric(
             label="修理形態",
             value=repair_type,
-            delta=repair_delta,
+            delta="",  # UI修正v2
             delta_color="off",
         )
         metric_cols[1].metric(
             label="概算費用（保証対象外）",
             value=cost_value,
-            delta="",
+            delta=cost_delta,  # UI修正v2
             delta_color="off",
         )
         metric_cols[2].metric(
