@@ -2031,14 +2031,14 @@ def render_warranty_date_input(field_name: str, label: str, form: dict,
 
 def empty_form() -> dict:
     form = {k: "" for k in FIELD_LABELS}
+    form["is_over_10years"] = False
+    form["genre"] = ""
+    form["category"] = ""
     form["operator_name"] = ""
     form["rakuteru_no"] = ""
     form["contact_phone"] = ""
     form["caller_type"] = "加入者"
     form["extracted_time"] = ""
-    form["is_over_10years"] = False
-    form["genre"] = ""
-    form["category"] = ""
     return form
 
 
@@ -2103,10 +2103,11 @@ def render_tab_call():
                             if extracted:
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
-                            from datetime import datetime
-                            now = datetime.now()
-                            time_str = f"{now.year}/{now.month}/{now.day} {now.hour:02d}：{now.minute:02d}"
-                            st.session_state["form"]["extracted_time"] = time_str
+                            _now = datetime.now()
+                            st.session_state["form"]["extracted_time"] = (
+                                f"{_now.year}/{_now.month}/{_now.day} "
+                                f"{_now.hour:02d}：{_now.minute:02d}"
+                            )
                             st.session_state["copy_panel_open"] = False
                             st.rerun()
                     except Exception as e:
@@ -2125,11 +2126,12 @@ def render_tab_call():
 
             if st.button("🔍 抽出する", use_container_width=True, type="primary"):
                 if pasted.strip():
+                    _now = datetime.now()
+                    st.session_state["form"]["extracted_time"] = (
+                        f"{_now.year}/{_now.month}/{_now.day} "
+                        f"{_now.hour:02d}：{_now.minute:02d}"
+                    )
                     st.session_state.extracted = extract_fields_from_pasted_text(pasted)
-                    from datetime import datetime
-                    now = datetime.now()
-                    time_str = f"{now.year}/{now.month}/{now.day} {now.hour:02d}：{now.minute:02d}"
-                    st.session_state.form["extracted_time"] = time_str
                 else:
                     st.warning("テキストを貼り付けてください。")
 
@@ -2558,19 +2560,23 @@ def render_tab_call():
 # ============================================================
 def render_tab_after_call():
     st.subheader("終話後処理")
-    form     = st.session_state.form
+    form = st.session_state.form
     decision = run_decision(form)
-    repair_type   = decision["repair_type"]
+    repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
     script_result = decision["script_result"]
-    vendor        = decision["vendor"]
+    vendor = decision["vendor"]
     warranty_result = decision["warranty_result"]
-    history_tmpl  = build_history_template(form, repair_type, script_result, cost_estimate, vendor,
-                                            warranty_result, decision.get("diagnostics"))
+    history_tmpl = build_history_template(
+        form, repair_type, script_result, cost_estimate, vendor,
+        warranty_result, decision.get("diagnostics"),
+    )
 
-    selected_label = ""
+    # col1/col2 間で共有する変数を先に初期化
     selected_notes = ""
     selected_code = ""
+    selected_label_val = ""
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -2589,14 +2595,14 @@ def render_tab_after_call():
                 current_label = form.get("template_label", "") or auto_label
                 idx = tpl_labels.index(current_label) if current_label in tpl_labels else 0
 
-                selected_label = st.selectbox(
+                selected_label_val = st.selectbox(
                     "テンプレートを選択",
                     tpl_labels,
                     index=idx,
                     key="tpl_label_select_after",
                 )
-                if selected_label:
-                    matched = filtered[filtered["label"] == selected_label]
+                if selected_label_val:
+                    matched = filtered[filtered["label"] == selected_label_val]
                     if not matched.empty:
                         row = matched.iloc[0]
                         selected_code = row["template_code"]
@@ -2609,7 +2615,7 @@ def render_tab_after_call():
                         if row.get("cost_guidance_allowed") == "不可":
                             st.error("🚫 金額案内不可案件")
                         form["template_code"] = selected_code
-                        form["template_label"] = selected_label
+                        form["template_label"] = selected_label_val
                         st.session_state.form = form
                 else:
                     form["template_code"] = ""
@@ -2651,13 +2657,13 @@ def render_tab_after_call():
 | 宗建リノベーション | 電話依頼 | 担当確認 |
 | CER候補 | 担当エスカ | 担当確認 |"""
         )
+
     with col2:
-        caller_options = ["加入者", "販売店", "修理業者"]
-        caller_default = form.get("caller_type", "加入者")
         caller_type = st.selectbox(
             "発信者区分",
-            caller_options,
-            index=caller_options.index(caller_default) if caller_default in caller_options else 0,
+            ["加入者", "販売店", "修理業者"],
+            index=["加入者", "販売店", "修理業者"].index(
+                form.get("caller_type", "加入者")),
             key="caller_type_select",
         )
         form["caller_type"] = caller_type
@@ -2671,8 +2677,8 @@ def render_tab_after_call():
         form["contact_phone"] = contact_phone
         st.session_state.form = form
 
+        # ── 修理依頼票用メモ（備考欄反映）──
         st.markdown("##### 📝 修理依頼票用メモ")
-
         store = (form.get("store_name") or "").strip()
         phone = (form.get("phone_number") or "").strip()
         notes_filled = selected_notes
@@ -2695,8 +2701,8 @@ def render_tab_after_call():
 
         st.text_area("依頼票メモ", memo, height=260, key="memo_after")
 
+        # ── Teams報告文（備考なし）──
         st.markdown("##### 💬 Teams 報告文")
-
         operator = (form.get("operator_name") or "").strip() or "●●"
         extracted_time = (form.get("extracted_time") or "").strip()
         contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
