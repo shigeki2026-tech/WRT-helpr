@@ -3,6 +3,7 @@
 
 import re
 import os
+import csv  # CSV読み込み改善
 import streamlit as st
 from datetime import date
 import pandas as pd
@@ -227,7 +228,8 @@ MANUFACTURER_UNKNOWN = "不明"
 def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
     """
     data/<filename> を読み込む。
-    - utf-8-sig エンコード
+    - utf-8-sig / utf-8 / cp932 エンコード
+    - ヘッダー列数と一致しない行を除外
     - enabled=1 の行のみ
     - priority 昇順ソート
     - 失敗時は空 DataFrame を返す（呼び出し元でフォールバック）
@@ -235,10 +237,23 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
     if not os.path.exists(path):
         return pd.DataFrame(columns=required_cols)
-    try:
-        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
-    except Exception:
+    rows = None  # CSV読み込み改善
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):  # CSV読み込み改善
+        try:
+            with open(path, "r", encoding=encoding, newline="") as f:
+                rows = list(csv.reader(f))
+            break
+        except Exception:
+            rows = None
+    if not rows:  # CSV読み込み改善
         return pd.DataFrame(columns=required_cols)
+    header = rows[0]  # CSV読み込み改善
+    header_col_count = len(header)  # CSV読み込み改善
+    valid_rows = [row for row in rows[1:] if len(row) == header_col_count]  # CSV読み込み改善
+    excluded_count = len(rows[1:]) - len(valid_rows)  # CSV読み込み改善
+    if excluded_count > 0:  # CSV読み込み改善
+        st.warning(f"CSV列数不一致のため {filename} から {excluded_count} 行を除外しました。")  # CSV読み込み改善
+    df = pd.DataFrame(valid_rows, columns=header, dtype=str)  # CSV読み込み改善
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         return pd.DataFrame(columns=required_cols)
@@ -1959,7 +1974,10 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
-        with st.expander("📋 コピー情報取り込み", expanded=False):
+        with st.expander(  # UI v3
+            "📋 コピー情報取り込み",  # UI v3
+            expanded=st.session_state.get("copy_panel_open", True),  # UI v3
+        ):  # UI v3
             if _PYPERCLIP_AVAILABLE:
                 st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
                 if st.button("📋 クリップボードから直接抽出", use_container_width=True):
@@ -2012,6 +2030,7 @@ def render_tab_call():
                 if st.button("📥 フォームへ反映", use_container_width=True):
                     st.session_state.form = apply_extracted_fields_to_form(
                         st.session_state.extracted, st.session_state.form)
+                    st.session_state["copy_panel_open"] = False  # UI v3
                     st.success("フォームへ反映しました。")
                     st.rerun()
 
@@ -2165,10 +2184,10 @@ def render_tab_call():
 
         # UI改修: 次に聞くことSTEPをゾーンB直下に表示
         if next_action_steps:
-            for idx, step in enumerate(next_action_steps, 1):  # UI修正v2
-                st.markdown(f"**STEP {idx}.** {step}")  # UI修正v2
+            for idx, step in enumerate(next_action_steps, 1):  # UI v3
+                st.markdown(f"**STEP {idx}.** {step}")  # UI v3
 
-        # UI改修: ゾーンC（判定サマリー3カード）
+        # UI v3: ゾーンC（判定サマリー大カード3枚）
         if warranty_status == "expired":
             st.caption("参考値（受付不可）")
 
@@ -2185,38 +2204,84 @@ def render_tab_call():
         else:
             cost_value = cost_estimate or "要確認"
 
-        cost_delta = {  # UI修正v2
-            "confirmed": "案内可",
-            "pending": "要確認",
-            "escalation": "エスカ注意",
-            "unavailable": "案内不可",
-        }.get(cost_status, "要確認")
-        script_sheet = script_result.get("sheet_name") or "未確定"
-        script_value = script_sheet[:6] if script_sheet else "未確定"
-        script_part = script_result.get("part") or "未確定"
+        def _ui_v3_escape(value) -> str:  # UI v3
+            return (str(value or "")  # UI v3
+                    .replace("&", "&amp;")  # UI v3
+                    .replace("<", "&lt;")  # UI v3
+                    .replace(">", "&gt;")  # UI v3
+                    .replace('"', "&quot;"))  # UI v3
 
-        metric_cols = st.columns(3)
-        metric_cols[0].metric(
-            label="修理形態",
-            value=repair_type,
-            delta="",  # UI修正v2
-            delta_color="off",
-        )
-        metric_cols[1].metric(
-            label="概算費用（保証対象外）",
-            value=cost_value,
-            delta=cost_delta,  # UI修正v2
-            delta_color="off",
-        )
-        metric_cols[2].metric(
-            label="参照スクリプト",
-            value=script_value,
-            delta=script_part,
-            delta_color="off",
-        )
+        def _ui_v3_card(label: str, value: str, status: str, bg_color: str) -> str:  # UI v3
+            return (  # UI v3
+                f'<div style="background:{bg_color};color:white;padding:16px 20px;'  # UI v3
+                f'border-radius:10px;font-size:1.0em;line-height:1.8;margin-bottom:8px;">'  # UI v3
+                f'<div style="font-size:0.8em;opacity:0.85;">{_ui_v3_escape(label)}</div>'  # UI v3
+                f'<div style="font-size:1.4em;font-weight:bold;">{_ui_v3_escape(value)}</div>'  # UI v3
+                f'<div style="font-size:0.9em;">{status}</div>'  # UI v3
+                f'</div>'  # UI v3
+            )  # UI v3
+
+        if repair_type in ("出張修理", "持込修理"):  # UI v3
+            repair_card_color = "#1a5276"  # UI v3
+            repair_card_value = repair_type  # UI v3
+            repair_card_status = "✅ 確定"  # UI v3
+        else:  # UI v3
+            repair_card_color = "#784212"  # UI v3
+            repair_card_value = "要確認"  # UI v3
+            repair_card_status = "⚠️ SV確認"  # UI v3
+        st.markdown(  # UI v3
+            _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),  # UI v3
+            unsafe_allow_html=True,  # UI v3
+        )  # UI v3
+
+        if cost_status == "pending":  # UI v3
+            cost_card_color = "#7d6608"  # UI v3
+            cost_card_value = "確認中"  # UI v3
+            required_questions = cost_result.get("required_questions", "").strip() or "追加確認が必要です"  # UI v3
+            cost_card_status = f"🔲 {_ui_v3_escape(required_questions)}"  # UI v3
+        elif cost_status == "unavailable":  # UI v3
+            cost_card_color = "#922b21"  # UI v3
+            cost_card_value = "案内不可"  # UI v3
+            cost_card_status = "🚫"  # UI v3
+        elif cost_status == "escalation":  # UI v3
+            cost_card_color = "#784212"  # UI v3
+            cost_card_value = cost_estimate or "要確認"  # UI v3
+            cost_card_status = "⚠️ エスカ注意"  # UI v3
+        else:  # UI v3
+            cost_card_color = "#1e8449"  # UI v3
+            cost_card_value = cost_estimate or "要確認"  # UI v3
+            cost_card_status = "✅ 案内可"  # UI v3
+        st.markdown(  # UI v3
+            _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),  # UI v3
+            unsafe_allow_html=True,  # UI v3
+        )  # UI v3
+
+        script_link = lookup_script_link(script_result)  # UI v3
+        script_sheet = script_result.get("sheet_name") or "未確定"  # UI v3
+        script_part = script_result.get("part") or "未確定"  # UI v3
+        if script_link.get("matched"):  # UI v3
+            script_card_color = "#1a5276"  # UI v3
+            script_card_value = f"{script_sheet[:8]} / {script_part}"  # UI v3
+            script_status = (  # UI v3
+                f'<a href="{_ui_v3_escape(script_link.get("url", ""))}" target="_blank" '  # UI v3
+                f'style="color:#aed6f1;">{_ui_v3_escape(script_link.get("display_name", "参照リンク"))}を開く↗</a>'  # UI v3
+            )  # UI v3
+        else:  # UI v3
+            script_card_color = "#2c3e50"  # UI v3
+            script_card_value = f"{script_sheet} / {script_part}"  # UI v3
+            script_status = "URL未登録（手動で参照）"  # UI v3
+        st.markdown(  # UI v3
+            _ui_v3_card("参照スクリプト", script_card_value, script_status, script_card_color),  # UI v3
+            unsafe_allow_html=True,  # UI v3
+        )  # UI v3
+
+        if "担当エスカ" in (vendor or ""):  # UI v3
+            st.warning(f"🏭 修理拠点: {vendor}（終話後確認）")  # UI v3
+        else:  # UI v3
+            st.success(f"🏭 修理拠点: {vendor} ✅ 確定")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
-        with st.expander("✅ 確認項目リスト", expanded=False):
+        with st.expander("✅ 確認項目リスト", expanded=False):  # UI v3
             req_questions = build_required_questions(
                 st.session_state.form, repair_type, needs_data_erase)
             if warranty_result.get("warranty_status") == "before_start":
@@ -2235,7 +2300,7 @@ def render_tab_call():
                 st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
                             unsafe_allow_html=True)
 
-        with st.expander("📊 判定診断パネル", expanded=False):
+        with st.expander("📊 判定診断パネル", expanded=False):  # UI v3
             _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
             _overall   = diagnostics.get("overall_status", "ok")
             _overall_display = DIAGNOSTIC_OVERALL_DISPLAY.get(
@@ -2275,24 +2340,7 @@ def render_tab_call():
                 if _d.get("next_action"):
                     st.info(f"**次に確認：{_d['next_action']}**")
 
-        with st.expander("🏭 修理拠点", expanded=False):
-            if warranty_status == "expired":
-                st.warning("受付不可のため手配対象外")
-            elif warranty_status in ("before_start", "unknown"):
-                st.caption("保証期間判定が優先です。修理拠点は日付確認後に扱ってください。")
-            else:
-                st.info("終話後処理タブで確定してください。")
-            st.markdown(f"**修理拠点候補:** {vendor}")
-            if vendor_result["matched"]:
-                st.markdown(f"- CSV: `{vendor_result['csv_name']}`  priority={vendor_result['priority']}")
-                st.markdown(f"- keyword: `{vendor_result['keyword']}` → **{vendor_result['vendor_name']}**")
-                if vendor_result["notes"]:
-                    st.markdown(f"- notes: {vendor_result['notes']}")
-            else:
-                st.info("CSVにヒットなし → determine_vendor_candidate() フォールバック")
-                st.markdown(f"- 結果: `{vendor}`")
-
-        with st.expander("💬 履歴テンプレ・概算案内補助文", expanded=False):
+        with st.expander("💬 履歴テンプレ・概算案内補助文", expanded=False):  # UI v3
             st.markdown("##### 💬 お客様への概算案内補助文")
             st.caption("※ 正式スクリプト本文ではありません。概算案内の参考としてのみ使用してください。")
             st.text_area("概算案内補助文", guidance_text, height=110, key="guidance_display")
@@ -2303,12 +2351,12 @@ def render_tab_call():
             st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
 
         if after_call_steps:
-            with st.expander("終話後対応", expanded=False):
+            with st.expander("終話後対応", expanded=False):  # UI v3
                 for idx, step in enumerate(after_call_steps, 1):
                     st.markdown(f"**{idx}.** {step}")
 
         # ─── 判定デバッグ情報 ───
-        with st.expander("🔍 判定デバッグ情報（4層）"):
+        with st.expander("🔍 判定デバッグ情報（4層）", expanded=False):  # UI v3
             # Layer 1
             st.markdown("**Layer 1 — 製品名エイリアス**")
             if alias_result["matched"]:
