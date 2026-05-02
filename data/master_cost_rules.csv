@@ -36,5 +36,6 @@ priority,enabled,product_keyword,manufacturer_keyword,manufacturer_group,conditi
 10,1,IH,エレクトロラックス,,,出張修理,"25,000円～30,000円前後",可,1,,escalation,always,,,,
 20,1,パソコン,,国内PC,,持込修理,"2,000円～9,000円",可,0,,confirmed,always,,,,国内メーカーPC
 30,1,パソコン,,,,持込修理,"12,000円前後",可,0,manufacturer,confirmed,always,国内・海外メーカーをご確認ください,確認後にご案内します,メーカー未確認時は金額非表示,海外メーカーPC(catch-all)
+85,1,ヘッドホン,,,,持込修理,"2,000円～5,000円前後",可,0,,confirmed,always,,,,ヘッドホン持込修理
 90,1,,,,,出張修理,"5,000円～7,000円前後",可,0,,confirmed,always,,,,汎用出張修理
 90,1,,,,,持込修理,"2,000円～5,000円前後",可,0,,confirmed,always,,,,汎用持込修理
