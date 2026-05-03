@@ -4,6 +4,9 @@
 import re
 import os
 import csv  # CSV読み込み改善
+import json
+import subprocess
+import tempfile
 import streamlit as st
 from datetime import date, datetime
 import pandas as pd
@@ -17,6 +20,16 @@ except ImportError:
 # ============================================================
 # 定数
 # ============================================================
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+TEAMS_CONFIG_PATH = os.path.join(APP_DIR, "config", "teams_config.json")
+TEAMS_SEND_SCRIPT_PATH = os.path.join(APP_DIR, "scripts", "send_teams_message.ps1")
+DEFAULT_TEAMS_CONFIG = {
+    "enabled": False,
+    "chat_id": "",
+    "chat_name": "WRT報告用チャット",
+    "send_mode": "powershell_graph",
+}
+
 PREFECTURES = [
     "北海道", "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
     "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
@@ -447,6 +460,112 @@ def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") ->
     if notes_filled:
         teams_report += f"\n依頼票メモ備考：{notes_filled}"
     return teams_report
+
+
+def load_teams_config() -> dict:
+    """Teams送信設定を読み込む。実設定がない場合のみ環境変数を使う。"""
+    config = DEFAULT_TEAMS_CONFIG.copy()
+    config_exists = os.path.exists(TEAMS_CONFIG_PATH)
+
+    if config_exists:
+        try:
+            with open(TEAMS_CONFIG_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                config.update({k: v for k, v in loaded.items() if k in config})
+        except Exception as exc:
+            config["enabled"] = False
+            config["error"] = f"Teams設定ファイルを読み込めません: {exc}"
+
+    if not config.get("chat_id"):
+        env_chat_id = os.environ.get("WRT_TEAMS_CHAT_ID", "").strip()
+        if env_chat_id:
+            config["chat_id"] = env_chat_id
+            if not config_exists:
+                config["enabled"] = True
+
+    if not config.get("chat_id"):
+        config["enabled"] = False
+
+    return config
+
+
+def is_teams_send_enabled() -> bool:
+    config = load_teams_config()
+    return bool(config.get("enabled") and config.get("chat_id"))
+
+
+def send_teams_message_via_powershell(message: str) -> dict:
+    body = (message or "").strip()
+    if not body:
+        return {"ok": False, "message": "送信失敗: 送信本文が空です", "stdout": "", "stderr": ""}
+
+    config = load_teams_config()
+    chat_id = (config.get("chat_id") or "").strip()
+    if not config.get("enabled") or not chat_id:
+        return {"ok": False, "message": "送信失敗: Teams送信設定が未完了です", "stdout": "", "stderr": ""}
+
+    if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
+        return {"ok": False, "message": "送信失敗: PowerShell送信スクリプトが見つかりません", "stdout": "", "stderr": ""}
+
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".txt", delete=False) as f:
+            f.write(body)
+            temp_path = f.name
+
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                TEAMS_SEND_SCRIPT_PATH,
+                "-ChatId",
+                chat_id,
+                "-MessageFile",
+                temp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        if completed.returncode == 0 and "SUCCESS" in stdout:
+            return {"ok": True, "message": "送信成功", "stdout": stdout, "stderr": stderr}
+        reason = stderr.strip() or stdout.strip() or f"PowerShell終了コード: {completed.returncode}"
+        return {"ok": False, "message": f"送信失敗: {reason}", "stdout": stdout, "stderr": stderr}
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "ok": False,
+            "message": "送信失敗: PowerShell送信がタイムアウトしました",
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "",
+        }
+    except Exception as exc:
+        return {"ok": False, "message": f"送信失敗: {exc}", "stdout": "", "stderr": ""}
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
+def append_teams_send_log(result: dict, message: str, chat_name: str) -> list:
+    if "teams_send_log" not in st.session_state:
+        st.session_state.teams_send_log = []
+    entry = {
+        "sent_at": datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
+        "ok": bool(result.get("ok")),
+        "chat_name": chat_name,
+        "message_preview": (message or "").replace("\n", " ")[:100],
+        "error_message": "" if result.get("ok") else result.get("message", ""),
+    }
+    st.session_state.teams_send_log.insert(0, entry)
+    return st.session_state.teams_send_log
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -2127,6 +2246,8 @@ def init_session():
         st.session_state.extracted = {}
     if "pasted_text" not in st.session_state:
         st.session_state.pasted_text = ""
+    if "teams_send_log" not in st.session_state:
+        st.session_state.teams_send_log = []
 
 
 # ============================================================
@@ -2755,7 +2876,47 @@ def render_tab_after_call():
         st.markdown("##### 💬 Teams 報告文")
         teams_report = _build_teams_report(form, caller_type, notes_filled)
 
-        st.text_area("Teams報告文", teams_report, height=180, key="teams_report_display")
+        teams_report_display = st.text_area("Teams報告文", teams_report, height=180, key="teams_report_display")
+
+        teams_config = load_teams_config()
+        teams_enabled = bool(teams_config.get("enabled") and teams_config.get("chat_id"))
+        chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
+        st.caption(f"送信先：{chat_name}")
+        st.caption(f"Teams送信：{'有効' if teams_enabled else '無効'}")
+        if not teams_config.get("chat_id"):
+            st.warning("設定未完了のため送信できません")
+        if teams_config.get("error"):
+            st.error(teams_config["error"])
+
+        confirmed = st.checkbox(
+            "送信内容と送信先を確認しました",
+            key="teams_send_confirmed",
+        )
+        send_disabled = not (teams_enabled and confirmed and (teams_report_display or "").strip())
+        if st.button("Teamsチャットへ送信", disabled=send_disabled, type="primary", use_container_width=True):
+            result = send_teams_message_via_powershell(teams_report_display)
+            append_teams_send_log(result, teams_report_display, chat_name)
+            if result.get("ok"):
+                st.success("Teamsチャットへ送信しました")
+            else:
+                st.error("Teams送信に失敗しました")
+            with st.expander("PowerShell実行結果", expanded=not result.get("ok")):
+                st.text("stdout")
+                st.code(result.get("stdout", "") or "（なし）", language=None)
+                st.text("stderr")
+                st.code(result.get("stderr", "") or "（なし）", language=None)
+
+        recent_logs = st.session_state.get("teams_send_log", [])[:3]
+        if recent_logs:
+            with st.expander("Teams送信ログ（直近3件）", expanded=False):
+                for log in recent_logs:
+                    status = "成功" if log.get("ok") else "失敗"
+                    st.markdown(
+                        f"- {log.get('sent_at', '─')} / {status} / "
+                        f"{log.get('chat_name', '─')} / {log.get('message_preview', '')}"
+                    )
+                    if log.get("error_message"):
+                        st.caption(log["error_message"])
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
     st.text_area("履歴テンプレ", history_tmpl, height=300, key="history_after")

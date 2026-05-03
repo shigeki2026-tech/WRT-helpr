@@ -36,7 +36,7 @@ streamlit run app.py
 | 正式トークスクリプト参照先の誘導 | 対象シート名・パート名を表示（スクリプト本文は保持しない） |
 | 次に確認すべき項目の一覧表示 | 修理形態・未入力項目に応じて確認質問リストを自動生成 |
 | 終話後の履歴テンプレ | 受付情報をまとめた対応履歴テキストをワンクリックでコピー |
-| 終話後処理タブ | テンプレート自動選択、楽テルNO、依頼票メモ備考反映、Teams報告文生成に対応 |
+| 終話後処理タブ | テンプレート自動選択、楽テルNO、依頼票メモ備考反映、Teams報告文生成、設定時のTeamsチャット送信に対応 |
 | 判定診断パネル | 5エリアの判定結果を✅/⚠️/❌でまとめ表示し、確認が必要な項目を即時提示 |
 
 コピー情報取り込みでは、住所に含まれる都道府県を47都道府県リストから自動抽出し、受付情報フォームの都道府県選択へ反映します。都道府県が選択されると、判定結果欄に `都道府県` と `エリア: NTT東日本 / NTT西日本` が表示されます。
@@ -64,6 +64,30 @@ v0.1.1 では、終話後処理タブを強化しました。
 
 ---
 
+## v0.1.2-field-test 予定: Teamsチャット送信
+
+v0.1.2 field test では、終話後処理タブで生成したTeams報告文を、指定した既存Teamsチャットへ送信する機能を検証します。
+
+- 送信には Microsoft Graph PowerShell が必要です。
+- Microsoft Graph の delegated permission は `ChatMessage.Send` を想定しています。
+- 送信先の `chat_id` は `config/teams_config.json` または環境変数 `WRT_TEAMS_CHAT_ID` で設定します。
+- `config/teams_config.json` は実際の `chat_id` を含むためGitにコミットしません。サンプルは `config/teams_config.example.json` を参照してください。
+- 誤送信防止のため、送信前に「送信内容と送信先を確認しました」の確認チェックが必須です。
+- まずは単発送信のみです。自動送信・一括送信は行いません。
+
+設定例:
+
+```json
+{
+  "enabled": true,
+  "chat_id": "実際のchatId",
+  "chat_name": "WRT報告用チャット",
+  "send_mode": "powershell_graph"
+}
+```
+
+---
+
 ## 現場確認用ドキュメント
 
 機能追加後の画面確認には、以下のドキュメントを使用します。
@@ -72,6 +96,7 @@ v0.1.1 では、終話後処理タブを強化しました。
 - [docs/demo_cases.md](docs/demo_cases.md): コピー情報取り込み欄へ貼り付けて試せる5ケース分のデモ用コピー文
 - [docs/release_notes_v0.1.md](docs/release_notes_v0.1.md): MVP v0.1 の機能範囲、既知の注意点、現場テスト観点
 - [docs/release_notes_v0.1.1.md](docs/release_notes_v0.1.1.md): v0.1.1 の追加機能、v0.1との差分、現場テスト観点
+- [docs/release_notes_v0.1.2.md](docs/release_notes_v0.1.2.md): v0.1.2 のTeamsチャット送信機能、誤送信防止、既知の注意点
 - [docs/user_manual_v0.1.md](docs/user_manual_v0.1.md): MVP v0.1 現場テスト版の導入・操作マニュアル
 
 新しい判定ルールを追加した場合は、必要に応じてデモケースとチェックリストも更新してください。

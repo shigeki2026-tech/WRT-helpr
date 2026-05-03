@@ -1,0 +1,6 @@
+{
+  "enabled": false,
+  "chat_id": "",
+  "chat_name": "WRT報告用チャット",
+  "send_mode": "powershell_graph"
+}

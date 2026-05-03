@@ -5,3 +5,4 @@ __pycache__/
 .pytest_cache/
 .codex_tmp/
 .codex_test_deps/
+config/teams_config.json
