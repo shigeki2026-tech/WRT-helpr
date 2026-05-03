@@ -12,7 +12,8 @@ Standalone:
 
 import sys
 import os
-from datetime import date
+import re
+from datetime import date, datetime
 
 # Add project root to path so `import app` works from any working directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1163,6 +1164,34 @@ def test_tc120_empty_form_does_not_auto_fill_today_for_warranty():
     form = app.empty_form()
     check("TC120 empty form start remains blank", form["warranty_start_date"], "")
     check("TC120 empty form end remains blank", form["warranty_end_date"], "")
+    for key in ["operator_name", "rakuteru_no", "contact_phone", "extracted_time"]:
+        check(f"TC120 empty form includes blank {key}", form[key], "")
+    check("TC120 empty form caller_type default", form["caller_type"], "加入者")
+
+    class SessionState(dict):
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError as exc:
+                raise AttributeError(name) from exc
+
+        def __setattr__(self, name, value):
+            self[name] = value
+
+    original_session_state = app.st.session_state
+    try:
+        app.st.session_state = SessionState({
+            "form": {"warranty_start_date": "", "warranty_end_date": ""}
+        })
+        app.init_session()
+        for key in ["operator_name", "rakuteru_no", "contact_phone", "caller_type", "extracted_time"]:
+            assert key in app.st.session_state.form
+    finally:
+        app.st.session_state = original_session_state
+
+    extracted_time = app._format_extracted_time(datetime(2026, 5, 3, 9, 4))
+    assert re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2} \d{2}：\d{2}", extracted_time)
+    check("TC120 extracted_time format", extracted_time, "2026/5/3 09：04")
     d = app.run_decision(make_form(product="洗濯機", prefecture="滋賀県", appliance_type="家電"))
     check("TC120 run_decision blank dates warranty_status=unknown",
           d["warranty_status"], "unknown")
@@ -1172,6 +1201,69 @@ def test_tc_template_code_options_loaded():
     df = app.load_template_codes()
     assert not df.empty
     assert "template_code" in df.columns
+
+    rows = [
+        {
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】自然故障",
+            "template_code": "0009",
+        },
+        {
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】ダブルプロテクト",
+            "template_code": "0010",
+        },
+        {
+            "category": "家電保証対応業務（24時間）",
+            "label": "【持込修理】自然故障",
+            "template_code": "0001",
+        },
+        {
+            "category": "家電保証対応業務（24時間）",
+            "label": "【持込修理】ダブルプロテクト",
+            "template_code": "0002",
+        },
+    ]
+    df_sample = app.pd.DataFrame(rows)
+    check(
+        "template auto select visit natural",
+        app._auto_select_template("家電保証対応業務（24時間）", "出張修理", "自然故障", df_sample),
+        "【出張修理】自然故障",
+    )
+    check(
+        "template auto select carry in natural",
+        app._auto_select_template("家電保証対応業務（24時間）", "持込修理", "自然故障", df_sample),
+        "【持込修理】自然故障",
+    )
+    for plan in ["物損保証", "ダブルプロテクト", "DP"]:
+        check(
+            f"template auto select DP priority {plan}",
+            app._auto_select_template("家電保証対応業務（24時間）", "出張修理", plan, df_sample),
+            "【出張修理】ダブルプロテクト",
+        )
+
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "rakuteru_no": "RT-123",
+        "extracted_time": "2026/5/3 09：04",
+        "contact_phone": "090-1111-2222",
+        "phone_number": "090-0000-0000",
+        "call_line": "家電保証対応業務（24時間）",
+        "wrt_no": "WRT-999",
+        "customer_name": "山田太郎",
+        "product": "洗濯機",
+        "manufacturer": "日立",
+        "model_number": "BW-X",
+        "store_name": "テスト販売店",
+    })
+    notes = app._fill_template_notes("販売店：〇〇〇〇〇 TEL：", form)
+    report = app._build_teams_report(form, "加入者", notes)
+    for expected in [
+        "大濱", "RT-123", "WRT-999", "山田太郎", "洗濯機",
+        "日立", "テスト販売店", "TEL：090-0000-0000",
+    ]:
+        assert expected in report
 
 
 def test_tc_call_line_options_from_csv():

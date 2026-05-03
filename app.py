@@ -254,7 +254,7 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
     rows = None  # CSV読み込み改善
     for encoding in ("utf-8-sig", "utf-8", "cp932"):  # CSV読み込み改善
         try:
-            with open(path, "r", encoding=encoding, newline="") as f:
+            with open(path, "r", encoding=encoding, errors="replace", newline="") as f:
                 rows = list(csv.reader(f))
             break
         except Exception:
@@ -372,6 +372,81 @@ def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, 
             if repair_kw in label and "ダブル" not in label and "物損" not in label:
                 return label
     return ""
+
+
+def _format_extracted_time(now: datetime | None = None) -> str:
+    now = now or datetime.now()
+    return (
+        f"{now.year}/{now.month}/{now.day} "
+        f"{now.hour:02d}：{now.minute:02d}"
+    )
+
+
+def _fill_template_notes(notes: str, form: dict) -> str:
+    notes_filled = notes or ""
+    store = (form.get("store_name") or "").strip()
+    phone = (form.get("phone_number") or "").strip()
+    if store:
+        notes_filled = notes_filled.replace("〇〇〇〇〇", store)
+    if phone:
+        notes_filled = notes_filled.replace("TEL：", f"TEL：{phone}")
+    return notes_filled
+
+
+def _line_label_for_call_line(call_line: str) -> str:
+    line_group = get_line_group(call_line)
+    if not line_group:
+        cl = (call_line or "").strip()
+        if "住設" in cl or "不動産" in cl or "工務店" in cl:
+            line_group = "住設"
+        elif cl:
+            line_group = "家電"
+    return (
+        "家電回線" if line_group == "家電"
+        else "住設回線" if line_group == "住設"
+        else "回線"
+    )
+
+
+def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
+                           vendor: str, notes_filled: str = "") -> str:
+    memo = (
+        f"WRT-NO: {form.get('wrt_no','─')}\n"
+        f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
+        f"製品: {form.get('product','─')} / {form.get('manufacturer','─')} {form.get('model_number','─')}\n"
+        f"保証期間判定: {warranty_result.get('title','─')}\n"
+        f"修理形態: {repair_type}\n"
+        f"症状: {form.get('symptom','─')}\n"
+        f"拠点候補: {vendor}"
+    )
+    if notes_filled:
+        memo += f"\n\n【備考】\n{notes_filled}"
+    return memo
+
+
+def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") -> str:
+    operator = (form.get("operator_name") or "").strip() or "●●"
+    extracted_time = (form.get("extracted_time") or "").strip()
+    contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
+    rakuteru = (form.get("rakuteru_no") or "").strip()
+    line_label = _line_label_for_call_line(form.get("call_line", ""))
+
+    teams_report = (
+        f"【{line_label}へ受電】\n"
+        f"{extracted_time} {caller_type}→MPG{operator}\n"
+        f"【修理受付済】\n"
+        f"※保証対象外の事例ご案内済\n"
+        f"日程調整時の連絡先：{contact}\n"
+        f"WRT-NO：{form.get('wrt_no','─')}\n"
+        f"お客様名：{form.get('customer_name','─')}\n"
+        f"製品：{form.get('product','─')}\n"
+        f"メーカー：{form.get('manufacturer','─')} {form.get('model_number','─')}"
+    )
+    if rakuteru:
+        teams_report += f"\n楽テルNO：{rakuteru}"
+    if notes_filled:
+        teams_report += f"\n依頼票メモ備考：{notes_filled}"
+    return teams_report
 
 
 # ── 新規: メーカーグループ / エリアグループ CSVローダー ──
@@ -2103,11 +2178,7 @@ def render_tab_call():
                             if extracted:
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
-                            _now = datetime.now()
-                            st.session_state["form"]["extracted_time"] = (
-                                f"{_now.year}/{_now.month}/{_now.day} "
-                                f"{_now.hour:02d}：{_now.minute:02d}"
-                            )
+                            st.session_state["form"]["extracted_time"] = _format_extracted_time()
                             st.session_state["copy_panel_open"] = False
                             st.rerun()
                     except Exception as e:
@@ -2126,11 +2197,7 @@ def render_tab_call():
 
             if st.button("🔍 抽出する", use_container_width=True, type="primary"):
                 if pasted.strip():
-                    _now = datetime.now()
-                    st.session_state["form"]["extracted_time"] = (
-                        f"{_now.year}/{_now.month}/{_now.day} "
-                        f"{_now.hour:02d}：{_now.minute:02d}"
-                    )
+                    st.session_state["form"]["extracted_time"] = _format_extracted_time()
                     st.session_state.extracted = extract_fields_from_pasted_text(pasted)
                 else:
                     st.warning("テキストを貼り付けてください。")
@@ -2679,56 +2746,14 @@ def render_tab_after_call():
 
         # ── 修理依頼票用メモ（備考欄反映）──
         st.markdown("##### 📝 修理依頼票用メモ")
-        store = (form.get("store_name") or "").strip()
-        phone = (form.get("phone_number") or "").strip()
-        notes_filled = selected_notes
-        if store:
-            notes_filled = notes_filled.replace("〇〇〇〇〇", store)
-        if phone:
-            notes_filled = notes_filled.replace("TEL：", f"TEL：{phone}")
-
-        memo = (
-            f"WRT-NO: {form.get('wrt_no','─')}\n"
-            f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
-            f"製品: {form.get('product','─')} / {form.get('manufacturer','─')} {form.get('model_number','─')}\n"
-            f"保証期間判定: {warranty_result.get('title','─')}\n"
-            f"修理形態: {repair_type}\n"
-            f"症状: {form.get('symptom','─')}\n"
-            f"拠点候補: {vendor}"
-        )
-        if notes_filled:
-            memo += f"\n\n【備考】\n{notes_filled}"
+        notes_filled = _fill_template_notes(selected_notes, form)
+        memo = _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled)
 
         st.text_area("依頼票メモ", memo, height=260, key="memo_after")
 
-        # ── Teams報告文（備考なし）──
+        # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
-        operator = (form.get("operator_name") or "").strip() or "●●"
-        extracted_time = (form.get("extracted_time") or "").strip()
-        contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
-        rakuteru = (form.get("rakuteru_no") or "").strip()
-        line_group = get_line_group(form.get("call_line", ""))
-        if not line_group:
-            cl = (form.get("call_line") or "").strip()
-            if "住設" in cl or "不動産" in cl or "工務店" in cl:
-                line_group = "住設"
-            elif cl:
-                line_group = "家電"
-        line_label = (
-            "家電回線" if line_group == "家電"
-            else "住設回線" if line_group == "住設"
-            else "回線"
-        )
-
-        teams_report = (
-            f"【{line_label}へ受電】\n"
-            f"{extracted_time} {caller_type}→MPG{operator}\n"
-            f"【修理受付済】\n"
-            f"※保証対象外の事例ご案内済\n"
-            f"日程調整時の連絡先：{contact}"
-        )
-        if rakuteru:
-            teams_report += f"\n楽テルNO：{rakuteru}"
+        teams_report = _build_teams_report(form, caller_type, notes_filled)
 
         st.text_area("Teams報告文", teams_report, height=180, key="teams_report_display")
     st.divider()
