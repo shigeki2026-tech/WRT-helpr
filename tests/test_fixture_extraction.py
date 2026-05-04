@@ -193,3 +193,51 @@ def test_case_pioneer_av_active():
     assert form["manufacturer"] == "パイオニア", dbg
     assert decision["cost_estimate"] == "16,000円前後", dbg
     assert decision["cost_result"]["needs_escalation"] is True, dbg
+
+
+def test_customer_address_prefers_gojusho_over_store_address():
+    text = """■プラン詳細
+販売店情報
+運営会社	株式会社電算システム	販売店	株式会社電算システム
+電話番号	--	営業日･営業時間	
+住所	〒-
+修理受付注意点	
+保証情報 
+プラン	自然故障＋物損故障【3年】	保証期間	3年
+保証開始日	2025/01/27	保証終了日	2028/01/26
+支払方法	販売店(一括)	停止期間	
+加入証番号		ステータス	契約中
+解約・保証終了種別	
+顧客情報
+注文番号	59P1430014
+お名前（漢字）	成田蓮	お名前（カナ）	
+お電話番号	090-6269-3653	メールアドレス	
+郵便番号	080-0024	ご住所	北海道帯広市西１４条南３４丁目３－９
+詳細情報	北海道更別農業高等学校　PF2K2DSV		
+製品情報
+WRT-NO	W026700057147
+支払金額	0円 (価格(税抜)0円　消費税額0円)
+プラン
+自然故障＋物損故障【3年】
+商品価格	50,000円 (価格(税抜)45,455円　消費税額4,545円)
+ジャンル	パソコン関連	分類	パソコン本体
+シリーズ	タブレットPC	メーカー	Lenovo（レノボ・ジャパン）
+型番	300e Chromebook 2nd Gen	製造番号	PF2K2DSV
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    dbg = f"extracted={extracted}"
+
+    assert extracted["postal_code"] == "080-0024", dbg
+    assert extracted["address"] == "北海道帯広市西１４条南３４丁目３－９", dbg
+    assert extracted["prefecture"] == "北海道", dbg
+    assert extracted["phone_number"] == "090-6269-3653", dbg
+    assert extracted["customer_name"] == "成田蓮", dbg
+    assert extracted["wrt_no"] == "W026700057147", dbg
+    assert "Lenovo" in extracted["manufacturer"], dbg
+    assert "〒-" not in extracted["address"], dbg
+
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    decision = app.run_decision(form)
+    assert form["pc_manufacturer_type"] == "海外メーカー", dbg
+    assert decision["cost_estimate"] == "12,000円前後", dbg
+    assert "国内メーカー/海外メーカーを確認してください" not in decision["cost_result"]["required_questions"], dbg

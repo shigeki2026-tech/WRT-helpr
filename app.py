@@ -53,6 +53,7 @@ FIELD_LABELS = {
     "series": "シリーズ",
     "manufacturer": "メーカー",
     "manufacturer_original": "メーカー原文 / コピー元メーカー名",
+    "pc_manufacturer_type": "PCメーカー区分",
     "model_number": "型番",
     "product_price": "商品価格",
     "warranty_plan": "保証プラン",
@@ -198,6 +199,14 @@ def build_after_call_steps(diagnostics: dict) -> list[str]:
 DOMESTIC_PC_MAKERS = {
     "パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー", "NEC", "VAIO",
 }
+PC_MANUFACTURER_TYPE_UNKNOWN = "未確認"
+PC_MANUFACTURER_TYPE_DOMESTIC = "国内メーカー"
+PC_MANUFACTURER_TYPE_FOREIGN = "海外メーカー"
+PC_MANUFACTURER_TYPE_OPTIONS = [
+    PC_MANUFACTURER_TYPE_UNKNOWN,
+    PC_MANUFACTURER_TYPE_DOMESTIC,
+    PC_MANUFACTURER_TYPE_FOREIGN,
+]
 
 # manufacturer_group 名 → メーカーセット のマッピング
 MANUFACTURER_GROUPS: dict = {
@@ -675,6 +684,47 @@ def load_manufacturer_groups_dict() -> dict:
     return result
 
 
+def _manufacturer_text_matches_group(text: str, group: set) -> bool:
+    target = (text or "").strip().lower()
+    if not target:
+        return False
+    for name in group or set():
+        keyword = (name or "").strip().lower()
+        if keyword and keyword in target:
+            return True
+    return False
+
+
+def infer_pc_manufacturer_type(manufacturer_original: str = "", manufacturer: str = "") -> str:
+    """メーカー原文/選択メーカーからPCメーカー区分を推定する。"""
+    groups = load_manufacturer_groups_dict()
+    domestic = groups.get("国内PC", DOMESTIC_PC_MAKERS)
+    foreign = groups.get("海外PC", set())
+    candidates = [
+        manufacturer_original,
+        manufacturer,
+        normalize_manufacturer(manufacturer_original),
+        normalize_manufacturer(manufacturer),
+    ]
+    for candidate in candidates:
+        if _manufacturer_text_matches_group(candidate, domestic):
+            return PC_MANUFACTURER_TYPE_DOMESTIC
+    for candidate in candidates:
+        if _manufacturer_text_matches_group(candidate, foreign):
+            return PC_MANUFACTURER_TYPE_FOREIGN
+    return PC_MANUFACTURER_TYPE_UNKNOWN
+
+
+def resolve_pc_manufacturer_type(form: dict) -> str:
+    current = (form.get("pc_manufacturer_type") or "").strip()
+    if current in (PC_MANUFACTURER_TYPE_DOMESTIC, PC_MANUFACTURER_TYPE_FOREIGN):
+        return current
+    return infer_pc_manufacturer_type(
+        form.get("manufacturer_original", ""),
+        form.get("manufacturer", ""),
+    )
+
+
 def load_area_groups_dict() -> dict:
     """
     master_area_groups.csv から {area_group_name: set[prefecture]} を返す。
@@ -718,7 +768,7 @@ def get_product_options() -> list:
         "レンジフード", "食器洗い乾燥機", "ドライヤー", "パソコン",
         "タブレット", "掃除機", "炊飯器", "トースター", "カーナビ",
         "ゲーム機", "Airdog", "テレビ", "プリンター", "サウンドバー",
-        "プロジェクター", "ホームシアター",
+        "プロジェクター", "ホームシアター", "腕時計",
     ]
     for product in fallback:
         if product not in seen:
@@ -791,7 +841,7 @@ def get_manufacturer_options() -> list:
 
     required = [
         "ダイキン", "アイリスオーヤマ", "パナソニック", "富士通",
-        "Dell", "ダイソン", "エレクトロラックス・ジャパン",
+        "Dell", "CASIO", "ダイソン", "エレクトロラックス・ジャパン",
         MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN,
     ]
     for name in required:
@@ -970,6 +1020,82 @@ def extract_by_labels(text: str, labels: list, value_pattern: str = r"([^\t\n]+)
     return m.group(1).strip() if m else ""
 
 
+def _is_invalid_address(value: str) -> bool:
+    compact = re.sub(r"[ \t　]+", "", value or "").strip()
+    if not compact:
+        return True
+    return bool(re.fullmatch(r"(?:〒)?[-ー－]*", compact))
+
+
+def _extract_section(text: str, start_label: str, end_labels: list) -> str:
+    start = re.search(re.escape(start_label), text)
+    if not start:
+        return ""
+    section_start = start.end()
+    section_end = len(text)
+    for label in end_labels:
+        m = re.search(re.escape(label), text[section_start:])
+        if m:
+            section_end = min(section_end, section_start + m.start())
+    return text[section_start:section_end]
+
+
+def extract_customer_address(text: str) -> str:
+    """顧客住所を優先抽出し、販売店情報の無効住所は採用しない。"""
+    candidates = [
+        extract_by_labels(text, ["ご住所"], r"([^\t\n]+)"),
+    ]
+
+    customer_section = _extract_section(
+        text,
+        "顧客情報",
+        ["製品情報", "販売店情報", "保証情報", "■プラン詳細"],
+    )
+    if customer_section:
+        candidates.extend([
+            extract_by_labels(customer_section, ["ご住所"], r"([^\t\n]+)"),
+            extract_by_labels(customer_section, ["住所", "お客様住所"], r"([^\t\n]+)"),
+        ])
+
+    candidates.append(extract_by_labels(text, ["お客様住所"], r"([^\t\n]+)"))
+    candidates.append(extract_by_labels(text, ["住所"], r"([^\t\n]+)"))
+
+    for candidate in candidates:
+        candidate = (candidate or "").strip()
+        if candidate and not _is_invalid_address(candidate):
+            return candidate
+    return ""
+
+
+def _is_valid_phone_number(value: str) -> bool:
+    return bool(re.search(r"\d", value or ""))
+
+
+def extract_customer_phone_number(text: str) -> str:
+    """顧客電話番号を優先抽出し、販売店情報の -- は採用しない。"""
+    candidates = []
+    customer_section = _extract_section(
+        text,
+        "顧客情報",
+        ["製品情報", "販売店情報", "保証情報", "■プラン詳細"],
+    )
+    if customer_section:
+        candidates.extend([
+            extract_by_labels(customer_section, ["お電話番号", "電話番号", "お電話", "TEL", "Tel"], r"([0-9\-()（）]+)"),
+        ])
+
+    candidates.extend([
+        extract_by_labels(text, ["お電話番号", "お電話", "TEL", "Tel"], r"([0-9\-()（）]+)"),
+        extract_by_labels(text, ["電話番号"], r"([0-9\-()（）]+)"),
+    ])
+
+    for candidate in candidates:
+        candidate = (candidate or "").strip()
+        if candidate and _is_valid_phone_number(candidate):
+            return candidate
+    return ""
+
+
 def extract_fields_from_pasted_text(text: str) -> dict:
     """貼り付けテキストから正規表現で各フィールドを抽出する。"""
     result = {}
@@ -988,7 +1114,6 @@ def extract_fields_from_pasted_text(text: str) -> dict:
         "customer_name_kana": (["お名前（カナ）"], r"([^\t\n]+)"),
         "phone_number": (["お電話番号", "電話番号", "お電話", "TEL", "Tel"], r"([0-9\-()（）]+)"),
         "postal_code": (["郵便番号"], r"([0-9\-]+)"),
-        "address": (["ご住所", "住所", "お客様住所"], r"([^\t\n]+)"),
         "wrt_no": (["WRT-NO", "WRT No", "WRT番号", "受付番号"], r"([^\t\n]+)"),
         "payment_amount": (["支払金額"], r"([0-9,]+円)"),
         "product_price": (["商品価格", "商品金額", "購入金額", "税込価格"], r"([0-9,]+円)"),
@@ -1005,6 +1130,12 @@ def extract_fields_from_pasted_text(text: str) -> dict:
             val = normalize_date_text(val) or val
         if val:
             result[key] = val
+    phone_number = extract_customer_phone_number(text)
+    if phone_number:
+        result["phone_number"] = phone_number
+    addr = extract_customer_address(text)
+    if addr:
+        result["address"] = addr
     addr = result.get("address", "")
     if addr:
         result["prefecture"] = extract_prefecture(addr)
@@ -1039,6 +1170,8 @@ def normalize_product(series: str, product: str = "") -> str:
         "給湯器": "給湯器", "温水便座": "温水便座", "掃除機": "掃除機",
         "炊飯器": "炊飯器", "トースター": "トースター", "ゲーム機": "ゲーム機",
         "テレビ": "テレビ", "タブレット": "タブレット",
+        "腕時計（クォーツ）": "腕時計", "腕時計": "腕時計",
+        "クォーツ": "腕時計", "時計": "腕時計",
         "デジタルカメラ": "デジカメ", "デジカメ": "デジカメ",
         "一眼レフカメラ": "一眼レフカメラ", "ビデオカメラ": "ビデオカメラ",
         "電子ピアノ（脚なし）": "電子ピアノ脚なし", "電子ピアノ脚なし": "電子ピアノ脚なし",
@@ -1075,6 +1208,7 @@ def normalize_manufacturer(manufacturer: str) -> str:
         "Roland": "ローランド", "ローランド": "ローランド",
         "FITプロジェクト": "FITプロジェクト", "TKクリエイト": "TKクリエイト",
         "パイオニア": "パイオニア", "PIONEER": "パイオニア",
+        "CASIO": "CASIO", "カシオ計算機": "CASIO", "カシオ": "CASIO",
         "ヤマダ": "ヤマダ", "山善": "山善",
     }
     for k, v in mapping.items():
@@ -1121,6 +1255,11 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
     elif form.get("manufacturer"):
         form["manufacturer"] = normalize_manufacturer_for_select(form.get("manufacturer"))
+    if form.get("product") == "パソコン":
+        form["pc_manufacturer_type"] = infer_pc_manufacturer_type(
+            form.get("manufacturer_original", ""),
+            form.get("manufacturer", ""),
+        )
     genre = extracted.get("genre", "")
     if genre:
         form["appliance_type"] = "住設" if any(
@@ -1226,7 +1365,7 @@ CARRY_IN_REPAIR_PRODUCTS = {
     "ドライヤー", "パソコン", "プリンター", "カーナビ", "ゲーム機",
     "掃除機", "炊飯器", "トースター", "タブレット"
 }
-CONFIRM_REPAIR_PRODUCTS = {"テレビ", "電子レンジ"}
+CONFIRM_REPAIR_PRODUCTS = {"テレビ", "電子レンジ", "腕時計"}
 
 
 def determine_repair_type(form: dict) -> str:
@@ -1268,6 +1407,7 @@ def guard_pending_cost_before_rules(form: dict):
     manufacturer = normalize_manufacturer(form.get("manufacturer", "")).strip()
     condition = (form.get("extra_condition") or "").strip()
     manufacturer_needs_confirmation = manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
+    pc_manufacturer_type = (form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN).strip()
 
     if product == "エアコン" and (not manufacturer or manufacturer_needs_confirmation):
         return _pending_cost_result(
@@ -1283,14 +1423,33 @@ def guard_pending_cost_before_rules(form: dict):
             keyword="ダイキンエアコン補足条件未確認ガード",
             missing_fields=["extra_condition"],
         )
-    if product == "パソコン" and (not manufacturer or manufacturer_needs_confirmation):
+    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_UNKNOWN:
         return _pending_cost_result(
-            "国内メーカー/海外メーカーを確認してください" if manufacturer_needs_confirmation else "メーカーを確認してください",
+            "国内メーカー/海外メーカーを確認してください",
             "パソコンはメーカー未確認時に概算費用を案内しない",
-            keyword="パソコンメーカー未確認ガード",
-            missing_fields=["manufacturer"],
+            keyword="パソコンメーカー区分未確認ガード",
+            missing_fields=["pc_manufacturer_type"],
         )
     return None
+
+
+def _confirmed_cost_result(cost_estimate: str, keyword: str, internal_note: str = "") -> dict:
+    return {
+        "matched": True,
+        "cost_estimate": cost_estimate,
+        "can_announce_cost": True,
+        "needs_escalation": False,
+        "cost_status": "confirmed",
+        "guidance_scope": "always",
+        "required_questions": "",
+        "customer_notice": "",
+        "internal_note": internal_note,
+        "missing_fields": [],
+        "keyword": keyword,
+        "priority": 0,
+        "csv_name": "master_cost_rules.csv",
+        "notes": internal_note,
+    }
 
 
 def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
@@ -1313,6 +1472,20 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     guarded = guard_pending_cost_before_rules(form)
     if guarded:
         return guarded
+
+    pc_manufacturer_type = (form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN).strip()
+    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_DOMESTIC:
+        return _confirmed_cost_result(
+            "2,000円～9,000円",
+            "国内PC",
+            "PCメーカー区分=国内メーカー",
+        )
+    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_FOREIGN:
+        return _confirmed_cost_result(
+            "12,000円前後",
+            "海外PC",
+            "PCメーカー区分=海外メーカー",
+        )
 
     _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
@@ -1596,6 +1769,15 @@ def build_required_questions(form: dict, repair_type: str, needs_data_erase: boo
         qs = common + ["付属品含めて送付可能か", "返送先住所"]
         if needs_data_erase:
             qs.append("データ消去同意（必須）")
+    elif form.get("product") == "腕時計":
+        product_label = form.get("product") or "腕時計"
+        manufacturer_label = form.get("manufacturer") or form.get("manufacturer_original") or "メーカー"
+        qs = [
+            f"製品分類が{product_label}でよいか",
+            f"メーカーが{manufacturer_label}でよいか",
+            "腕時計案件の修理形態をSV/担当へ確認",
+            "スクリプトURL未登録のため手動参照",
+        ]
     else:
         qs = ["製品詳細", "型番", "メーカー", "販売店", "保証内容", "SV/担当確認"]
     if not form.get("model_number"):
@@ -1804,6 +1986,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     else:
         missing_for_script: list = []
         reasons: list = []
+        script_next_action = "製品・家電/住設区分を入力してSV確認"
         if not (form.get("product") or "").strip():
             missing_for_script.append("product")
             reasons.append("製品が未選択")
@@ -1812,7 +1995,11 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             reasons.append("家電/住設が未選択")
         repair_type = result.get("repair_type", "")
         if not repair_type or repair_type == "要確認":
-            reasons.append("修理形態が要確認または未確定")
+            if form.get("product") == "腕時計":
+                reasons.append("腕時計案件の修理形態はSV/担当確認")
+                script_next_action = "腕時計案件の修理形態をSV/担当へ確認"
+            else:
+                reasons.append("修理形態が要確認または未確定")
         if escalation_needed:
             reasons.append("エスカレーションが必要")
         reason_str = " / ".join(reasons) if reasons else "スクリプト参照先が確定していません"
@@ -1820,7 +2007,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             "参照スクリプト判定", "warning", "スクリプト参照先が未確定",
             reason_str,
             missing_fields=missing_for_script,
-            next_action="製品・家電/住設区分を入力してSV確認",
+            next_action=script_next_action,
             impact="call_time_required" if missing_for_script else "after_call_ok",
         ))
 
@@ -1910,11 +2097,16 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             reasons.append(f"確認要: {note}")
         if not reasons:
             reasons.append("修理形態が「要確認」または未確定です")
+        repair_next_action = (
+            "腕時計案件の修理形態をSV/担当へ確認"
+            if product_val == "腕時計"
+            else "SV/担当に確認"
+        )
         items.append(_item(
             "修理形態判定", "warning", "修理形態: 要確認",
             " / ".join(reasons),
             missing_fields=missing_repair,
-            next_action="SV/担当に確認",
+            next_action=repair_next_action,
             impact="call_time_required",
         ))
 
@@ -2064,6 +2256,8 @@ def run_decision(form: dict) -> dict:
     alias_result = normalize_product_from_alias(working_form)
     if alias_result["normalized_product"]:
         working_form["product"] = alias_result["normalized_product"]
+    if working_form.get("product") == "パソコン":
+        working_form["pc_manufacturer_type"] = resolve_pc_manufacturer_type(working_form)
 
     # ── Layer 2: 修理形態 ──
     repair_result = determine_repair_type_from_rules(working_form)
@@ -2437,6 +2631,21 @@ def render_tab_call():
             form.get("manufacturer_original",""),
             placeholder="コピー抽出されたメーカー名など",
         )
+        if form.get("product") == "パソコン":
+            current_pc_type = form.get("pc_manufacturer_type") or infer_pc_manufacturer_type(
+                form.get("manufacturer_original", ""),
+                form.get("manufacturer", ""),
+            )
+            if current_pc_type not in PC_MANUFACTURER_TYPE_OPTIONS:
+                current_pc_type = PC_MANUFACTURER_TYPE_UNKNOWN
+            render_field_marker("pc_manufacturer_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
+            form["pc_manufacturer_type"] = st.selectbox(
+                "PCメーカー区分",
+                PC_MANUFACTURER_TYPE_OPTIONS,
+                index=PC_MANUFACTURER_TYPE_OPTIONS.index(current_pc_type),
+            )
+        else:
+            form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
         form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))

@@ -37,7 +37,7 @@ def make_form(
     product="", series="", manufacturer="", model_number="",
     prefecture="", call_line="", appliance_type="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
-    is_over_10years=False,
+    is_over_10years=False, manufacturer_original="", pc_manufacturer_type="",
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -54,6 +54,8 @@ def make_form(
         warranty_start_date=warranty_start_date,
         warranty_end_date=warranty_end_date,
         is_over_10years=is_over_10years,
+        manufacturer_original=manufacturer_original,
+        pc_manufacturer_type=pc_manufacturer_type,
     )
     return form
 
@@ -264,6 +266,78 @@ def test_tc17_pc_dell():
     d = app.run_decision(make_form(product="パソコン", manufacturer="Dell"))
     check("TC17 修理形態 → 持込修理",            d["repair_type"],   "持込修理")
     check("TC17 概算費用 → 12,000円前後",         d["cost_estimate"], "12,000円前後")
+
+
+def test_tc17b_pc_lenovo_original_infers_foreign_and_clears_question():
+    form = app.apply_extracted_fields_to_form(
+        {
+            "series": "タブレットPC",
+            "manufacturer": "Lenovo（レノボ・ジャパン）",
+        },
+        app.empty_form(),
+    )
+    d = app.run_decision(form)
+    rq = d["cost_result"].get("required_questions", "")
+
+    check("TC17b product → パソコン", form["product"], "パソコン")
+    check("TC17b PCメーカー区分 → 海外メーカー", form["pc_manufacturer_type"], "海外メーカー")
+    check("TC17b 概算費用 → 12,000円前後", d["cost_estimate"], "12,000円前後")
+    check("TC17b 確認項目に国内/海外確認が残らない", "国内メーカー/海外メーカーを確認してください" in rq, False)
+
+
+def test_tc17c_pc_type_domestic_overrides_unknown_select_manufacturer():
+    d = app.run_decision(make_form(
+        product="パソコン",
+        manufacturer=app.MANUFACTURER_OTHER,
+        pc_manufacturer_type="国内メーカー",
+    ))
+
+    check("TC17c 国内PC区分 → 2,000円～9,000円", d["cost_estimate"], "2,000円～9,000円")
+    check("TC17c cost_status → confirmed", d["cost_result"]["cost_status"], "confirmed")
+
+
+def test_tc17d_pc_unknown_type_requires_confirmation():
+    d = app.run_decision(make_form(
+        product="パソコン",
+        manufacturer=app.MANUFACTURER_OTHER,
+        manufacturer_original="謎メーカー",
+    ))
+
+    check("TC17d PCメーカー区分 → 未確認", d["working_form"]["pc_manufacturer_type"], "未確認")
+    check("TC17d cost_status → pending", d["cost_result"]["cost_status"], "pending")
+    check("TC17d 国内/海外確認あり",
+          "国内メーカー/海外メーカーを確認してください" in d["cost_result"]["required_questions"], True)
+
+
+def test_tc17e_watch_quartz_and_casio_are_normalized_with_specific_confirmation():
+    form = app.apply_extracted_fields_to_form(
+        {
+            "series": "腕時計（クォーツ）",
+            "manufacturer": "CASIO（カシオ計算機）",
+            "model_number": "WVA-M630D-7A2JF",
+        },
+        app.empty_form(),
+    )
+    d = app.run_decision(form)
+    qs = app.build_required_questions(form, d["repair_type"], d["needs_data_erase"])
+    q_text = "\n".join(qs)
+    repair_reason = next(
+        item["reason"] for item in d["diagnostics"]["items"]
+        if item["area"] == "修理形態判定"
+    )
+
+    check("TC17e 製品 → 腕時計", form["product"], "腕時計")
+    check("TC17e 製品原文保持", form["product_original"], "腕時計（クォーツ）")
+    check("TC17e メーカー → CASIO", form["manufacturer"], "CASIO")
+    check("TC17e メーカー原文保持", form["manufacturer_original"], "CASIO（カシオ計算機）")
+    check("TC17e 型番保持", form["model_number"], "WVA-M630D-7A2JF")
+    check("TC17e 修理形態 → 要確認", d["repair_type"], "要確認")
+    check("TC17e 腕時計理由", "腕時計ルール未登録 / 担当確認" in repair_reason, True)
+    check("TC17e 確認項目 型番なし", "型番" in q_text, False)
+    check("TC17e 確認項目 汎用メーカーなし", "\nメーカー\n" in f"\n{q_text}\n", False)
+    check("TC17e 確認項目 製品分類", "製品分類が腕時計でよいか" in q_text, True)
+    check("TC17e 確認項目 CASIO", "メーカーがCASIOでよいか" in q_text, True)
+    check("TC17e 確認項目 スクリプトURL", "スクリプトURL未登録のため手動参照" in q_text, True)
 
 
 # ============================================================
