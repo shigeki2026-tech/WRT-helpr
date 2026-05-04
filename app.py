@@ -276,7 +276,7 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
         return pd.DataFrame(columns=required_cols)
     header = rows[0]  # CSV読み込み改善
     header_col_count = len(header)  # CSV読み込み改善
-    valid_rows = [row for row in rows[1:] if len(row) == header_col_count]  # CSV読み込み改善
+    valid_rows = [row[:header_col_count] for row in rows[1:] if len(row) >= header_col_count]  # CSV読み込み改善
     excluded_count = len(rows[1:]) - len(valid_rows)  # CSV読み込み改善
     if excluded_count > 0:  # CSV読み込み改善
         st.warning(f"CSV列数不一致のため {filename} から {excluded_count} 行を除外しました。")  # CSV読み込み改善
