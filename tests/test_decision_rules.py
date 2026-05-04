@@ -325,6 +325,15 @@ def test_tc17e_watch_quartz_and_casio_are_normalized_with_specific_confirmation(
         item["reason"] for item in d["diagnostics"]["items"]
         if item["area"] == "修理形態判定"
     )
+    repair_diag = next(
+        item for item in d["diagnostics"]["items"]
+        if item["area"] == "修理形態判定"
+    )
+    cost_diag = next(
+        item for item in d["diagnostics"]["items"]
+        if item["area"] == "概算費用判定"
+    )
+    display = app.build_summary_card_display(d)
 
     check("TC17e 製品 → 腕時計", form["product"], "腕時計")
     check("TC17e 製品原文保持", form["product_original"], "腕時計（クォーツ）")
@@ -335,9 +344,35 @@ def test_tc17e_watch_quartz_and_casio_are_normalized_with_specific_confirmation(
     check("TC17e 腕時計理由", "腕時計ルール未登録 / 担当確認" in repair_reason, True)
     check("TC17e 確認項目 型番なし", "型番" in q_text, False)
     check("TC17e 確認項目 汎用メーカーなし", "\nメーカー\n" in f"\n{q_text}\n", False)
-    check("TC17e 確認項目 製品分類", "製品分類が腕時計でよいか" in q_text, True)
-    check("TC17e 確認項目 CASIO", "メーカーがCASIOでよいか" in q_text, True)
+    check("TC17e 確認項目 汎用製品詳細なし", "製品詳細" in q_text, False)
+    check("TC17e 確認項目 SV対応可否", "腕時計案件の対応可否をSV/担当へ確認" in q_text, True)
     check("TC17e 確認項目 スクリプトURL", "スクリプトURL未登録のため手動参照" in q_text, True)
+    check("TC17e 修理形態カード 担当確認", display["repair"]["value"], "担当確認")
+    check("TC17e 修理形態カード 腕時計SV", "腕時計はSV/担当確認" in display["repair"]["status"], True)
+    check("TC17e 概算費用カード 理由", "腕時計は担当確認後に案内" in display["cost"]["status"], True)
+    check("TC17e 参照スクリプト 腕時計", display["script_sheet"], "腕時計")
+    check("TC17e 参照スクリプト SV担当確認", display["script_part"], "SV担当確認")
+    check("TC17e 診断 修理形態 担当確認", repair_diag["title"], "修理形態: 担当確認")
+    check("TC17e 診断 腕時計SV明示", "腕時計はSV/担当確認" in repair_diag["reason"], True)
+    check("TC17e 診断 概算費用理由", "腕時計は担当確認後に案内" in cost_diag["reason"], True)
+
+
+def test_tc17f_unknown_product_pending_is_not_watch_confirmation_display():
+    d = app.run_decision(make_form(
+        product="その他・要確認",
+        manufacturer="CASIO",
+        model_number="UNKNOWN-001",
+    ))
+    display = app.build_summary_card_display(d)
+    repair_diag = next(
+        item for item in d["diagnostics"]["items"]
+        if item["area"] == "修理形態判定"
+    )
+
+    check("TC17f unknown 修理形態 → 要確認", d["repair_type"], "要確認")
+    check("TC17f unknown card remains 要確認", display["repair"]["value"], "要確認")
+    check("TC17f unknown not watch confirmation", display["watch_confirmation"], False)
+    check("TC17f unknown no 腕時計SV reason", "腕時計はSV/担当確認" in repair_diag["reason"], False)
 
 
 # ============================================================

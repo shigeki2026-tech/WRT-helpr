@@ -1366,6 +1366,15 @@ CARRY_IN_REPAIR_PRODUCTS = {
     "掃除機", "炊飯器", "トースター", "タブレット"
 }
 CONFIRM_REPAIR_PRODUCTS = {"テレビ", "電子レンジ", "腕時計"}
+WATCH_CONFIRMATION_REASON_MARKERS = ("腕時計ルール未登録", "腕時計はSV/担当確認")
+
+
+def is_watch_repair_confirmation(form: dict, repair_type: str, repair_result: dict = None) -> bool:
+    """腕時計の「要確認」を、製品不明ではなくSV/担当確認として扱う。"""
+    if (form.get("product") or "").strip() != "腕時計" or repair_type != "要確認":
+        return False
+    notes = ((repair_result or {}).get("notes") or "").strip()
+    return any(marker in notes for marker in WATCH_CONFIRMATION_REASON_MARKERS)
 
 
 def determine_repair_type(form: dict) -> str:
@@ -1770,12 +1779,8 @@ def build_required_questions(form: dict, repair_type: str, needs_data_erase: boo
         if needs_data_erase:
             qs.append("データ消去同意（必須）")
     elif form.get("product") == "腕時計":
-        product_label = form.get("product") or "腕時計"
-        manufacturer_label = form.get("manufacturer") or form.get("manufacturer_original") or "メーカー"
         qs = [
-            f"製品分類が{product_label}でよいか",
-            f"メーカーが{manufacturer_label}でよいか",
-            "腕時計案件の修理形態をSV/担当へ確認",
+            "腕時計案件の対応可否をSV/担当へ確認",
             "スクリプトURL未登録のため手動参照",
         ]
     else:
@@ -1803,6 +1808,82 @@ def build_customer_cost_guidance(repair_type: str, cost_estimate: str,
                 "実際の金額は、メーカー・製品・診断内容により前後いたします。")
     return ("恐れ入りますが、こちらの商品は確認が必要な内容となります。\n"
             "修理受付可否および概算費用を確認のうえ、ご案内いたします。")
+
+
+def build_summary_card_display(decision: dict) -> dict:
+    """判定結果カード用の表示文言をまとめる。判定値そのものは変更しない。"""
+    repair_type = decision.get("repair_type", "")
+    cost_estimate = decision.get("cost_estimate", "")
+    script_result = decision.get("script_result", {})
+    cost_result = decision.get("cost_result", {})
+    vendor_result = decision.get("vendor_result", {})
+    working_form = decision.get("working_form", {})
+    repair_result = decision.get("repair_result", {})
+    watch_confirmation = is_watch_repair_confirmation(working_form, repair_type, repair_result)
+
+    cost_status = cost_result.get("cost_status", "confirmed")
+    if not script_result.get("price_guidance_allowed", True):
+        cost_status = "unavailable"
+    elif cost_result.get("needs_escalation") and cost_status not in ("pending",):
+        cost_status = "escalation"
+
+    contact_type = (vendor_result.get("contact_type") or "").strip()
+    if contact_type == "callback":
+        callback_label = (vendor_result.get("reason") or "").strip()
+        repair_card = {
+            "value": f"折り返し対応（{callback_label}）" if callback_label else "折り返し対応",
+            "status": "📞 翌営業日折り返し",
+            "color": "#6c3483",
+        }
+    elif repair_type in ("出張修理", "持込修理"):
+        repair_card = {"value": repair_type, "status": "✅ 確定", "color": "#1a5276"}
+    elif watch_confirmation:
+        repair_card = {
+            "value": "担当確認",
+            "status": "⚠️ 腕時計はSV/担当確認",
+            "color": "#784212",
+        }
+    else:
+        repair_card = {"value": "要確認", "status": "⚠️ SV確認", "color": "#784212"}
+
+    if watch_confirmation:
+        cost_card = {
+            "value": "案内不可" if cost_status == "unavailable" else "確認中",
+            "status": "理由：腕時計は担当確認後に案内",
+            "color": "#7d6608" if cost_status != "unavailable" else "#922b21",
+        }
+    elif cost_status == "pending":
+        required_questions = cost_result.get("required_questions", "").strip() or "追加確認が必要です"
+        cost_card = {"value": "確認中", "status": f"🔲 {required_questions}", "color": "#7d6608"}
+    elif cost_status == "unavailable":
+        cost_card = {"value": "案内不可", "status": "🚫", "color": "#922b21"}
+    elif cost_status == "escalation":
+        cost_card = {
+            "value": cost_estimate or "要確認",
+            "status": "⚠️ エスカ注意",
+            "color": "#784212",
+        }
+    else:
+        cost_card = {
+            "value": cost_estimate or "要確認",
+            "status": "✅ 案内可",
+            "color": "#1e8449",
+        }
+
+    script_sheet = script_result.get("sheet_name") or "未確定"
+    script_part = script_result.get("part") or "未確定"
+    if watch_confirmation:
+        script_sheet = "腕時計"
+        script_part = "SV担当確認"
+
+    return {
+        "repair": repair_card,
+        "cost": cost_card,
+        "script_sheet": script_sheet,
+        "script_part": script_part,
+        "cost_status": cost_status,
+        "watch_confirmation": watch_confirmation,
+    }
 
 
 # ============================================================
@@ -2016,6 +2097,10 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     cost_status   = cost_result.get("cost_status", "confirmed")
     needs_esc     = cost_result.get("needs_escalation", False)
     price_ok      = script_result.get("price_guidance_allowed", True)
+    repair_type   = result.get("repair_type", "")
+    repair_result = result.get("repair_result", {})
+    product_val   = (form.get("product") or "").strip()
+    watch_confirmation = is_watch_repair_confirmation(form, repair_type, repair_result)
 
     # UIと同じ表示状態を計算
     disp_cost = cost_status
@@ -2024,7 +2109,14 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     elif needs_esc and cost_status not in ("pending",):
         disp_cost = "escalation"
 
-    if disp_cost == "unavailable":
+    if watch_confirmation:
+        items.append(_item(
+            "概算費用判定", "warning", "概算費用: 確認中",
+            "腕時計は担当確認後に案内します。",
+            next_action="腕時計案件の対応可否をSV/担当へ確認",
+            impact="call_time_required",
+        ))
+    elif disp_cost == "unavailable":
         items.append(_item(
             "概算費用判定", "warning", "金額案内不可",
             "案件区分により金額案内は行いません（スクリプト・担当確認に従う）。",
@@ -2070,9 +2162,6 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             ))
 
     # ── 4. 修理形態判定 ──────────────────────────────────────────
-    repair_type   = result.get("repair_type", "")
-    repair_result = result.get("repair_result", {})
-    product_val   = (form.get("product") or "").strip()
     mfr_val       = (form.get("manufacturer") or "").strip()
 
     if repair_type in ("出張修理", "持込修理"):
@@ -2087,6 +2176,8 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     else:
         reasons: list = []
         missing_repair: list = []
+        if watch_confirmation:
+            reasons.append("腕時計はSV/担当確認")
         if not product_val or product_val == PRODUCT_OTHER:
             reasons.append("製品が未選択または「その他・要確認」")
             missing_repair.append("product")
@@ -2103,7 +2194,7 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             else "SV/担当に確認"
         )
         items.append(_item(
-            "修理形態判定", "warning", "修理形態: 要確認",
+            "修理形態判定", "warning", "修理形態: 担当確認" if watch_confirmation else "修理形態: 要確認",
             " / ".join(reasons),
             missing_fields=missing_repair,
             next_action=repair_next_action,
@@ -2752,18 +2843,8 @@ def render_tab_call():
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
-        cost_status = cost_result.get("cost_status", "confirmed")
-        if not script_result.get("price_guidance_allowed", True):
-            cost_status = "unavailable"
-        elif cost_result.get("needs_escalation") and cost_status not in ("pending",):
-            cost_status = "escalation"
-
-        if cost_status == "pending":
-            cost_value = "確認中"
-        elif cost_status == "unavailable":
-            cost_value = "案内不可"
-        else:
-            cost_value = cost_estimate or "要確認"
+        summary_display = build_summary_card_display(decision)
+        cost_status = summary_display["cost_status"]
 
         def _ui_v3_escape(value) -> str:  # UI v3
             return (str(value or "")  # UI v3
@@ -2782,42 +2863,16 @@ def render_tab_call():
                 f'</div>'  # UI v3
             )  # UI v3
 
-        _contact_type = (vendor_result.get("contact_type") or "").strip()
-        if _contact_type == "callback":  # UI v3
-            repair_card_color = "#6c3483"  # UI v3
-            _cb_label = (vendor_result.get("reason") or "").strip()  # UI v3
-            repair_card_value = f"折り返し対応（{_cb_label}）" if _cb_label else "折り返し対応"  # UI v3
-            repair_card_status = "📞 翌営業日折り返し"  # UI v3
-        elif repair_type in ("出張修理", "持込修理"):  # UI v3
-            repair_card_color = "#1a5276"  # UI v3
-            repair_card_value = repair_type  # UI v3
-            repair_card_status = "✅ 確定"  # UI v3
-        else:  # UI v3
-            repair_card_color = "#784212"  # UI v3
-            repair_card_value = "要確認"  # UI v3
-            repair_card_status = "⚠️ SV確認"  # UI v3
-
-        if cost_status == "pending":  # UI v3
-            cost_card_color = "#7d6608"  # UI v3
-            cost_card_value = "確認中"  # UI v3
-            required_questions = cost_result.get("required_questions", "").strip() or "追加確認が必要です"  # UI v3
-            cost_card_status = f"🔲 {_ui_v3_escape(required_questions)}"  # UI v3
-        elif cost_status == "unavailable":  # UI v3
-            cost_card_color = "#922b21"  # UI v3
-            cost_card_value = "案内不可"  # UI v3
-            cost_card_status = "🚫"  # UI v3
-        elif cost_status == "escalation":  # UI v3
-            cost_card_color = "#784212"  # UI v3
-            cost_card_value = cost_estimate or "要確認"  # UI v3
-            cost_card_status = "⚠️ エスカ注意"  # UI v3
-        else:  # UI v3
-            cost_card_color = "#1e8449"  # UI v3
-            cost_card_value = cost_estimate or "要確認"  # UI v3
-            cost_card_status = "✅ 案内可"  # UI v3
+        repair_card_value = summary_display["repair"]["value"]  # UI v3
+        repair_card_status = summary_display["repair"]["status"]  # UI v3
+        repair_card_color = summary_display["repair"]["color"]  # UI v3
+        cost_card_value = summary_display["cost"]["value"]  # UI v3
+        cost_card_status = summary_display["cost"]["status"]  # UI v3
+        cost_card_color = summary_display["cost"]["color"]  # UI v3
 
         script_link = lookup_script_link(script_result)  # UI v3
-        script_sheet = script_result.get("sheet_name") or "未確定"  # UI v3
-        script_part = script_result.get("part") or "未確定"  # UI v3
+        script_sheet = summary_display["script_sheet"]  # UI v3
+        script_part = summary_display["script_part"]  # UI v3
         if script_link.get("matched"):  # UI v3
             script_card_color = "#1a5276"  # UI v3
             script_card_value = f"{script_sheet[:8]} / {script_part}"  # UI v3
