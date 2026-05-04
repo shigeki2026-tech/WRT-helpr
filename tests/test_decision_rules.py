@@ -1375,6 +1375,124 @@ def test_tc_template_code_options_loaded():
         assert expected in report
 
 
+def test_tc_template_store_rules_loaded_and_match_required_stores():
+    df = app.load_store_rules()
+    assert not df.empty
+    assert "store_keyword" in df.columns
+
+    ai = app.match_store_template_rule(make_form(store_name="株式会社アイ工務店 大阪支店"), df)
+    keihan = app.match_store_template_rule(make_form(store_name="京阪電鉄"), df)
+
+    check("store rule アイ工務店 matched", ai["matched"], True)
+    check("store rule アイ工務店 group", ai["template_group"], "上位5社")
+    check("store rule 京阪電鉄 matched", keihan["matched"], True)
+    check("store rule 京阪電鉄 group", keihan["template_group"], "上位5社")
+
+
+def test_tc_template_store_group_priority_over_normal_template():
+    df_tpl = app.pd.DataFrame([
+        {
+            "priority": 10,
+            "enabled": 1,
+            "template_code": "0009",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】自然故障",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "",
+        },
+        {
+            "priority": 10,
+            "enabled": 1,
+            "template_code": "0058",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】上位5社",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "上位5社テンプレート",
+        },
+    ])
+    df_store = app.pd.DataFrame([
+        {
+            "priority": 10,
+            "enabled": 1,
+            "store_keyword": "アイ工務店",
+            "normalized_store": "アイ工務店",
+            "template_code": "",
+            "template_label": "",
+            "template_group": "上位5社",
+            "notes": "上位5社テンプレート対象",
+        },
+        {
+            "priority": 999,
+            "enabled": 1,
+            "store_keyword": "",
+            "normalized_store": "",
+            "template_code": "",
+            "template_label": "",
+            "template_group": "",
+            "notes": "通常テンプレート",
+        },
+    ])
+    form = make_form(call_line="家電保証対応業務（24時間）", store_name="アイ工務店")
+
+    selected = app.select_template_for_form(form, "出張修理", "自然故障", df_tpl, df_store)
+
+    check("store group selects 上位5社", selected["label"], "【出張修理】上位5社")
+    check("store group selects code", selected["template_code"], "0058")
+    check("store group source", selected["source"], "store_group")
+
+
+def test_tc_template_no_store_rule_falls_back_to_legacy_auto_select():
+    df_tpl = app.pd.DataFrame([
+        {
+            "priority": 10,
+            "enabled": 1,
+            "template_code": "0009",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】自然故障",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "",
+        },
+        {
+            "priority": 10,
+            "enabled": 1,
+            "template_code": "0010",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】ダブルプロテクト",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "",
+        },
+    ])
+    df_store = app.pd.DataFrame([
+        {
+            "priority": 999,
+            "enabled": 1,
+            "store_keyword": "",
+            "normalized_store": "",
+            "template_code": "",
+            "template_label": "",
+            "template_group": "",
+            "notes": "通常テンプレート",
+        },
+    ])
+    form = make_form(call_line="家電保証対応業務（24時間）", store_name="通常店舗")
+
+    selected = app.select_template_for_form(form, "出張修理", "DP", df_tpl, df_store)
+
+    check("store fallback uses legacy DP", selected["label"], "【出張修理】ダブルプロテクト")
+    check("store fallback source", selected["source"], "fallback")
+    check("store fallback not matched", selected["store_rule"]["matched"], False)
+
+
+def test_tc_call_type_is_hidden_in_call_form_but_internal_key_remains():
+    form = app.empty_form()
+    check("call_type internal key remains", "call_type" in form, True)
+    check("call_type UI hidden flag", app.SHOW_CALL_TYPE_IN_CALL_FORM, False)
+
+
 def test_tc_call_line_options_from_csv():
     options = app.get_call_line_options()
     assert "ビックカメラ" in options
@@ -1538,6 +1656,10 @@ _ALL_TESTS = [
     test_tc119_extracted_dates_convert_for_date_input,
     test_tc120_empty_form_does_not_auto_fill_today_for_warranty,
     test_tc_template_code_options_loaded,
+    test_tc_template_store_rules_loaded_and_match_required_stores,
+    test_tc_template_store_group_priority_over_normal_template,
+    test_tc_template_no_store_rule_falls_back_to_legacy_auto_select,
+    test_tc_call_type_is_hidden_in_call_form_but_internal_key_remains,
     test_tc_call_line_options_from_csv,
     test_tc_call_line_options_loaded,
     test_tc_bic_camera_call_line_vendor,

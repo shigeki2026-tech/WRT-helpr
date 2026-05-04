@@ -245,6 +245,10 @@ _TEMPLATE_CODE_COLS = [
     "priority", "enabled", "template_code", "category",
     "label", "data_erase_required", "cost_guidance_allowed", "notes"
 ]
+_STORE_RULE_COLS = [
+    "priority", "enabled", "store_keyword", "normalized_store",
+    "template_code", "template_label", "template_group", "notes"
+]
 _CALL_LINE_COLS = ["priority", "enabled", "call_line", "line_group", "notes"]
 # legacy
 _MASTER_REQUIRED_COLS = [
@@ -256,6 +260,7 @@ _MASTER_REQUIRED_COLS = [
 PRODUCT_OTHER = "その他・要確認"
 MANUFACTURER_OTHER = "その他・要確認"
 MANUFACTURER_UNKNOWN = "不明"
+SHOW_CALL_TYPE_IN_CALL_FORM = False
 
 
 # ============================================================
@@ -330,6 +335,11 @@ def _load_template_codes_cached(mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def _load_store_rules_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_store_rules.csv", _STORE_RULE_COLS)
+
+
+@st.cache_data
 def _load_call_lines_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_call_lines.csv", _CALL_LINE_COLS)
 
@@ -359,22 +369,22 @@ def load_template_codes() -> pd.DataFrame:
     return _load_template_codes_cached(_csv_mtime("master_template_codes.csv"))
 
 
+def load_store_rules() -> pd.DataFrame:
+    return _load_store_rules_cached(_csv_mtime("master_store_rules.csv"))
+
+
 def load_call_lines() -> pd.DataFrame:
     return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
 
 
-def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, df_tpl: pd.DataFrame) -> str:
+def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str, warranty_plan: str) -> str:
     """
-    call_line + repair_type + warranty_plan からテンプレートラベルを自動選択。
     - warranty_plan に「物損」「ダブル」「DP」のいずれかを含む → ダブルプロテクト系を優先
     - repair_type == "出張修理" → 【出張修理】系
     - repair_type == "持込修理" → 【持込修理】系
     - マッチしなければ "" を返す
     """
-    if df_tpl.empty or not call_line:
-        return ""
-    filtered = df_tpl[df_tpl["category"] == call_line]
-    if filtered.empty:
+    if df_tpl.empty:
         return ""
     plan = (warranty_plan or "").strip()
     is_dp = any(kw in plan for kw in ["物損", "ダブル", "DP"])
@@ -384,16 +394,167 @@ def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, 
         else ""
     )
     if is_dp and repair_kw:
-        for _, row in filtered.iterrows():
+        for _, row in df_tpl.iterrows():
             label = row["label"]
             if repair_kw in label and "ダブル" in label:
                 return label
     if repair_kw:
-        for _, row in filtered.iterrows():
+        for _, row in df_tpl.iterrows():
             label = row["label"]
             if repair_kw in label and "ダブル" not in label and "物損" not in label:
                 return label
     return ""
+
+
+def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, df_tpl: pd.DataFrame) -> str:
+    """
+    call_line + repair_type + warranty_plan からテンプレートラベルを自動選択。
+    販売店別ルールがない場合のフォールバックとして使う。
+    """
+    if df_tpl.empty or not call_line:
+        return ""
+    filtered = df_tpl[df_tpl["category"] == call_line]
+    if filtered.empty:
+        return ""
+    return _auto_select_template_from_candidates(filtered, repair_type, warranty_plan)
+
+
+def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -> dict:
+    df = load_store_rules() if df_store_rules is None else df_store_rules
+    base = {
+        "matched": False,
+        "store_keyword": "",
+        "normalized_store": "",
+        "template_code": "",
+        "template_label": "",
+        "template_group": "",
+        "notes": "通常テンプレート",
+        "priority": None,
+    }
+    if df.empty:
+        return base
+
+    store_targets = [
+        (form.get("store_name") or "").strip(),
+        (form.get("store_original") or "").strip(),
+        (form.get("store_name_original") or "").strip(),
+    ]
+    store_text = " ".join(t for t in store_targets if t)
+    default_row = None
+
+    for _, row in df.iterrows():
+        keyword = (row.get("store_keyword") or "").strip()
+        if not keyword:
+            if default_row is None:
+                default_row = row
+            continue
+        if keyword in store_text:
+            return {
+                "matched": True,
+                "store_keyword": keyword,
+                "normalized_store": (row.get("normalized_store") or keyword).strip(),
+                "template_code": (row.get("template_code") or "").strip(),
+                "template_label": (row.get("template_label") or "").strip(),
+                "template_group": (row.get("template_group") or "").strip(),
+                "notes": (row.get("notes") or "").strip(),
+                "priority": int(row.get("priority", 999)),
+            }
+
+    if default_row is not None:
+        base.update({
+            "normalized_store": (default_row.get("normalized_store") or "").strip(),
+            "template_code": (default_row.get("template_code") or "").strip(),
+            "template_label": (default_row.get("template_label") or "").strip(),
+            "template_group": (default_row.get("template_group") or "").strip(),
+            "notes": (default_row.get("notes") or "通常テンプレート").strip(),
+            "priority": int(default_row.get("priority", 999)),
+        })
+    return base
+
+
+def _template_row_by_code_or_label(df_tpl: pd.DataFrame, template_code: str = "", template_label: str = None):
+    if df_tpl.empty:
+        return None
+    if template_code:
+        matched = df_tpl[df_tpl["template_code"] == template_code]
+        if not matched.empty:
+            return matched.iloc[0]
+    if template_label:
+        matched = df_tpl[df_tpl["label"] == template_label]
+        if not matched.empty:
+            return matched.iloc[0]
+    return None
+
+
+def _auto_select_template_by_group(template_group: str, repair_type: str,
+                                   warranty_plan: str, df_tpl: pd.DataFrame) -> str:
+    group = (template_group or "").strip()
+    if df_tpl.empty or not group:
+        return ""
+    mask = (
+        df_tpl["category"].str.contains(group, na=False) |
+        df_tpl["label"].str.contains(group, na=False) |
+        df_tpl["notes"].str.contains(group, na=False)
+    )
+    candidates = df_tpl[mask]
+    return _auto_select_template_from_candidates(candidates, repair_type, warranty_plan)
+
+
+def select_template_for_form(form: dict, repair_type: str, warranty_plan: str,
+                             df_tpl: pd.DataFrame, df_store_rules: pd.DataFrame = None) -> dict:
+    store_rule = match_store_template_rule(form, df_store_rules)
+    label = ""
+    code = ""
+    source = "fallback"
+
+    if store_rule.get("matched") and (store_rule.get("template_code") or store_rule.get("template_label")):
+        row = _template_row_by_code_or_label(
+            df_tpl, store_rule.get("template_code", ""), store_rule.get("template_label", "")
+        )
+        if row is not None:
+            label = (row.get("label") or "").strip()
+            code = (row.get("template_code") or "").strip()
+        else:
+            label = store_rule.get("template_label", "")
+            code = store_rule.get("template_code", "")
+        source = "store_direct"
+    elif store_rule.get("matched") and store_rule.get("template_group"):
+        label = _auto_select_template_by_group(
+            store_rule["template_group"], repair_type, warranty_plan, df_tpl
+        )
+        if label:
+            row = _template_row_by_code_or_label(df_tpl, template_label=label)
+            code = (row.get("template_code") or "").strip() if row is not None else ""
+            source = "store_group"
+
+    if not label:
+        label = _auto_select_template(
+            form.get("call_line", ""), repair_type, warranty_plan, df_tpl
+        )
+        row = _template_row_by_code_or_label(df_tpl, template_label=label)
+        code = (row.get("template_code") or "").strip() if row is not None else ""
+        source = "fallback"
+
+    return {
+        "label": label,
+        "template_code": code,
+        "source": source,
+        "store_rule": store_rule,
+    }
+
+
+def format_store_template_rule_display(store_rule: dict) -> str:
+    if store_rule.get("matched"):
+        store_name = store_rule.get("normalized_store") or store_rule.get("store_keyword") or "販売店"
+        detail = (
+            store_rule.get("notes")
+            or store_rule.get("template_group")
+            or store_rule.get("template_label")
+            or store_rule.get("template_code")
+            or "販売店テンプレート対象"
+        )
+        return f"{store_name} → {detail}"
+    return store_rule.get("notes") or "通常テンプレート"
 
 
 def _format_extracted_time(now: datetime | None = None) -> str:
@@ -2671,13 +2832,18 @@ def render_tab_call():
         pre_diagnostics = pre_decision.get("diagnostics", {})  # UI修正v2
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
 
-        call_type_opts    = ["", "新規入電", "折り返し", "再入電", "その他"]
         call_line_opts    = get_call_line_options()
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
-        form["call_type"]     = st.selectbox("入電種別", call_type_opts,
-            index=call_type_opts.index(form.get("call_type","")) if form.get("call_type") in call_type_opts else 0)
+        if SHOW_CALL_TYPE_IN_CALL_FORM:
+            call_type_opts = ["", "新規入電", "折り返し", "再入電", "その他"]
+            form["call_type"] = st.selectbox(
+                "入電種別",
+                call_type_opts,
+                index=call_type_opts.index(form.get("call_type", ""))
+                if form.get("call_type", "") in call_type_opts else 0,
+            )
         render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["call_line"]     = st.selectbox("回線名", call_line_opts,
             index=call_line_opts.index(form.get("call_line","")) if form.get("call_line") in call_line_opts else 0)
@@ -3080,13 +3246,20 @@ def render_tab_after_call():
         call_line_val = form.get("call_line", "")
         repair_type_val = decision["repair_type"]
         warranty_plan_val = form.get("warranty_plan", "")
+        template_selection = select_template_for_form(
+            form, repair_type_val, warranty_plan_val, df_tpl)
+        store_rule_display = format_store_template_rule_display(
+            template_selection["store_rule"])
+        st.caption("販売店テンプレート判定：")
+        st.info(store_rule_display)
 
-        if call_line_val and not df_tpl.empty:
-            filtered = df_tpl[df_tpl["category"] == call_line_val]
-            if not filtered.empty:
+        if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
+            filtered = df_tpl[df_tpl["category"] == call_line_val] if call_line_val else df_tpl.iloc[0:0]
+            auto_label = template_selection.get("label", "")
+            if not filtered.empty or auto_label:
                 tpl_labels = [""] + filtered["label"].tolist()
-                auto_label = _auto_select_template(
-                    call_line_val, repair_type_val, warranty_plan_val, df_tpl)
+                if auto_label and auto_label not in tpl_labels:
+                    tpl_labels.append(auto_label)
                 current_label = form.get("template_label", "") or auto_label
                 idx = tpl_labels.index(current_label) if current_label in tpl_labels else 0
 
@@ -3098,6 +3271,8 @@ def render_tab_after_call():
                 )
                 if selected_label_val:
                     matched = filtered[filtered["label"] == selected_label_val]
+                    if matched.empty:
+                        matched = df_tpl[df_tpl["label"] == selected_label_val]
                     if not matched.empty:
                         row = matched.iloc[0]
                         selected_code = row["template_code"]
@@ -3109,6 +3284,16 @@ def render_tab_after_call():
                             st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
                         if row.get("cost_guidance_allowed") == "不可":
                             st.error("🚫 金額案内不可案件")
+                        form["template_code"] = selected_code
+                        form["template_label"] = selected_label_val
+                        st.session_state.form = form
+                    elif selected_label_val == template_selection.get("label"):
+                        selected_code = template_selection.get("template_code", "")
+                        selected_notes = template_selection["store_rule"].get("notes", "")
+                        if selected_code:
+                            st.code(selected_code, language=None)
+                        if selected_notes:
+                            st.info(f"📋 備考: {selected_notes}")
                         form["template_code"] = selected_code
                         form["template_label"] = selected_label_val
                         st.session_state.form = form
@@ -3276,7 +3461,7 @@ def render_tab_master():
 
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
-        "修理拠点ルール", "テンプレートコード", "回線名マスタ",
+        "修理拠点ルール", "テンプレートコード", "販売店テンプレート", "回線名マスタ",
         "メーカーグループ", "エリアグループ", "レガシーマスタ",
     ])
 
@@ -3335,6 +3520,16 @@ def render_tab_master():
             st.caption("業者送付テンプレートコードと案件区分候補")
 
     with master_tabs[5]:
+        st.markdown("##### 📄 master_store_rules.csv")
+        df = load_store_rules()
+        if df.empty:
+            st.warning("CSVが見つかりません: data/master_store_rules.csv")
+        else:
+            st.success(f"読み込み済み: {len(df)} 行（有効行）")
+            st.dataframe(df, use_container_width=True)
+            st.caption("販売店名から終話後処理テンプレートを優先判定")
+
+    with master_tabs[6]:
         st.markdown("##### 📄 master_call_lines.csv")
         df = load_call_lines()
         if df.empty:
@@ -3344,7 +3539,7 @@ def render_tab_master():
             st.dataframe(df, use_container_width=True)
             st.caption("入電回線名と回線グループ")
 
-    with master_tabs[6]:
+    with master_tabs[7]:
         st.markdown("##### 📄 master_manufacturer_groups.csv")
         df_mg = load_manufacturer_groups_csv()
         if df_mg.empty:
@@ -3358,7 +3553,7 @@ def render_tab_master():
                 for gname, mfrs in mfr_dict.items():
                     st.markdown(f"- **{gname}**: {', '.join(sorted(mfrs))}")
 
-    with master_tabs[7]:
+    with master_tabs[8]:
         st.markdown("##### 📄 master_area_groups.csv（NTT東西エリア等）")
         df_ag = load_area_groups_csv()
         if df_ag.empty:
@@ -3372,7 +3567,7 @@ def render_tab_master():
                 for aname, prefs in area_dict.items():
                     st.markdown(f"- **{aname}** ({len(prefs)}県): {', '.join(sorted(prefs))}")
 
-    with master_tabs[8]:
+    with master_tabs[9]:
         st.markdown("##### 📄 master_products.csv（legacy・後方互換）")
         df = load_master_products()
         if df.empty:
