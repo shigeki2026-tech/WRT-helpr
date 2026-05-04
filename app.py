@@ -231,7 +231,7 @@ _SCRIPT_LINK_COLS   = ["script_sheet", "script_part", "display_name", "url", "no
 _VENDOR_COLS       = ["priority", "enabled", "call_line", "prefecture", "area_group",
                       "manufacturer_keyword", "product_keyword", "store_keyword",
                       "repair_type", "is_over_10years", "vendor_name", "reason",
-                      "needs_escalation", "notes"]
+                      "needs_escalation", "notes", "contact_type"]
 _TEMPLATE_CODE_COLS = [
     "priority", "enabled", "template_code", "category",
     "label", "data_erase_required", "cost_guidance_allowed", "notes"
@@ -1446,6 +1446,7 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
                 "matched":          True,
                 "vendor_name":      (row.get("vendor_name") or "担当エスカ（要確認）").strip(),
                 "reason":           (row.get("reason") or "").strip(),
+                "contact_type":     (row.get("contact_type") or "").strip(),
                 "needs_escalation": str(row.get("needs_escalation", "0")).strip() == "1",
                 "keyword":          cl or pref or ag or mk or pk,
                 "priority":         int(row.get("priority", 999)),
@@ -2543,7 +2544,13 @@ def render_tab_call():
                 f'</div>'  # UI v3
             )  # UI v3
 
-        if repair_type in ("出張修理", "持込修理"):  # UI v3
+        _contact_type = (vendor_result.get("contact_type") or "").strip()
+        if _contact_type == "callback":  # UI v3
+            repair_card_color = "#6c3483"  # UI v3
+            repair_card_value = "折り返し対応"  # UI v3
+            _cb_vendor = vendor_result.get("vendor_name", "")  # UI v3
+            repair_card_status = f"📞 {_cb_vendor}" if _cb_vendor else "📞 折り返し"  # UI v3
+        elif repair_type in ("出張修理", "持込修理"):  # UI v3
             repair_card_color = "#1a5276"  # UI v3
             repair_card_value = repair_type  # UI v3
             repair_card_status = "✅ 確定"  # UI v3
