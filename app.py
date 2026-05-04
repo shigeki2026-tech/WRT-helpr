@@ -2288,7 +2288,7 @@ def render_tab_call():
         ):  # UI v3
             if _PYPERCLIP_AVAILABLE:
                 st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
-                if st.button("📋 クリップボードから直接抽出", use_container_width=True):
+                if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="primary"):
                     try:
                         text = pyperclip.paste()
                         if not text or not text.strip():
@@ -2317,7 +2317,7 @@ def render_tab_call():
             )
             st.session_state.pasted_text = pasted
 
-            if st.button("🔍 抽出する", use_container_width=True, type="primary"):
+            if st.button("🔍 抽出する", use_container_width=True):
                 if pasted.strip():
                     st.session_state["form"]["extracted_time"] = _format_extracted_time()
                     st.session_state.extracted = extract_fields_from_pasted_text(pasted)
@@ -2356,12 +2356,6 @@ def render_tab_call():
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
-        form["operator_name"] = st.text_input(
-            "オペレーター名",
-            form.get("operator_name", ""),
-            placeholder="例: 大濱",
-            key="operator_name_input",
-        )
         form["call_type"]     = st.selectbox("入電種別", call_type_opts,
             index=call_type_opts.index(form.get("call_type","")) if form.get("call_type") in call_type_opts else 0)
         render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
@@ -2547,9 +2541,9 @@ def render_tab_call():
         _contact_type = (vendor_result.get("contact_type") or "").strip()
         if _contact_type == "callback":  # UI v3
             repair_card_color = "#6c3483"  # UI v3
-            repair_card_value = "折り返し対応"  # UI v3
-            _cb_vendor = vendor_result.get("vendor_name", "")  # UI v3
-            repair_card_status = f"📞 {_cb_vendor}" if _cb_vendor else "📞 折り返し"  # UI v3
+            _cb_label = (vendor_result.get("reason") or "").strip()  # UI v3
+            repair_card_value = f"折り返し対応（{_cb_label}）" if _cb_label else "折り返し対応"  # UI v3
+            repair_card_status = "📞 翌営業日折り返し"  # UI v3
         elif repair_type in ("出張修理", "持込修理"):  # UI v3
             repair_card_color = "#1a5276"  # UI v3
             repair_card_value = repair_type  # UI v3
@@ -2632,7 +2626,7 @@ def render_tab_call():
             st.success(f"🏭 修理拠点: {vendor} ✅ 確定")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
-        with st.expander("✅ 確認項目リスト", expanded=False):  # UI v3
+        with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
             req_questions = build_required_questions(
                 st.session_state.form, repair_type, needs_data_erase)
             if warranty_result.get("warranty_status") == "before_start":
@@ -2775,6 +2769,13 @@ def render_tab_after_call():
     col1, col2 = st.columns(2)
 
     with col1:
+        form["operator_name"] = st.text_input(
+            "オペレーター名",
+            form.get("operator_name", ""),
+            placeholder="例: 大濱",
+            key="operator_name_input",
+        )
+        st.session_state.form = form
         st.markdown("##### 📋 テンプレート（業者送付コード）")
         df_tpl = load_template_codes()
         call_line_val = form.get("call_line", "")
