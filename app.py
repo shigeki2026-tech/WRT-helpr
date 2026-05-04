@@ -437,14 +437,14 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
     return memo
 
 
-def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") -> str:
+def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") -> str:
     operator = (form.get("operator_name") or "").strip() or "●●"
     extracted_time = (form.get("extracted_time") or "").strip()
     contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
     rakuteru = (form.get("rakuteru_no") or "").strip()
     line_label = _line_label_for_call_line(form.get("call_line", ""))
 
-    teams_report = (
+    rakutel_text = (
         f"【{line_label}へ受電】\n"
         f"{extracted_time} {caller_type}→MPG{operator}\n"
         f"【修理受付済】\n"
@@ -456,10 +456,42 @@ def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") ->
         f"メーカー：{form.get('manufacturer','─')} {form.get('model_number','─')}"
     )
     if rakuteru:
-        teams_report += f"\n楽テルNO：{rakuteru}"
+        rakutel_text += f"\n楽テルNO：{rakuteru}"
     if notes_filled:
-        teams_report += f"\n依頼票メモ備考：{notes_filled}"
-    return teams_report
+        rakutel_text += f"\n依頼票メモ備考：{notes_filled}"
+    return rakutel_text
+
+
+def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") -> str:
+    return _build_rakutel_text(form, caller_type, notes_filled)
+
+
+def _build_teams_chat_message(form: dict, vendor: str) -> str:
+    rakuteru = (form.get("rakuteru_no") or "").strip()
+    case_name = (form.get("call_line") or "").strip()
+    product = (form.get("product") or "").strip()
+    send_to = (vendor or "").strip()
+    action = (form.get("teams_action") or "").strip() or "FAX済み"
+    operator = (form.get("operator_name") or "").strip()
+    operator_part = f"　MPG{operator}" if operator else ""
+    return f"{rakuteru}　{case_name}　{product}　{send_to}へ{action}{operator_part}　ご確認お願いします。"
+
+
+def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
+                            vendor: str, caller_type: str, notes_filled: str) -> dict:
+    return {
+        "attention_memo": _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled),
+        "rakutel_text": _build_rakutel_text(form, caller_type, notes_filled),
+        "teams_chat_message": _build_teams_chat_message(form, vendor),
+    }
+
+
+def _get_teams_send_body(form: dict) -> str:
+    return (form.get("teams_chat_message") or "").strip()
+
+
+def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dict) -> bool:
+    return bool(teams_enabled and confirmed and _get_teams_send_body(form))
 
 
 def load_teams_config() -> dict:
@@ -2234,6 +2266,9 @@ def empty_form() -> dict:
     form["contact_phone"] = ""
     form["caller_type"] = "加入者"
     form["extracted_time"] = ""
+    form["attention_memo"] = ""
+    form["rakutel_text"] = ""
+    form["teams_chat_message"] = ""
     return form
 
 
@@ -2873,18 +2908,48 @@ def render_tab_after_call():
         form["contact_phone"] = contact_phone
         st.session_state.form = form
 
-        # ── 修理依頼票用メモ（備考欄反映）──
-        st.markdown("##### 📝 修理依頼票用メモ")
+        # ── 注意内容メモ（備考欄反映）──
+        st.markdown("##### 📝 注意内容メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
-        memo = _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled)
+        generated_texts = _build_after_call_texts(
+            form, warranty_result, repair_type, vendor, caller_type, notes_filled)
+        if st.button("🔄 ラクテル用・Teams用テキストを再生成", use_container_width=True):
+            form["attention_memo"] = generated_texts["attention_memo"]
+            form["rakutel_text"] = generated_texts["rakutel_text"]
+            form["teams_chat_message"] = generated_texts["teams_chat_message"]
+            st.session_state["memo_after"] = form["attention_memo"]
+            st.session_state["rakutel_text_display"] = form["rakutel_text"]
+            st.session_state["teams_chat_message_display"] = form["teams_chat_message"]
+            st.session_state.form = form
 
-        st.text_area("依頼票メモ", memo, height=260, key="memo_after")
+        memo_display = st.text_area(
+            "注意内容メモ",
+            form.get("attention_memo") or generated_texts["attention_memo"],
+            height=260,
+            key="memo_after",
+        )
+        form["attention_memo"] = memo_display
+
+        # ── ラクテル用テキスト ──
+        st.markdown("##### 📝 ラクテル用テキスト")
+        rakutel_text_display = st.text_area(
+            "ラクテル用テキスト",
+            form.get("rakutel_text") or generated_texts["rakutel_text"],
+            height=180,
+            key="rakutel_text_display",
+        )
+        form["rakutel_text"] = rakutel_text_display
 
         # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
-        teams_report = _build_teams_report(form, caller_type, notes_filled)
-
-        teams_report_display = st.text_area("Teams報告文", teams_report, height=180, key="teams_report_display")
+        teams_chat_message = st.text_area(
+            "Teams報告文",
+            form.get("teams_chat_message") or generated_texts["teams_chat_message"],
+            height=100,
+            key="teams_chat_message_display",
+        )
+        form["teams_chat_message"] = teams_chat_message
+        st.session_state.form = form
 
         teams_config = load_teams_config()
         teams_enabled = bool(teams_config.get("enabled") and teams_config.get("chat_id"))
@@ -2900,10 +2965,11 @@ def render_tab_after_call():
             "送信内容と送信先を確認しました",
             key="teams_send_confirmed",
         )
-        send_disabled = not (teams_enabled and confirmed and (teams_report_display or "").strip())
+        teams_send_body = _get_teams_send_body(form)
+        send_disabled = not _can_send_teams_chat_message(teams_enabled, confirmed, form)
         if st.button("Teamsチャットへ送信", disabled=send_disabled, type="primary", use_container_width=True):
-            result = send_teams_message_via_powershell(teams_report_display)
-            append_teams_send_log(result, teams_report_display, chat_name)
+            result = send_teams_message_via_powershell(teams_send_body)
+            append_teams_send_log(result, teams_send_body, chat_name)
             if result.get("ok"):
                 st.success("Teamsチャットへ送信しました")
             else:

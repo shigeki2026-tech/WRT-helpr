@@ -77,6 +77,70 @@ def test_empty_message_does_not_call_subprocess(monkeypatch):
     assert "本文が空" in result["message"]
 
 
+def test_teams_send_body_uses_teams_chat_message_not_rakutel_text():
+    form = {
+        "rakutel_text": "do not send this detailed text",
+        "teams_chat_message": "send this short Teams message",
+    }
+
+    assert app._get_teams_send_body(form) == "send this short Teams message"
+
+
+def test_empty_teams_chat_message_is_not_sendable():
+    form = {
+        "rakutel_text": "detailed text exists",
+        "teams_chat_message": "   ",
+    }
+
+    assert app._get_teams_send_body(form) == ""
+    assert app._can_send_teams_chat_message(True, True, form) is False
+
+
+def test_regenerated_teams_message_reflects_late_operator_name():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "rakuteru_no": "2026_05_0143",
+        "call_line": "カバヤ案件",
+        "product": "多機能便座",
+    })
+
+    texts = app._build_after_call_texts(
+        form,
+        {"title": "保証中"},
+        "出張修理",
+        "ユナイト",
+        "加入者",
+        "",
+    )
+
+    assert "大濱" in texts["teams_chat_message"]
+    assert "2026_05_0143" in texts["teams_chat_message"]
+    assert "ユナイトへFAX済み" in texts["teams_chat_message"]
+
+
+def test_regenerated_rakutel_text_reflects_late_operator_name():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "extracted_time": "2026/5/4 09:30",
+        "contact_phone": "090-1111-2222",
+        "product": "多機能便座",
+    })
+
+    texts = app._build_after_call_texts(
+        form,
+        {"title": "保証中"},
+        "出張修理",
+        "ユナイト",
+        "販売店",
+        "",
+    )
+
+    assert "MPG大濱" in texts["rakutel_text"]
+    assert "2026/5/4 09:30 販売店" in texts["rakutel_text"]
+
+
 def test_send_teams_message_success(monkeypatch, tmp_path):
     config_path = tmp_path / "teams_config.json"
     script_path = tmp_path / "send_teams_message.ps1"
