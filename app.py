@@ -5,6 +5,7 @@ import re
 import os
 import csv  # CSV読み込み改善
 import json
+import hashlib
 import subprocess
 import tempfile
 import shutil
@@ -288,7 +289,7 @@ CHECK_ITEM_DEFINITIONS = {
     "他窓口へ修理依頼済みか": {
         "id": "other_repair_requested",
         "fields": ("other_repair_requested",),
-        "input": "checkbox",
+        "input": "select_other_repair_requested",
         "label": "他窓口へ修理依頼済みか",
     },
     "【物損付/DP】物損時の保証金額をシステムで確認": {
@@ -300,6 +301,10 @@ CHECK_ITEM_DEFINITIONS = {
 }
 
 
+def stable_hash_text(text: str, length: int = 8) -> str:
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:length]
+
+
 def _check_item_definition(label: str) -> dict:
     clean = (label or "").strip()
     if clean in CHECK_ITEM_DEFINITIONS:
@@ -308,7 +313,7 @@ def _check_item_definition(label: str) -> dict:
         if key and key in clean:
             return {**definition, "label": clean}
     item_id = re.sub(r"[^0-9A-Za-z_]+", "_", clean).strip("_") or "manual_item"
-    return {"id": f"manual_{item_id}", "fields": (), "input": "manual", "label": clean}
+    return {"id": f"manual_{item_id}_{stable_hash_text(clean)}", "fields": (), "input": "manual", "label": clean}
 
 
 def _manual_check_done(manual_check: dict | None, item_id: str) -> bool:
@@ -317,6 +322,8 @@ def _manual_check_done(manual_check: dict | None, item_id: str) -> bool:
 
 def _form_field_done(form: dict, field: str) -> bool:
     value = form.get(field)
+    if field == "other_repair_requested":
+        return str(value or "").strip() in ("なし", "あり")
     if isinstance(value, bool):
         return value
     return bool(str(value or "").strip())
@@ -427,6 +434,16 @@ def build_now_action_plan(form: dict, repair_type: str, needs_data_erase: bool,
         "call_required": categories["call_required"],
         "after_call": categories["after_call"],
         "completed": categories["completed"],
+    }
+
+
+def build_other_repair_requested_warning(form: dict) -> dict:
+    if (form.get("other_repair_requested") or "").strip() != "あり":
+        return {}
+    return {
+        "title": "⚠️ 他窓口へ修理依頼済み",
+        "reason": "重複受付・重複手配の可能性があります",
+        "next_action": "受付可否または対応継続可否をSV/担当に確認",
     }
 
 
@@ -1236,6 +1253,9 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
     vendor_result = vendor_result or {}
     reason = (vendor_result.get("reason") or "").strip()
     vendor_text = (vendor or vendor_result.get("vendor_name") or "").strip()
+    is_cer = "CER" in vendor_text
+    is_generic_escalation = "担当エスカ" in vendor_text or "要確認" in vendor_text
+    generic_reason_tokens = ("担当エスカ", "要確認", "担当確認")
 
     if not reason and repair_result:
         reason = (repair_result.get("reason") or "").strip()
@@ -1250,21 +1270,31 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
                 reason = text
                 break
 
-    if not reason:
-        target = vendor_text or "修理拠点"
-        reason = f"{target}について担当確認が必要"
-    elif vendor_text and vendor_text not in reason:
-        reason = f"{vendor_text}のため担当確認が必要（判定根拠: {reason}）"
+    reason_is_generic = not reason or all(token in generic_reason_tokens for token in re.findall(r"[一-龥ァ-ヶーA-Za-z]+", reason))
 
-    if "CER" in vendor_text:
-        next_action = "担当へCER手配可否を確認"
-    elif "担当エスカ" in vendor_text or "要確認" in vendor_text:
-        next_action = "修理拠点・手配可否を担当へ確認"
+    if is_cer:
+        title = "⚠️ 拠点候補：CER候補"
+        if reason and not reason_is_generic:
+            if "九州" in reason:
+                reason = "九州エリアのためCER候補。手配可否は担当確認が必要"
+            elif "CER" not in reason:
+                reason = f"{reason}のためCER候補。手配可否は担当確認が必要"
+        else:
+            reason = "CER候補。手配可否は担当確認が必要"
+        next_action = "終話後に担当へCER手配可否を確認"
+    elif is_generic_escalation:
+        title = "⚠️ 拠点未確定：担当確認が必要"
+        if reason_is_generic or vendor_text in reason:
+            reason = "現在の条件では修理拠点を自動確定できません"
+        next_action = "終話後に担当へ確認し、拠点を確定"
     else:
-        next_action = "修理拠点・手配可否を担当へ確認"
+        title = "⚠️ 拠点確認が必要"
+        if not reason:
+            reason = "現在の条件では修理拠点を自動確定できません"
+        next_action = "終話後に担当へ確認し、拠点を確定"
 
     return {
-        "title": "⚠️ 担当エスカレーション推奨",
+        "title": title,
         "reason": reason,
         "next_action": next_action,
     }
@@ -1420,6 +1450,28 @@ def close_copy_import_panel(session_state) -> None:
     set_show_copy_import(session_state, False)
 
 
+def request_case_clear(session_state) -> None:
+    session_state["_pending_case_clear"] = True
+
+
+def process_pending_case_clear(session_state, settings: dict | None = None) -> bool:
+    if not session_state.get("_pending_case_clear"):
+        return False
+    reset_case_session_state(session_state, settings)
+    for key in [
+        "_pending_case_clear",
+        "clear_case_pending_call",
+        "clear_case_pending_after",
+        "clear_case_done_call",
+        "clear_case_done_after",
+    ]:
+        if key in session_state:
+            del session_state[key]
+    session_state["case_memo_global"] = ""
+    session_state["form"]["call_memo"] = ""
+    return True
+
+
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
     new_form = apply_default_operator_name(empty_form(), settings)
     session_state["form"] = new_form
@@ -1438,14 +1490,15 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_action_input",
         "call_memo_input",
         "after_call_memo_display",
+        "case_memo_common",
         "call_memo_common_call",
         "call_memo_common_after",
-        "case_memo_common",
     ]:
         if key in session_state:
             del session_state[key]
+    session_state["case_memo_global"] = ""
     for key in list(session_state.keys()):
-        if str(key).startswith("manual_check_"):
+        if str(key).startswith(("manual_check_", "now_input_")):
             del session_state[key]
     return new_form
 
@@ -2993,6 +3046,56 @@ def build_script_guidance_panel_info(form: dict, decision: dict,
     }
 
 
+def build_decision_tag_items(decision: dict, form: dict | None = None,
+                             script_reference: dict | None = None) -> list[dict]:
+    form = form or decision.get("working_form", {})
+    summary = build_summary_card_display(decision)
+    warranty_result = decision.get("warranty_result", {})
+    warranty_status = warranty_result.get("warranty_status", "unknown")
+    acceptance_label = {
+        "active": "受付判定へ進む",
+        "before_start": "受付不可",
+        "expired": "受付不可",
+        "unknown": "要確認",
+    }.get(warranty_status, "要確認")
+    vendor = decision.get("vendor", "")
+    vendor_card = build_vendor_candidate_card_info(vendor, decision.get("vendor_result", {}))
+    vendor_status = "終話後エスカ" if vendor_card.get("needs_escalation") else "確定"
+    if not vendor:
+        vendor_status = "要確認"
+    script_reference = script_reference or build_script_reference_info(decision)
+    return [
+        {
+            "title": "受付可否",
+            "primary": summary["warranty"]["value"],
+            "secondary": acceptance_label,
+            "color": summary["warranty"]["color"],
+        },
+        {
+            "title": "修理方針",
+            "primary": summary["repair"]["value"],
+            "secondary": summary["cost"]["value"],
+            "color": summary["repair"]["color"],
+        },
+        {
+            "title": "拠点対応",
+            "primary": vendor or "未確定",
+            "secondary": vendor_status,
+            "color": "#7d6608" if vendor_card.get("needs_escalation") else "#1e8449",
+        },
+        {
+            "title": "スクリプト",
+            "primary": script_reference.get("script_type", ""),
+            "secondary": script_reference.get("display", ""),
+            "color": "#6c3483" if summary.get("is_double_protect") else "#1a5276",
+            "url": script_reference.get("url", ""),
+            "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
+                         if script_reference.get("matched") else "URL未登録（手動で参照）",
+            "matched": script_reference.get("matched", False),
+        },
+    ]
+
+
 # ============================================================
 # 履歴テンプレ
 # ============================================================
@@ -3639,19 +3742,107 @@ def render_step_list(title: str, steps: list[str]):
         st.markdown(f"**{idx}.** {step}")
 
 
-def render_common_case_memo(form: dict, key: str = "case_memo_common", height: int = 110) -> None:
-    st.markdown("##### 📝 案件メモ（通話中・終話後共通）")
-    st.caption("判定には使いません。通話中の一時メモ・終話後の転記メモ用です。")
-    if st.session_state.get(key) != form.get("call_memo", ""):
-        st.session_state[key] = form.get("call_memo", "")
-    form["call_memo"] = st.text_area(
-        "📝 案件メモ（通話中・終話後共通）",
-        value=form.get("call_memo", ""),
+def _ui_v3_escape(value) -> str:
+    return (str(value or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
+                 min_height: int = 112, link: dict | None = None) -> str:
+    body_parts = []
+    for i, (label, value) in enumerate(lines):
+        if i == 0:
+            body_parts.append(
+                f'<div style="font-size:1.18em;font-weight:800;line-height:1.35;margin-bottom:3px;">'
+                f'{_ui_v3_escape(value)}</div>'
+            )
+        else:
+            body_parts.append(
+                f'<div style="font-size:0.88em;opacity:0.88;line-height:1.5;">'
+                f'{_ui_v3_escape(value)}</div>'
+            )
+    if link is not None:
+        url = link.get("url", "")
+        text = link.get("text", "")
+        if url and text:
+            body_parts.append(
+                f'<div style="margin-top:5px;font-size:0.84em;">'
+                f'<a href="{_ui_v3_escape(url)}" target="_blank" '
+                f'style="color:white;text-decoration:underline;opacity:0.92;">'
+                f'{_ui_v3_escape(text)} ↗</a></div>'
+            )
+        elif text:
+            body_parts.append(
+                f'<div style="margin-top:5px;font-size:0.84em;opacity:0.7;">'
+                f'{_ui_v3_escape(text)}</div>'
+            )
+    return (
+        f'<div style="background:{bg_color};color:white;padding:12px 14px;'
+        f'border-radius:8px;font-size:0.92em;margin-bottom:8px;min-height:{min_height}px;">'
+        f'<div style="font-size:0.84em;opacity:0.8;margin-bottom:5px;">{_ui_v3_escape(title)}</div>'
+        f'{"".join(body_parts)}'
+        f'</div>'
+    )
+
+
+def sync_case_memo_global(form: dict, session_state) -> dict:
+    if "case_memo_global" not in session_state:
+        session_state["case_memo_global"] = form.get("call_memo", "")
+    form["call_memo"] = session_state.get("case_memo_global", "")
+    session_state["form"] = form
+    return form
+
+
+def render_common_case_memo(form: dict, key: str = "case_memo_global", height: int = 110) -> None:
+    sync_case_memo_global(form, st.session_state)
+    st.markdown("##### 📝 案件メモ")
+    st.text_area(
+        "案件メモ",
         height=height,
         key=key,
+        label_visibility="collapsed",
         help="ラクテル用テキストやTeams報告文には自動反映されません。",
     )
-    st.session_state.form = form
+    sync_case_memo_global(form, st.session_state)
+
+
+def render_decision_tags_panel(form: dict) -> None:
+    st.markdown("##### 🧭 判定タグ")
+    try:
+        decision = run_decision(form)
+        script_reference = build_script_reference_info(decision)
+        tags = build_decision_tag_items(decision, form, script_reference)
+    except Exception as exc:
+        st.warning(f"判定タグを生成できません: {exc}")
+        return
+
+    tag_cols = st.columns(4)
+    for idx, tag in enumerate(tags):
+        with tag_cols[idx]:
+            link = None
+            if idx == 3:
+                if tag.get("matched") and tag.get("url"):
+                    link = {"url": tag["url"], "text": tag["link_text"]}
+                else:
+                    link = {"url": "", "text": tag.get("link_text", "URL未登録（手動で参照）")}
+            st.markdown(
+                _ui_v3_block(tag["title"], [
+                    ("", tag["primary"]),
+                    ("", tag["secondary"]),
+                ], tag["color"], min_height=104, link=link),
+                unsafe_allow_html=True,
+            )
+
+
+def render_global_top_panels(form: dict) -> None:
+    memo_col, tags_col = st.columns([1, 2], gap="medium")
+    with memo_col:
+        render_common_case_memo(form, "case_memo_global", height=90)
+    with tags_col:
+        render_decision_tags_panel(form)
 
 
 def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
@@ -3662,31 +3853,75 @@ def render_tab_local_call_memo_enabled() -> bool:
     return False
 
 
+def render_case_clear_controls(scope: str, use_container_width: bool = False) -> None:
+    pending_key = f"clear_case_pending_{scope}"
+    done_key = f"clear_case_done_{scope}"
+    if not st.session_state.get(pending_key):
+        if st.button("🧹 この案件をクリア", key=f"clear_case_prepare_{scope}", type="secondary",
+                     use_container_width=use_container_width):
+            st.session_state[pending_key] = True
+            st.rerun()
+        return
+
+    st.warning("次の案件へ移る前に、必要な送信・記録が完了していることを確認してください。")
+    done = st.checkbox("送信・記録が完了しています", key=done_key)
+    col_run, col_cancel = st.columns(2)
+    with col_run:
+        if st.button("クリア実行", key=f"clear_case_execute_{scope}", type="primary",
+                     disabled=not done, use_container_width=True):
+            request_case_clear(st.session_state)
+            st.rerun()
+    with col_cancel:
+        if st.button("キャンセル", key=f"clear_case_cancel_{scope}", use_container_width=True):
+            st.session_state[pending_key] = False
+            if done_key in st.session_state:
+                del st.session_state[done_key]
+            st.rerun()
+
+
 def _set_manual_check(item_id: str, value: bool) -> None:
     manual = dict(st.session_state.get("call_check_manual", {}))
     manual[item_id] = bool(value)
     st.session_state["call_check_manual"] = manual
 
 
-def render_now_action_item(item: dict, form: dict) -> None:
+def manual_check_widget_key(item: dict, index: int = 0, prefix: str = "manual_check") -> str:
+    item_id = item.get("id") or "manual_item"
+    label = item.get("label") or item.get("input_label") or item_id
+    return f"{prefix}_{item_id}_{index}_{stable_hash_text(label)}"
+
+
+def render_now_action_item(item: dict, form: dict, index: int = 0) -> None:
     item_id = item["id"]
     st.markdown(f"**{item['label']}**")
     if item.get("source"):
         st.caption(f"根拠：{item['source']}")
     input_type = item.get("input")
     fields = item.get("fields") or ()
+    input_key = f"now_input_{item_id}_{index}_{stable_hash_text(item.get('label', ''))}"
     if input_type == "textarea" and fields:
         form[fields[0]] = st.text_area(
             item.get("input_label") or field_label(fields[0]),
             value=form.get(fields[0], ""),
             height=70,
-            key=f"now_input_{item_id}",
+            key=input_key,
         )
     elif input_type == "text" and fields:
         form[fields[0]] = st.text_input(
             item.get("input_label") or field_label(fields[0]),
             value=form.get(fields[0], ""),
-            key=f"now_input_{item_id}",
+            key=input_key,
+        )
+    elif input_type == "select_other_repair_requested" and fields:
+        current = (form.get(fields[0]) or "未確認").strip() or "未確認"
+        options = ["未確認", "なし", "あり"]
+        if current not in options:
+            current = "未確認"
+        form[fields[0]] = st.selectbox(
+            item.get("input_label") or field_label(fields[0]),
+            options,
+            index=options.index(current),
+            key=input_key,
         )
     elif input_type == "address_with_check":
         form["address"] = st.text_input(
@@ -3697,7 +3932,7 @@ def render_now_action_item(item: dict, form: dict) -> None:
         checked = st.checkbox(
             "訪問先住所確認済み",
             value=_manual_check_done(st.session_state.get("call_check_manual", {}), item_id),
-            key=f"manual_check_{item_id}",
+            key=manual_check_widget_key(item, index),
         )
         _set_manual_check(item_id, checked)
     elif input_type == "checkbox" and fields:
@@ -3711,7 +3946,7 @@ def render_now_action_item(item: dict, form: dict) -> None:
         checked = st.checkbox(
             "確認済み",
             value=_manual_check_done(st.session_state.get("call_check_manual", {}), item_id),
-            key=f"manual_check_{item_id}",
+            key=manual_check_widget_key(item, index),
         )
         _set_manual_check(item_id, checked)
     st.session_state.form = form
@@ -3823,12 +4058,7 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
-        st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
-        if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_call"):
-            if st.button("🧹 この案件をクリア", key="clear_case_call", type="secondary", use_container_width=True):
-                reset_case_session_state(st.session_state)
-                st.success("案件情報をクリアしました。")
-                st.rerun()
+        render_case_clear_controls("call")
 
         toggle_label = "📋 コピー情報取り込みを閉じる" if show_copy_import(st.session_state) else "📋 コピー情報取り込みを開く"
         if st.button(toggle_label, key="toggle_copy_import", use_container_width=True):
@@ -4079,13 +4309,6 @@ def render_tab_call():
             script_guidance.get("hearing_items", []),
         )
 
-        st.markdown("##### 📘 参照スクリプト")
-        st.markdown(f"**{script_reference['label']}**")
-        if script_reference["matched"]:
-            st.markdown(f"[{script_reference['link_text']}を開く]({script_reference['url']})")
-        else:
-            st.info("URL未登録（手動で参照）")
-
         hearing_items = script_guidance.get("hearing_items", [])
         if hearing_items:
             compact_hearing = " / ".join(hearing_items[:5])
@@ -4105,8 +4328,8 @@ def render_tab_call():
 
         st.markdown("### ✅ 今聞くこと")
         if now_action_plan["call_required"]:
-            for item in now_action_plan["call_required"]:
-                render_now_action_item(item, st.session_state.form)
+            for idx, item in enumerate(now_action_plan["call_required"]):
+                render_now_action_item(item, st.session_state.form, idx)
         else:
             st.success("通話中の必須確認はありません")
         if now_action_plan["completed"]:
@@ -4118,29 +4341,6 @@ def render_tab_call():
 
         summary_display = build_summary_card_display(decision)
         cost_status = summary_display["cost_status"]
-
-        def _ui_v3_escape(value) -> str:  # UI v3
-            return (str(value or "")  # UI v3
-                    .replace("&", "&amp;")  # UI v3
-                    .replace("<", "&lt;")  # UI v3
-                    .replace(">", "&gt;")  # UI v3
-                    .replace('"', "&quot;"))  # UI v3
-
-        def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str) -> str:  # UI v3
-            body = "".join(
-                f'<div style="display:flex;gap:8px;line-height:1.65;">'
-                f'<span style="min-width:5.5em;opacity:0.82;">{_ui_v3_escape(label)}</span>'
-                f'<span style="font-weight:600;">{value}</span>'
-                f'</div>'
-                for label, value in lines
-            )
-            return (
-                f'<div style="background:{bg_color};color:white;padding:14px 16px;'
-                f'border-radius:8px;font-size:0.95em;margin-bottom:8px;min-height:148px;">'
-                f'<div style="font-size:1.05em;font-weight:700;margin-bottom:8px;">{_ui_v3_escape(title)}</div>'
-                f'{body}'
-                f'</div>'
-            )
 
         repair_card_value = summary_display["repair"]["value"]  # UI v3
         repair_card_status = summary_display["repair"]["status"]  # UI v3
@@ -4169,15 +4369,6 @@ def render_tab_call():
         }.get(warranty_status, "要確認")
         vendor_card = build_vendor_candidate_card_info(vendor, vendor_result)
         request_folder = vendor_card["request_folder"]
-        st.markdown("### 🧭 判定要点")
-        vendor_short = "終話後エスカ" if vendor_card.get("needs_escalation") else (vendor_card.get("arrangement_method") or "手配へ")
-        st.info(
-            "\n".join([
-                f"受付可否：{warranty_card_value} / {acceptance_label}",
-                f"修理方針：{repair_card_value} / {cost_card_value}",
-                f"拠点対応：{vendor or '未確定'} / {vendor_short}",
-            ])
-        )
 
         # 詳細アラート
         missing_warranty_fields = []
@@ -4197,6 +4388,16 @@ def render_tab_call():
         if warranty_status == "expired":
             st.caption("参考値（受付不可）")
 
+        other_warning = build_other_repair_requested_warning(st.session_state.form)
+        if other_warning:
+            st.warning(
+                "\n".join([
+                    other_warning["title"],
+                    f"理由：{other_warning['reason']}",
+                    f"次アクション：{other_warning['next_action']}",
+                ])
+            )
+
         if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):  # UI v3
             esc = build_vendor_escalation_info(vendor, vendor_result)
             drive_line = ""
@@ -4210,16 +4411,17 @@ def render_tab_call():
                 (
                     '<div style="background:#fff3cd;border:1px solid #f1c40f;'
                     'border-radius:8px;padding:14px 16px;color:#3b2f00;line-height:1.7;">'
-                    f'<div style="font-weight:700;">⚠️ 拠点：{_ui_v3_escape(vendor)}（担当確認）</div>'
+                    f'<div style="font-weight:700;">{_ui_v3_escape(esc["title"])}</div>'
                     f'<div><strong>理由：</strong>{_ui_v3_escape(esc["reason"])}</div>'
-                    f'<div><strong>次アクション：</strong>{_ui_v3_escape("終話後に担当へエスカレーションして拠点確定")}</div>'
+                    f'<div><strong>次アクション：</strong>{_ui_v3_escape(esc["next_action"])}</div>'
                     f'{drive_line}'
                     '</div>'
                 ),
                 unsafe_allow_html=True,
             )  # UI v3
         else:  # UI v3
-            st.success(f"🏭 修理拠点: {vendor} ✅ 確定")  # UI v3
+            arrangement = vendor_card.get("arrangement_method") or "手配方法を確認"
+            st.success(f"✅ 拠点確定：{vendor}\n\n手配方法：{arrangement}")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
@@ -4357,12 +4559,7 @@ def render_tab_call():
 def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
-    st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
-    if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_after"):
-        if st.button("🧹 この案件をクリア", key="clear_case_after", type="secondary"):
-            reset_case_session_state(st.session_state)
-            st.success("案件情報をクリアしました。")
-            st.rerun()
+    render_case_clear_controls("after")
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
@@ -4528,29 +4725,7 @@ def render_tab_after_call():
         st.session_state.form = form
 
         # ── ラクテル用テキスト設定 ──
-        st.markdown("##### 📝 ラクテル用テキスト設定")
-        call_direction_options = ["受電", "架電"]
-        call_direction = st.selectbox(
-            "通話方向",
-            call_direction_options,
-            index=call_direction_options.index(form.get("call_direction", "受電"))
-            if form.get("call_direction", "受電") in call_direction_options else 0,
-            key="call_direction_select",
-        )
-        counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
-        default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
-        counterparty_type = st.selectbox(
-            "相手区分",
-            counterparty_options,
-            index=counterparty_options.index(default_counterparty)
-            if default_counterparty in counterparty_options else 0,
-            key="counterparty_type_select",
-        )
-        form["call_direction"] = call_direction
-        form["counterparty_type"] = counterparty_type
-        form["caller_type"] = counterparty_type
-        caller_type = counterparty_type
-        st.session_state.form = form
+        caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
 
         # ── 注意内容メモ（備考欄反映）──
         st.markdown("##### 📝 注意内容メモ")
@@ -4577,6 +4752,27 @@ def render_tab_after_call():
 
         # ── ラクテル用テキスト ──
         st.markdown("##### 📝 ラクテル用テキスト")
+        call_direction_options = ["受電", "架電"]
+        call_direction = st.selectbox(
+            "通話方向",
+            call_direction_options,
+            index=call_direction_options.index(form.get("call_direction", "受電"))
+            if form.get("call_direction", "受電") in call_direction_options else 0,
+            key="call_direction_select",
+        )
+        counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
+        default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
+        counterparty_type = st.selectbox(
+            "相手区分",
+            counterparty_options,
+            index=counterparty_options.index(default_counterparty)
+            if default_counterparty in counterparty_options else 0,
+            key="counterparty_type_select",
+        )
+        form["call_direction"] = call_direction
+        form["counterparty_type"] = counterparty_type
+        form["caller_type"] = counterparty_type
+        st.session_state.form = form
         rakutel_text_display = st.text_area(
             "ラクテル用テキスト",
             form.get("rakutel_text") or generated_texts["rakutel_text"],
@@ -4916,7 +5112,8 @@ def main():
     st.title("🔧 修理受付 支援ツール MVP")
     st.caption("通話中の判断補助ツール — 正式スクリプト本文は先方管理のExcelを参照してください")
     init_session()
-    render_common_case_memo(st.session_state.form, "case_memo_common", height=90)
+    process_pending_case_clear(st.session_state)
+    render_global_top_panels(st.session_state.form)
     tab1, tab2, tab3 = st.tabs(["📞 通話中判定", "📋 終話後処理", "⚙️ マスタ管理"])
     with tab1:
         render_tab_call()

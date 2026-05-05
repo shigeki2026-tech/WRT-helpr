@@ -329,6 +329,7 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
         "call_memo_common_call": "old call memo",
         "call_memo_common_after": "old call memo",
         "case_memo_common": "old call memo",
+        "case_memo_global": "old call memo",
         "call_check_manual": {"occurrence_time": True},
         "manual_check_occurrence_time": True,
         "teams_send_confirmed": True,
@@ -356,6 +357,7 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert "call_memo_common_call" not in state
     assert "call_memo_common_after" not in state
     assert "case_memo_common" not in state
+    assert state["case_memo_global"] == ""
     assert state["call_check_manual"] == {}
     assert "manual_check_occurrence_time" not in state
 
@@ -422,17 +424,140 @@ def test_copy_import_failure_paths_do_not_close_panel():
     assert "close_copy_import_panel" not in manual_fail_area
 
 
+def test_case_memo_global_sync_preserves_widget_state_on_rerun():
+    state = SessionState({"case_memo_global": "入力中メモ"})
+    form = {"call_memo": ""}
+
+    synced = app.sync_case_memo_global(form, state)
+
+    assert synced["call_memo"] == "入力中メモ"
+    assert state["form"]["call_memo"] == "入力中メモ"
+
+
+def test_case_memo_global_initializes_from_form_only_once():
+    state = SessionState({})
+    form = {"call_memo": "既存メモ"}
+
+    app.sync_case_memo_global(form, state)
+    state["case_memo_global"] = "編集後メモ"
+    app.sync_case_memo_global(form, state)
+
+    assert form["call_memo"] == "編集後メモ"
+
+
+def test_case_memo_header_is_short_and_without_description():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    memo_start = source.index("def render_common_case_memo")
+    memo_end = source.index("def render_common_call_memo", memo_start)
+    memo_source = source[memo_start:memo_end]
+
+    assert "##### 📝 案件メモ" in memo_source
+    assert "案件メモ（通話中・終話後共通）" not in source
+    assert "判定には使いません。通話中の一時メモ・終話後の転記メモ用です。" not in source
+    assert 'label_visibility="collapsed"' in memo_source
+
+
 def test_call_memo_tabs_use_same_form_field_source():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     main_index = source.index("def main():")
     tabs_index = source.index("st.tabs", main_index)
-    memo_index = source.index('render_common_case_memo(st.session_state.form, "case_memo_common"', main_index)
-    assert main_index < memo_index < tabs_index
-    assert 'form["call_memo"] = st.text_area' in source
+    top_panels_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
+    memo_render_index = source.index("def render_global_top_panels")
+    assert main_index < top_panels_index < tabs_index
+    assert 'render_common_case_memo(form, "case_memo_global"' in source[memo_render_index:tabs_index]
+    assert 'key="case_memo_global"' in source or '"case_memo_global"' in source
+    assert 'label_visibility="collapsed"' in source
     assert "render_tab_local_call_memo_enabled() -> bool" in source
     assert 'render_common_call_memo(form, "call_memo_common_call"' not in source
     assert 'render_common_call_memo(form, "call_memo_common_after"' not in source
+
+
+def test_case_clear_uses_pending_reset_before_case_memo_widget():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    controls_start = source.index("def render_case_clear_controls")
+    controls_end = source.index("def _set_manual_check", controls_start)
+    controls_source = source[controls_start:controls_end]
+    main_index = source.index("def main():")
+    pending_index = source.index("process_pending_case_clear(st.session_state)", main_index)
+    top_panels_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
+
+    assert "request_case_clear(st.session_state)" in controls_source
+    assert "reset_case_session_state(st.session_state)" not in controls_source
+    assert 'session_state["case_memo_global"]' not in controls_source
+    assert pending_index < top_panels_index
+
+
+def test_pending_case_clear_clears_memo_and_preserves_default_operator():
+    state = SessionState({
+        "_pending_case_clear": True,
+        "clear_case_pending_call": True,
+        "clear_case_done_call": True,
+        "form": {
+            "operator_name": "",
+            "call_memo": "old memo",
+            "teams_chat_message": "old teams",
+            "rakutel_text": "old rakutel",
+        },
+        "case_memo_global": "old memo",
+        "show_copy_import": False,
+    })
+
+    processed = app.process_pending_case_clear(state, {"default_operator_name": "大濱"})
+
+    assert processed is True
+    assert "_pending_case_clear" not in state
+    assert "clear_case_pending_call" not in state
+    assert "clear_case_done_call" not in state
+    assert state["form"]["operator_name"] == "大濱"
+    assert state["form"]["call_memo"] == ""
+    assert state["case_memo_global"] == ""
+    assert state["show_copy_import"] is True
+
+
+def test_manual_check_widget_keys_include_index_and_hash():
+    item = {"id": "manual_manual_item", "label": "同じ確認項目"}
+
+    key1 = app.manual_check_widget_key(item, 0)
+    key2 = app.manual_check_widget_key(item, 1)
+
+    assert key1 != key2
+    assert key1.startswith("manual_check_manual_manual_item_0_")
+    assert key2.startswith("manual_check_manual_manual_item_1_")
+
+
+def test_pending_case_clear_clears_manual_and_now_input_widget_state():
+    state = SessionState({
+        "_pending_case_clear": True,
+        "form": {"call_memo": "old memo", "operator_name": ""},
+        "case_memo_global": "old memo",
+        "call_check_manual": {"manual_manual_item": True},
+        "manual_check_manual_manual_item_0_abcd1234": True,
+        "now_input_manual_manual_item_0_abcd1234": "old input",
+    })
+
+    app.process_pending_case_clear(state, {"default_operator_name": ""})
+
+    assert state["call_check_manual"] == {}
+    assert not any(str(key).startswith("manual_check_") for key in state)
+    assert not any(str(key).startswith("now_input_") for key in state)
+
+
+def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    panels_start = source.index("def render_global_top_panels")
+    panels_end = source.index("def render_common_call_memo", panels_start)
+    panels_source = source[panels_start:panels_end]
+    main_index = source.index("def main():")
+    top_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
+    tabs_index = source.index("st.tabs", main_index)
+
+    assert "render_common_case_memo" in panels_source
+    assert "render_decision_tags_panel" in panels_source
+    assert top_index < tabs_index
 
 
 def test_regenerated_teams_message_reflects_late_operator_name():
@@ -540,6 +665,38 @@ def test_escalation_info_includes_reason_and_next_action():
     assert "CER" in info["next_action"]
 
 
+def test_generic_vendor_escalation_uses_meaningful_fallback_reason():
+    info = app.build_vendor_escalation_info(
+        "担当エスカ（要確認）",
+        {"reason": "", "needs_escalation": True},
+    )
+
+    assert info["title"] == "⚠️ 拠点未確定：担当確認が必要"
+    assert info["reason"] == "現在の条件では修理拠点を自動確定できません"
+    assert "担当エスカについて担当確認が必要" not in info["reason"]
+    assert info["next_action"] == "終話後に担当へ確認し、拠点を確定"
+
+
+def test_generic_vendor_escalation_does_not_repeat_vendor_as_reason():
+    info = app.build_vendor_escalation_info(
+        "担当エスカ（要確認）",
+        {"reason": "担当エスカ（要確認）", "needs_escalation": True},
+    )
+
+    assert info["reason"] == "現在の条件では修理拠点を自動確定できません"
+
+
+def test_cer_escalation_uses_cer_reason_and_action():
+    info = app.build_vendor_escalation_info(
+        "CER候補（担当確認）",
+        {"reason": "九州エリア", "needs_escalation": True},
+    )
+
+    assert info["title"] == "⚠️ 拠点候補：CER候補"
+    assert info["reason"] == "九州エリアのためCER候補。手配可否は担当確認が必要"
+    assert info["next_action"] == "終話後に担当へCER手配可否を確認"
+
+
 def test_cer_drive_link_info_is_available_on_vendor_card():
     card = app.build_vendor_candidate_card_info(
         "CER候補（担当確認）",
@@ -555,12 +712,13 @@ def test_cer_drive_link_info_is_available_on_vendor_card():
 def test_cer_escalation_block_source_groups_drive_link_with_action():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     block_index = source.index("drive_line =")
-    block_end = source.index("修理拠点: {vendor} ✅ 確定", block_index)
+    block_end = source.index("拠点確定：{vendor}", block_index)
     block_source = source[block_index:block_end]
 
-    assert "拠点：" in block_source
+    assert 'esc["title"]' in block_source
     assert "理由：" in block_source
     assert "次アクション：" in block_source
+    assert 'esc["next_action"]' in block_source
     assert "依頼書PDF格納先：" in block_source
     assert "Google Drive を開く" in block_source
 
@@ -687,3 +845,48 @@ def test_teams_send_log_includes_preview(monkeypatch):
     assert logs[0]["chat_name"] == "WRT報告用チャット"
     assert logs[0]["message_preview"] == "0123456789" * 10
     assert logs[0]["error_message"] == "送信失敗: denied"
+
+
+def test_no_standalone_script_reference_block():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "##### 📘 参照スクリプト" not in source
+
+
+def test_clear_button_not_full_width():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert 'render_case_clear_controls("call", use_container_width=True)' not in source
+
+
+def test_rakutel_settings_ui_inside_rakutel_section():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    rakutel_heading_index = source.index('##### 📝 ラクテル用テキスト")')
+    direction_index = source.index('"通話方向"', rakutel_heading_index)
+    counterparty_index = source.index('"相手区分"', rakutel_heading_index)
+    teams_heading_index = source.index("##### 💬 Teams 報告文", rakutel_heading_index)
+
+    assert rakutel_heading_index < direction_index < counterparty_index < teams_heading_index
+
+
+def test_rakutel_settings_no_separate_heading():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert 'st.markdown("##### 📝 ラクテル用テキスト設定")' not in source
+
+
+def test_rakutel_text_generation_uses_stored_counterparty_type():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "call_line": "家電保証対応業務（24時間）",
+        "extracted_time": "2026/05/05　13：05",
+        "counterparty_type": "販売店",
+        "call_direction": "受電",
+    })
+
+    text = app._build_rakutel_text(form, "販売店", "")
+
+    assert "販売店" in text
+    assert "MPG大濱" in text

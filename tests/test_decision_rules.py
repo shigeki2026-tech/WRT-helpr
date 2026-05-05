@@ -1770,6 +1770,63 @@ def test_manual_checked_item_moves_to_completed():
     assert "発生時期" in [item["label"] for item in plan["completed"]]
 
 
+def test_manual_fallback_item_ids_include_stable_hash():
+    item1 = app.build_check_item("補足確認", {}, None)
+    item2 = app.build_check_item("追加確認", {}, None)
+
+    assert item1["id"].startswith("manual_manual_item_")
+    assert item2["id"].startswith("manual_manual_item_")
+    assert item1["id"] != item2["id"]
+
+
+def test_other_repair_requested_unknown_stays_in_now_action():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    form["other_repair_requested"] = "未確認"
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+    )
+
+    assert "他窓口へ修理依頼済みか" in [item["label"] for item in plan["call_required"]]
+
+
+def test_other_repair_requested_none_moves_to_completed():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    form["other_repair_requested"] = "なし"
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+    )
+
+    assert "他窓口へ修理依頼済みか" not in [item["label"] for item in plan["call_required"]]
+    assert "他窓口へ修理依頼済みか" in [item["label"] for item in plan["completed"]]
+
+
+def test_other_repair_requested_yes_builds_warning():
+    form = make_form()
+    form["other_repair_requested"] = "あり"
+
+    warning = app.build_other_repair_requested_warning(form)
+
+    assert warning["title"] == "⚠️ 他窓口へ修理依頼済み"
+    assert warning["reason"] == "重複受付・重複手配の可能性があります"
+    assert "SV/担当" in warning["next_action"]
+
+
 def test_question_categories_put_escalation_after_call():
     form = make_form(
         product="エアコン",
@@ -1895,13 +1952,33 @@ def test_official_script_body_is_not_stored_in_guidance_master():
     assert all(len(str(row.get("notes", ""))) < 120 for _, row in df.iterrows())
 
 
-def test_script_reference_source_is_above_now_action_source():
+def test_script_reference_moved_into_decision_tags_panel():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    right_panel_index = source.index('st.subheader("⚡ 通話中判定結果")')
-    script_index = source.index('st.markdown("##### 📘 参照スクリプト")', right_panel_index)
-    now_index = source.index('st.markdown("### ✅ 今聞くこと")', right_panel_index)
 
-    assert script_index < now_index
+    assert 'st.markdown("##### 📘 参照スクリプト")' not in source
+
+    tags_panel_start = source.index("def render_decision_tags_panel")
+    tags_panel_end = source.index("\ndef render_global_top_panels", tags_panel_start)
+    tags_panel_source = source[tags_panel_start:tags_panel_end]
+
+    assert '"url"' in tags_panel_source or "link" in tags_panel_source
+
+
+def test_decision_tags_are_split_structured_items():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    tags = app.build_decision_tag_items(d, form)
+
+    assert [tag["title"] for tag in tags] == ["受付可否", "修理方針", "拠点対応", "スクリプト"]
+    assert all(" / " not in tag["title"] for tag in tags)
+    assert all(tag["primary"] for tag in tags)
+    assert all(tag["secondary"] for tag in tags)
 
 
 def test_aircon_sharp_does_not_leave_manufacturer_confirmation():
@@ -1969,6 +2046,74 @@ def test_call_memo_does_not_affect_run_decision():
     assert d1["cost_result"] == d2["cost_result"]
     assert d1["script_result"] == d2["script_result"]
     assert d1["diagnostics"] == d2["diagnostics"]
+
+
+def test_tc_script_tag_includes_url_and_link_text():
+    decision = {
+        "warranty_result": {"warranty_status": "active"},
+        "repair_type": "出張修理",
+        "vendor": "WRT修理センター",
+        "vendor_result": {"needs_escalation": False},
+        "script_result": {"sheet_name": "家電・出張修理", "part": "該当箇所", "script_type": "通常",
+                          "display_name": "家電出張修理", "price_guidance_allowed": True},
+        "cost_result": {"cost_status": "confirmed"},
+        "warranty_plan": "",
+    }
+    script_reference = app.build_script_reference_info(decision)
+    tags = app.build_decision_tag_items(decision, {}, script_reference)
+
+    script_tag = tags[3]
+    assert script_tag["title"] == "スクリプト"
+    assert "url" in script_tag
+    assert "link_text" in script_tag
+    assert "matched" in script_tag
+
+
+def test_tc_script_tag_matched_url_builds_open_link():
+    decision = {
+        "warranty_result": {"warranty_status": "active"},
+        "repair_type": "出張修理",
+        "vendor": "WRT修理センター",
+        "vendor_result": {"needs_escalation": False},
+        "script_result": {"sheet_name": "家電・出張修理", "part": "該当箇所", "script_type": "通常",
+                          "display_name": "家電出張修理", "price_guidance_allowed": True},
+        "cost_result": {"cost_status": "confirmed"},
+        "warranty_plan": "",
+    }
+    script_reference = app.build_script_reference_info(decision)
+    script_reference["matched"] = True
+    script_reference["url"] = "https://example.com/script"
+    script_reference["link_text"] = "家電出張修理"
+
+    from unittest.mock import patch
+    with patch("app.build_script_reference_info", return_value=script_reference):
+        tags = app.build_decision_tag_items(decision, {}, script_reference)
+
+    script_tag = tags[3]
+    assert script_tag["matched"] is True
+    assert script_tag["url"] == "https://example.com/script"
+    assert "該当箇所を開く" in script_tag["link_text"]
+
+
+def test_tc_script_tag_unmatched_shows_url_unregistered():
+    decision = {
+        "warranty_result": {"warranty_status": "active"},
+        "repair_type": "出張修理",
+        "vendor": "WRT修理センター",
+        "vendor_result": {"needs_escalation": False},
+        "script_result": {},
+        "cost_result": {"cost_status": "confirmed"},
+        "warranty_plan": "",
+    }
+    script_reference = app.build_script_reference_info(decision)
+    script_reference["matched"] = False
+    script_reference["url"] = ""
+
+    tags = app.build_decision_tag_items(decision, {}, script_reference)
+
+    script_tag = tags[3]
+    assert script_tag["matched"] is False
+    assert "URL未登録" in script_tag["link_text"]
 
 
 # ============================================================
@@ -2111,6 +2256,9 @@ _ALL_TESTS = [
     test_tc_dp_required_questions_include_amount_confirmation_once,
     test_tc_dp_summary_separates_cost_and_damage_amount,
     test_tc_dp_after_call_texts_include_dp_notes,
+    test_tc_script_tag_includes_url_and_link_text,
+    test_tc_script_tag_matched_url_builds_open_link,
+    test_tc_script_tag_unmatched_shows_url_unregistered,
 ]
 
 if __name__ == "__main__":
