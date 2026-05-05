@@ -462,7 +462,7 @@ def test_call_memo_tabs_use_same_form_field_source():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     main_index = source.index("def main():")
-    tabs_index = source.index("st.tabs", main_index)
+    tabs_index = source.index("st.tabs(", main_index)
     top_panels_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
     memo_render_index = source.index("def render_global_top_panels")
     assert main_index < top_panels_index < tabs_index
@@ -553,7 +553,7 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
     panels_source = source[panels_start:panels_end]
     main_index = source.index("def main():")
     top_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
-    tabs_index = source.index("st.tabs", main_index)
+    tabs_index = source.index("st.tabs(", main_index)
 
     assert "render_common_case_memo" in panels_source
     assert "render_decision_tags_panel" in panels_source
@@ -890,3 +890,56 @@ def test_rakutel_text_generation_uses_stored_counterparty_type():
 
     assert "販売店" in text
     assert "MPG大濱" in text
+
+
+# ── ナビゲーション構造テスト ──
+
+def test_nav_uses_tabs_not_radio():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    main_index = source.index("def main():")
+    main_source = source[main_index:]
+    assert "st.tabs(" in main_source
+    assert 'key="main_nav_tab"' not in main_source
+
+
+def test_nav_tabs_has_three_labels():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    main_index = source.index("def main():")
+    main_source = source[main_index:]
+    assert "📞 通話中判定" in main_source
+    assert "📋 終話後処理" in main_source
+    assert "⚙️ マスタ管理" in main_source
+
+
+def test_nav_no_pill_radio_css():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "border-radius: 20px" not in source
+    assert 'key="main_nav_tab"' not in source
+
+
+# ── 楽テルNO 移動テスト (Session 4) ──
+
+def test_rakuteru_no_input_in_teams_section():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    teams_heading_index = source.index("##### 💬 Teams 報告文")
+    # Search for the widget by its unique key, which only exists at the widget definition
+    rakuteru_no_index = source.index('key="rakuteru_no_input"', teams_heading_index)
+    teams_textarea_index = source.index('"Teams報告文"', teams_heading_index)
+
+    assert teams_heading_index < rakuteru_no_index < teams_textarea_index
+
+
+def test_rakuteru_no_not_in_template_col1():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    vendor_section_index = source.index("##### 🏭 修理拠点候補")
+    teams_heading_index = source.index("##### 💬 Teams 報告文")
+    # vendor section (col1) must come before Teams heading (col2)
+    assert vendor_section_index < teams_heading_index
+    # The widget must only appear after the Teams heading
+    rakuteru_widget_index = source.index('key="rakuteru_no_input"')
+    assert rakuteru_widget_index > teams_heading_index

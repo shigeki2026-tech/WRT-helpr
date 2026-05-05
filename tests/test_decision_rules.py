@@ -2116,6 +2116,86 @@ def test_tc_script_tag_unmatched_shows_url_unregistered():
     assert "URL未登録" in script_tag["link_text"]
 
 
+def _make_acceptance_tag(product="洗濯機", warranty_plan="A3_E2_一般家電延長保証【5年】",
+                          product_price="337,154円", warranty_status="active"):
+    form = app.empty_form()
+    form.update({"product": product, "warranty_plan": warranty_plan,
+                 "product_price": product_price})
+    decision = {
+        "warranty_result": {"warranty_status": warranty_status, "title": {
+            "active": "保証期間内", "expired": "保証期間終了",
+            "before_start": "保証開始日前", "unknown": "保証期間未確認",
+        }.get(warranty_status, "保証期間未確認")},
+        "repair_type": "",
+        "vendor": "",
+        "vendor_result": {},
+        "script_result": {},
+        "cost_result": {"cost_status": "confirmed"},
+        "working_form": form,
+    }
+    tags = app.build_decision_tag_items(decision, form)
+    return tags[0]
+
+
+def test_tc_acceptance_tag_primary_is_warranty_status():
+    tag = _make_acceptance_tag(warranty_status="active")
+    assert tag["primary"] == "保証期間内"
+
+
+def test_tc_acceptance_tag_primary_does_not_include_product():
+    tag = _make_acceptance_tag(product="洗濯機", warranty_status="active")
+    assert "洗濯機" not in tag["primary"]
+
+
+def test_tc_acceptance_tag_secondary_is_product():
+    tag = _make_acceptance_tag(product="洗濯機")
+    assert tag["secondary"] == "洗濯機"
+
+
+def test_tc_acceptance_tag_tertiary_is_warranty_plan():
+    tag = _make_acceptance_tag(warranty_plan="A3_E2_一般家電延長保証【5年】")
+    assert tag["tertiary"] == "A3_E2_一般家電延長保証【5年】"
+
+
+def test_tc_acceptance_tag_quaternary_shows_product_price():
+    tag = _make_acceptance_tag(product_price="337,154円")
+    assert "337,154円" in tag["quaternary"]
+    assert "商品価格" in tag["quaternary"]
+
+
+def test_tc_acceptance_tag_no_combined_product_status_line():
+    tag = _make_acceptance_tag(product="洗濯機", warranty_status="active")
+    combined = tag.get("primary", "") + tag.get("secondary", "") + tag.get("tertiary", "") + tag.get("quaternary", "")
+    assert "洗濯機　保証期間内" not in combined
+    assert "保証期間内　洗濯機" not in combined
+
+
+def test_tc_acceptance_tag_no_acceptance_label():
+    tag = _make_acceptance_tag(warranty_status="active")
+    combined = tag.get("primary", "") + tag.get("secondary", "") + tag.get("tertiary", "") + tag.get("quaternary", "")
+    assert "受付判定へ進む" not in combined
+
+
+def test_tc_acceptance_tag_empty_product_shows_unselected():
+    tag = _make_acceptance_tag(product="")
+    assert tag["secondary"] == "未選択"
+
+
+def test_tc_acceptance_tag_empty_warranty_plan_shows_placeholder():
+    tag = _make_acceptance_tag(warranty_plan="")
+    assert tag["tertiary"] == "保証プラン未入力"
+
+
+def test_tc_acceptance_tag_empty_price_shows_placeholder():
+    tag = _make_acceptance_tag(product_price="")
+    assert tag["quaternary"] == "商品価格　未入力"
+
+
+def test_tc_acceptance_tag_compact_flag_is_set():
+    tag = _make_acceptance_tag()
+    assert tag.get("compact") is True
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -2259,6 +2339,17 @@ _ALL_TESTS = [
     test_tc_script_tag_includes_url_and_link_text,
     test_tc_script_tag_matched_url_builds_open_link,
     test_tc_script_tag_unmatched_shows_url_unregistered,
+    test_tc_acceptance_tag_primary_is_warranty_status,
+    test_tc_acceptance_tag_primary_does_not_include_product,
+    test_tc_acceptance_tag_secondary_is_product,
+    test_tc_acceptance_tag_tertiary_is_warranty_plan,
+    test_tc_acceptance_tag_quaternary_shows_product_price,
+    test_tc_acceptance_tag_no_combined_product_status_line,
+    test_tc_acceptance_tag_no_acceptance_label,
+    test_tc_acceptance_tag_empty_product_shows_unselected,
+    test_tc_acceptance_tag_empty_warranty_plan_shows_placeholder,
+    test_tc_acceptance_tag_empty_price_shows_placeholder,
+    test_tc_acceptance_tag_compact_flag_is_set,
 ]
 
 if __name__ == "__main__":

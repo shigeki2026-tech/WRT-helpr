@@ -3052,24 +3052,27 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
     summary = build_summary_card_display(decision)
     warranty_result = decision.get("warranty_result", {})
     warranty_status = warranty_result.get("warranty_status", "unknown")
-    acceptance_label = {
-        "active": "受付判定へ進む",
-        "before_start": "受付不可",
-        "expired": "受付不可",
-        "unknown": "要確認",
-    }.get(warranty_status, "要確認")
     vendor = decision.get("vendor", "")
     vendor_card = build_vendor_candidate_card_info(vendor, decision.get("vendor_result", {}))
     vendor_status = "終話後エスカ" if vendor_card.get("needs_escalation") else "確定"
     if not vendor:
         vendor_status = "要確認"
     script_reference = script_reference or build_script_reference_info(decision)
+
+    product_display = (decision.get("normalized_product") or form.get("product") or "").strip() or "未選択"
+    warranty_status_label = summary["warranty"]["value"]
+    warranty_plan = (form.get("warranty_plan") or "").strip()
+    product_price = (form.get("product_price") or "").strip()
+
     return [
         {
             "title": "受付可否",
-            "primary": summary["warranty"]["value"],
-            "secondary": acceptance_label,
+            "primary": warranty_status_label,
+            "secondary": product_display,
+            "tertiary": warranty_plan or "保証プラン未入力",
+            "quaternary": f"商品価格　{product_price}" if product_price else "商品価格　未入力",
             "color": summary["warranty"]["color"],
+            "compact": True,
         },
         {
             "title": "修理方針",
@@ -3751,10 +3754,23 @@ def _ui_v3_escape(value) -> str:
 
 
 def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
-                 min_height: int = 112, link: dict | None = None) -> str:
+                 min_height: int = 112, link: dict | None = None,
+                 compact: bool = False) -> str:
     body_parts = []
     for i, (label, value) in enumerate(lines):
-        if i == 0:
+        if compact and i == 0:
+            body_parts.append(
+                f'<div style="font-size:0.98em;font-weight:700;line-height:1.45;'
+                f'margin-bottom:4px;word-break:break-all;">'
+                f'{_ui_v3_escape(value)}</div>'
+            )
+        elif compact:
+            body_parts.append(
+                f'<div style="font-size:0.86em;opacity:0.9;line-height:1.5;'
+                f'margin-bottom:2px;word-break:break-all;">'
+                f'{_ui_v3_escape(value)}</div>'
+            )
+        elif i == 0:
             body_parts.append(
                 f'<div style="font-size:1.18em;font-weight:800;line-height:1.35;margin-bottom:3px;">'
                 f'{_ui_v3_escape(value)}</div>'
@@ -3828,11 +3844,15 @@ def render_decision_tags_panel(form: dict) -> None:
                     link = {"url": tag["url"], "text": tag["link_text"]}
                 else:
                     link = {"url": "", "text": tag.get("link_text", "URL未登録（手動で参照）")}
+            lines = [("", tag["primary"]), ("", tag["secondary"])]
+            if tag.get("tertiary"):
+                lines.append(("", tag["tertiary"]))
+            if tag.get("quaternary"):
+                lines.append(("", tag["quaternary"]))
             st.markdown(
-                _ui_v3_block(tag["title"], [
-                    ("", tag["primary"]),
-                    ("", tag["secondary"]),
-                ], tag["color"], min_height=104, link=link),
+                _ui_v3_block(tag["title"], lines, tag["color"],
+                             min_height=104, link=link,
+                             compact=tag.get("compact", False)),
                 unsafe_allow_html=True,
             )
 
@@ -4662,17 +4682,6 @@ def render_tab_after_call():
 
         st.divider()
 
-        rakuteru_val = st.text_input(
-            "楽テルNO",
-            value=form.get("rakuteru_no", ""),
-            key="rakuteru_no_input",
-            placeholder="楽テル登録後に入力",
-        )
-        form["rakuteru_no"] = rakuteru_val
-        st.session_state.form = form
-
-        st.divider()
-
         st.markdown("##### 🏭 修理拠点候補")
         vr = decision["vendor_result"]
         vendor_card = build_vendor_candidate_card_info(vendor, vr)
@@ -4783,6 +4792,14 @@ def render_tab_after_call():
 
         # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
+        rakuteru_val = st.text_input(
+            "楽テルNO",
+            value=form.get("rakuteru_no", ""),
+            key="rakuteru_no_input",
+            placeholder="楽テル登録後に入力",
+        )
+        form["rakuteru_no"] = rakuteru_val
+        st.session_state.form = form
         request_folder = get_request_pdf_folder_info(vendor)
         teams_chat_message = st.text_area(
             "Teams報告文",
@@ -5114,12 +5131,33 @@ def main():
     init_session()
     process_pending_case_clear(st.session_state)
     render_global_top_panels(st.session_state.form)
-    tab1, tab2, tab3 = st.tabs(["📞 通話中判定", "📋 終話後処理", "⚙️ マスタ管理"])
-    with tab1:
+    st.markdown("""
+<style>
+div[data-testid="stTabs"] button[role="tab"] {
+    font-weight: 600;
+    font-size: 0.95em;
+}
+div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    background: rgba(31, 119, 180, 0.07);
+    border-bottom: 3px solid #1f77b4;
+    color: #1f77b4;
+}
+div[data-testid="stTabs"] button[role="tab"][aria-selected="false"] {
+    font-weight: 400;
+    opacity: 0.72;
+}
+</style>
+""", unsafe_allow_html=True)
+    tab_call, tab_after, tab_master = st.tabs([
+        "📞 通話中判定",
+        "📋 終話後処理",
+        "⚙️ マスタ管理",
+    ])
+    with tab_call:
         render_tab_call()
-    with tab2:
+    with tab_after:
         render_tab_after_call()
-    with tab3:
+    with tab_master:
         render_tab_master()
 
 
