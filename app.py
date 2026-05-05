@@ -7,6 +7,7 @@ import csv  # CSV読み込み改善
 import json
 import subprocess
 import tempfile
+import shutil
 import streamlit as st
 from datetime import date, datetime
 import pandas as pd
@@ -375,6 +376,253 @@ def load_store_rules() -> pd.DataFrame:
 
 def load_call_lines() -> pd.DataFrame:
     return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
+
+
+MASTER_APPEND_TARGETS = {
+    "master_product_alias.csv": _ALIAS_COLS,
+    "master_repair_type_rules.csv": _REPAIR_TYPE_COLS,
+    "master_store_rules.csv": _STORE_RULE_COLS,
+}
+MASTER_CANDIDATE_SOURCE_FIELDS = [
+    "product_original", "product", "series",
+    "manufacturer", "manufacturer_original", "store_name",
+]
+MASTER_CANDIDATE_BLOCKED_FIELDS = {
+    "customer_name", "phone_number", "contact_phone", "address",
+    "wrt_no", "customer_code", "operator_name", "rakuteru_no",
+}
+
+
+def _master_data_dir(data_dir: str | None = None) -> str:
+    return os.path.abspath(data_dir or os.path.join(APP_DIR, "data"))
+
+
+def _safe_master_csv_path(filename: str, data_dir: str | None = None) -> str:
+    if filename not in MASTER_APPEND_TARGETS:
+        raise ValueError(f"Unsupported master CSV: {filename}")
+    base_dir = _master_data_dir(data_dir)
+    path = os.path.abspath(os.path.join(base_dir, filename))
+    if os.path.dirname(path) != base_dir or not path.endswith(".csv"):
+        raise ValueError("Master CSV writes are limited to data/*.csv")
+    return path
+
+
+def _master_backup_path(filename: str, data_dir: str | None = None) -> str:
+    base_dir = _master_data_dir(data_dir)
+    backup_dir = os.path.abspath(os.path.join(base_dir, "_backup"))
+    if os.path.dirname(backup_dir) != base_dir:
+        raise ValueError("Backup writes are limited to data/_backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    stem = os.path.splitext(filename)[0]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return os.path.join(backup_dir, f"{stem}_{timestamp}.csv")
+
+
+def _read_master_csv_rows(filename: str, columns: list[str], data_dir: str | None = None) -> tuple[list[str], list[dict]]:
+    path = _safe_master_csv_path(filename, data_dir)
+    if not os.path.exists(path):
+        return columns, []
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            with open(path, "r", encoding=encoding, errors="replace", newline="") as f:
+                reader = csv.DictReader(f)
+                header = reader.fieldnames or columns
+                return header, [dict(row) for row in reader]
+        except Exception:
+            continue
+    return columns, []
+
+
+def _clear_streamlit_cache() -> None:
+    clear = getattr(getattr(st, "cache_data", None), "clear", None)
+    if callable(clear):
+        clear()
+
+
+def _normalize_duplicate_value(value) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _append_master_csv_row(
+    filename: str,
+    row: dict,
+    *,
+    required_cols: list[str],
+    duplicate_cols: list[str],
+    data_dir: str | None = None,
+) -> dict:
+    columns = MASTER_APPEND_TARGETS[filename]
+    clean_row = {col: str(row.get(col, "") or "").strip() for col in columns}
+    clean_row["priority"] = clean_row.get("priority") or "10"
+    clean_row["enabled"] = clean_row.get("enabled") or "1"
+
+    missing = [col for col in required_cols if not clean_row.get(col)]
+    if missing:
+        return {"ok": False, "reason": "missing_required", "missing": missing, "row": clean_row}
+
+    header, rows = _read_master_csv_rows(filename, columns, data_dir)
+    duplicate_key = tuple(_normalize_duplicate_value(clean_row.get(col)) for col in duplicate_cols)
+    for existing in rows:
+        existing_key = tuple(_normalize_duplicate_value(existing.get(col)) for col in duplicate_cols)
+        if existing_key == duplicate_key:
+            return {
+                "ok": False,
+                "reason": "duplicate",
+                "duplicate_cols": duplicate_cols,
+                "row": clean_row,
+            }
+
+    path = _safe_master_csv_path(filename, data_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup_path = _master_backup_path(filename, data_dir)
+    if os.path.exists(path):
+        shutil.copy2(path, backup_path)
+    else:
+        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerow(columns)
+
+    output_columns = [col for col in header if col] or columns
+    for col in columns:
+        if col not in output_columns:
+            output_columns.append(col)
+    rows.append(clean_row)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _clear_streamlit_cache()
+    return {"ok": True, "reason": "appended", "row": clean_row, "backup_path": backup_path, "path": path}
+
+
+def append_master_product_alias(row: dict, data_dir: str | None = None) -> dict:
+    return _append_master_csv_row(
+        "master_product_alias.csv",
+        row,
+        required_cols=["keyword", "normalized_product"],
+        duplicate_cols=["keyword"],
+        data_dir=data_dir,
+    )
+
+
+def append_master_repair_type_rule(row: dict, data_dir: str | None = None) -> dict:
+    return _append_master_csv_row(
+        "master_repair_type_rules.csv",
+        row,
+        required_cols=["product_keyword", "repair_type"],
+        duplicate_cols=["product_keyword", "manufacturer_keyword", "model_keyword", "condition_keyword"],
+        data_dir=data_dir,
+    )
+
+
+def append_master_store_rule(row: dict, data_dir: str | None = None) -> dict:
+    return _append_master_csv_row(
+        "master_store_rules.csv",
+        row,
+        required_cols=["store_keyword"],
+        duplicate_cols=["store_keyword"],
+        data_dir=data_dir,
+    )
+
+
+def master_csv_has_duplicate(filename: str, row: dict, duplicate_cols: list[str], data_dir: str | None = None) -> bool:
+    columns = MASTER_APPEND_TARGETS[filename]
+    _, rows = _read_master_csv_rows(filename, columns, data_dir)
+    key = tuple(_normalize_duplicate_value(row.get(col)) for col in duplicate_cols)
+    return any(tuple(_normalize_duplicate_value(existing.get(col)) for col in duplicate_cols) == key for existing in rows)
+
+
+def _short_store_keyword(store_name: str) -> str:
+    value = re.sub(r"\s+", " ", (store_name or "").strip())
+    for suffix in ["株式会社", "有限会社", "合同会社", "(株)", "（株）", "㈱", " Inc.", " Co., Ltd."]:
+        value = value.replace(suffix, " ")
+    value = re.sub(r"\s+", " ", value).strip(" 　・,，")
+    return value.split()[0] if value else ""
+
+
+def _suggest_product_master_values(keyword: str, current_product: str = "") -> dict:
+    text = (keyword or "").strip()
+    normalized = (current_product or "").strip()
+    if normalized == PRODUCT_OTHER:
+        normalized = ""
+    product_group = ""
+    repair_type = ""
+    notes = "抽出結果から作成した候補"
+
+    kitchen_keywords = ["電気調理器", "調理圧力鍋", "電気圧力鍋", "圧力鍋", "炊飯器", "トースター"]
+    if any(word in text for word in kitchen_keywords):
+        normalized = "電気調理器" if any(word in text for word in ["電気調理器", "調理圧力鍋", "電気圧力鍋", "圧力鍋"]) else normalized
+        product_group = "キッチン家電"
+        repair_type = "持込修理"
+        notes = "抽出結果から作成した候補（持込修理候補）"
+
+    return {
+        "keyword": text,
+        "normalized_product": normalized,
+        "product_group": product_group,
+        "repair_type": repair_type,
+        "notes": notes,
+    }
+
+
+def build_master_registration_candidate(form: dict, decision: dict | None = None) -> dict:
+    safe_values = {
+        field: str(form.get(field, "") or "").strip()
+        for field in MASTER_CANDIDATE_SOURCE_FIELDS
+        if field not in MASTER_CANDIDATE_BLOCKED_FIELDS
+    }
+    product_keyword = (
+        safe_values.get("product_original")
+        or safe_values.get("series")
+        or safe_values.get("product")
+        or ""
+    ).strip()
+    product_values = _suggest_product_master_values(product_keyword, safe_values.get("product", ""))
+    manufacturer = safe_values.get("manufacturer") or safe_values.get("manufacturer_original") or ""
+    store_keyword = _short_store_keyword(safe_values.get("store_name", ""))
+
+    return {
+        "source_fields": safe_values,
+        "product_alias": {
+            "priority": "10",
+            "enabled": "1",
+            "keyword": product_values["keyword"],
+            "normalized_product": product_values["normalized_product"],
+            "product_group": product_values["product_group"],
+            "notes": product_values["notes"],
+        },
+        "repair_type_rule": {
+            "priority": "10",
+            "enabled": "1",
+            "product_keyword": product_values["normalized_product"] or product_values["keyword"],
+            "manufacturer_keyword": manufacturer,
+            "model_keyword": "",
+            "condition_keyword": "",
+            "repair_type": product_values["repair_type"],
+            "needs_confirmation": "0" if product_values["repair_type"] else "1",
+            "notes": product_values["notes"],
+        },
+        "store_rule": {
+            "priority": "10",
+            "enabled": "1",
+            "store_keyword": store_keyword,
+            "normalized_store": store_keyword,
+            "template_code": "",
+            "template_label": "",
+            "template_group": "",
+            "notes": "抽出結果から作成した候補" if store_keyword else "",
+        },
+    }
+
+
+def should_offer_master_registration_candidate(form: dict, decision: dict) -> bool:
+    alias_result = decision.get("alias_result", {})
+    repair_type = (decision.get("repair_type") or "").strip()
+    product = (decision.get("normalized_product") or form.get("product") or "").strip()
+    has_product_source = any((form.get(field) or "").strip() for field in ["product_original", "series", "product"])
+    unknown_product = product in ("", PRODUCT_OTHER) or not alias_result.get("matched")
+    needs_repair_master = repair_type in ("", "要確認") or not decision.get("repair_result", {}).get("matched")
+    return has_product_source and (unknown_product or needs_repair_master)
 
 
 def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str, warranty_plan: str) -> str:
@@ -2730,6 +2978,8 @@ def init_session():
         st.session_state.pasted_text = ""
     if "teams_send_log" not in st.session_state:
         st.session_state.teams_send_log = []
+    if "master_registration_candidate" not in st.session_state:
+        st.session_state.master_registration_candidate = {}
 
 
 # ============================================================
@@ -3165,6 +3415,22 @@ def render_tab_call():
                 for idx, step in enumerate(after_call_steps, 1):
                     st.markdown(f"**{idx}.** {step}")
 
+        if should_offer_master_registration_candidate(st.session_state.form, decision):
+            with st.expander("マスタ登録候補", expanded=False):
+                candidate = build_master_registration_candidate(st.session_state.form, decision)
+                st.caption("抽出結果から候補を作成します。自動保存はしません。マスタ管理タブで確認して追加してください。")
+                st.dataframe(
+                    pd.DataFrame([
+                        candidate["product_alias"],
+                        candidate["repair_type_rule"],
+                        candidate["store_rule"],
+                    ]),
+                    use_container_width=True,
+                )
+                if st.button("この内容をマスタ管理タブへ引き継ぐ", key="send_master_candidate", type="primary"):
+                    st.session_state["master_registration_candidate"] = candidate
+                    st.success("マスタ管理タブへ候補を渡しました。内容を確認して追加してください。")
+
         # ─── 判定デバッグ情報 ───
         with st.expander("🔍 判定デバッグ情報（4層）", expanded=False):  # UI v3
             # Layer 1
@@ -3448,6 +3714,112 @@ def render_tab_after_call():
 # ============================================================
 # タブ3: マスタ管理
 # ============================================================
+def _candidate_field(section: str, field: str, default: str = "") -> str:
+    candidate = st.session_state.get("master_registration_candidate") or {}
+    return str((candidate.get(section) or {}).get(field, default) or "")
+
+
+def _preview_master_row(row: dict, columns: list[str]) -> None:
+    st.caption("保存前プレビュー")
+    st.dataframe(pd.DataFrame([{col: row.get(col, "") for col in columns}]), use_container_width=True)
+
+
+def _show_master_append_result(result: dict) -> None:
+    if result.get("ok"):
+        st.success(f"CSVへ1行追加しました。バックアップ: {os.path.basename(result.get('backup_path', ''))}")
+    elif result.get("reason") == "duplicate":
+        st.warning("同じキーの行が既にあるため追加しませんでした。既存行を確認してください。")
+    elif result.get("reason") == "missing_required":
+        st.error("必須項目が未入力です: " + ", ".join(result.get("missing", [])))
+    else:
+        st.error("CSVへの追加に失敗しました。入力内容を確認してください。")
+
+
+def _render_product_alias_append_ui() -> None:
+    st.markdown("##### 製品エイリアス追加")
+    row = {
+        "priority": "10",
+        "enabled": "1",
+        "keyword": st.text_input("キーワード keyword", value=_candidate_field("product_alias", "keyword"), key="master_alias_keyword"),
+        "normalized_product": st.text_input("正規化後の製品名 normalized_product", value=_candidate_field("product_alias", "normalized_product"), key="master_alias_normalized_product"),
+        "product_group": st.text_input("製品グループ product_group", value=_candidate_field("product_alias", "product_group"), key="master_alias_product_group"),
+        "notes": st.text_input("備考 notes", value=_candidate_field("product_alias", "notes"), key="master_alias_notes"),
+    }
+    _preview_master_row(row, _ALIAS_COLS)
+    duplicate = bool(row["keyword"]) and master_csv_has_duplicate("master_product_alias.csv", row, ["keyword"])
+    if duplicate:
+        st.warning("同一 keyword が既にあります。原則追加しません。")
+    disabled = not row["keyword"].strip() or not row["normalized_product"].strip() or duplicate
+    if st.button("製品エイリアスを追加", key="master_alias_add", type="primary", disabled=disabled):
+        _show_master_append_result(append_master_product_alias(row))
+        st.rerun()
+
+
+def _render_repair_type_append_ui() -> None:
+    st.markdown("##### 修理形態ルール追加")
+    repair_default = _candidate_field("repair_type_rule", "repair_type")
+    repair_options = ["", "出張修理", "持込修理", "要確認"]
+    repair_index = repair_options.index(repair_default) if repair_default in repair_options else 0
+    needs_default = _candidate_field("repair_type_rule", "needs_confirmation", "1")
+    row = {
+        "priority": "10",
+        "enabled": "1",
+        "product_keyword": st.text_input("製品キーワード product_keyword", value=_candidate_field("repair_type_rule", "product_keyword"), key="master_repair_product_keyword"),
+        "manufacturer_keyword": st.text_input("メーカーキーワード manufacturer_keyword", value=_candidate_field("repair_type_rule", "manufacturer_keyword"), key="master_repair_manufacturer_keyword"),
+        "model_keyword": st.text_input("型番キーワード model_keyword", value=_candidate_field("repair_type_rule", "model_keyword"), key="master_repair_model_keyword"),
+        "condition_keyword": st.text_input("条件キーワード condition_keyword", value=_candidate_field("repair_type_rule", "condition_keyword"), key="master_repair_condition_keyword"),
+        "repair_type": st.selectbox("修理形態 repair_type", repair_options, index=repair_index, key="master_repair_type"),
+        "needs_confirmation": st.radio("確認要否 needs_confirmation", ["0", "1"], index=0 if needs_default == "0" else 1, horizontal=True, key="master_repair_needs_confirmation"),
+        "notes": st.text_input("備考 notes", value=_candidate_field("repair_type_rule", "notes"), key="master_repair_notes"),
+    }
+    _preview_master_row(row, _REPAIR_TYPE_COLS)
+    duplicate_cols = ["product_keyword", "manufacturer_keyword", "model_keyword", "condition_keyword"]
+    duplicate = bool(row["product_keyword"]) and master_csv_has_duplicate("master_repair_type_rules.csv", row, duplicate_cols)
+    if duplicate:
+        st.warning("同一 product_keyword + manufacturer_keyword + model_keyword + condition_keyword が既にあります。")
+    disabled = not row["product_keyword"].strip() or not row["repair_type"].strip() or duplicate
+    if st.button("修理形態ルールを追加", key="master_repair_add", type="primary", disabled=disabled):
+        _show_master_append_result(append_master_repair_type_rule(row))
+        st.rerun()
+
+
+def _render_store_rule_append_ui() -> None:
+    st.markdown("##### 販売店テンプレートルール追加")
+    row = {
+        "priority": "10",
+        "enabled": "1",
+        "store_keyword": st.text_input("販売店キーワード store_keyword", value=_candidate_field("store_rule", "store_keyword"), key="master_store_keyword"),
+        "normalized_store": st.text_input("正規化販売店名 normalized_store", value=_candidate_field("store_rule", "normalized_store"), key="master_store_normalized_store"),
+        "template_code": st.text_input("テンプレートコード template_code", value=_candidate_field("store_rule", "template_code"), key="master_store_template_code"),
+        "template_label": st.text_input("テンプレートラベル template_label", value=_candidate_field("store_rule", "template_label"), key="master_store_template_label"),
+        "template_group": st.text_input("テンプレートグループ template_group", value=_candidate_field("store_rule", "template_group"), key="master_store_template_group"),
+        "notes": st.text_input("備考 notes", value=_candidate_field("store_rule", "notes"), key="master_store_notes"),
+    }
+    _preview_master_row(row, _STORE_RULE_COLS)
+    duplicate = bool(row["store_keyword"]) and master_csv_has_duplicate("master_store_rules.csv", row, ["store_keyword"])
+    if duplicate:
+        st.warning("同一 store_keyword が既にあります。原則追加しません。")
+    disabled = not row["store_keyword"].strip() or duplicate
+    if st.button("販売店テンプレートルールを追加", key="master_store_add", type="primary", disabled=disabled):
+        _show_master_append_result(append_master_store_rule(row))
+        st.rerun()
+
+
+def _render_master_candidate_box() -> None:
+    candidate = st.session_state.get("master_registration_candidate") or {}
+    if not candidate:
+        st.info("通話中判定で未登録・要確認の候補を作成すると、ここに入力候補が表示されます。")
+        return
+    st.success("抽出結果から作成したマスタ登録候補を入力欄に反映しています。内容を確認してから追加してください。")
+    safe_fields = candidate.get("source_fields") or {}
+    if safe_fields:
+        st.caption("候補に使った項目（個人情報フィールドは含めません）")
+        st.dataframe(pd.DataFrame([safe_fields]), use_container_width=True)
+    if st.button("候補をクリア", key="clear_master_candidate"):
+        st.session_state["master_registration_candidate"] = {}
+        st.rerun()
+
+
 def render_tab_master():
     st.subheader("⚙️ マスタ管理")
     st.info(
@@ -3459,6 +3831,8 @@ def render_tab_master():
         st.success("CSVキャッシュをクリアしました。")
         st.rerun()
 
+    _render_master_candidate_box()
+
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
         "修理拠点ルール", "テンプレートコード", "販売店テンプレート", "回線名マスタ",
@@ -3467,6 +3841,8 @@ def render_tab_master():
 
     with master_tabs[0]:
         st.markdown("##### 📄 master_product_alias.csv")
+        with st.expander("CSVへ製品エイリアスを追加", expanded=bool(_candidate_field("product_alias", "keyword"))):
+            _render_product_alias_append_ui()
         df = load_alias_csv()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_product_alias.csv")
@@ -3477,6 +3853,8 @@ def render_tab_master():
 
     with master_tabs[1]:
         st.markdown("##### 📄 master_repair_type_rules.csv")
+        with st.expander("CSVへ修理形態ルールを追加", expanded=bool(_candidate_field("repair_type_rule", "product_keyword"))):
+            _render_repair_type_append_ui()
         df = load_repair_type_rules()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_repair_type_rules.csv")
@@ -3521,6 +3899,8 @@ def render_tab_master():
 
     with master_tabs[5]:
         st.markdown("##### 📄 master_store_rules.csv")
+        with st.expander("CSVへ販売店テンプレートルールを追加", expanded=bool(_candidate_field("store_rule", "store_keyword"))):
+            _render_store_rule_append_ui()
         df = load_store_rules()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_store_rules.csv")
