@@ -38,6 +38,7 @@ def make_form(
     prefecture="", call_line="", appliance_type="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
     is_over_10years=False, manufacturer_original="", pc_manufacturer_type="",
+    warranty_plan="",
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -56,6 +57,7 @@ def make_form(
         is_over_10years=is_over_10years,
         manufacturer_original=manufacturer_original,
         pc_manufacturer_type=pc_manufacturer_type,
+        warranty_plan=warranty_plan,
     )
     return form
 
@@ -1530,6 +1532,79 @@ def test_tc_is_under_10years_rentals_tokyo():
     assert d["vendor"] == "ユナイトサービス㈱"
 
 
+def test_tc_dp_plan_detection_helper():
+    check("DP helper 物損付", app.is_double_protect_plan("一般家電延長保証（物損付）【5年】"), True)
+    check("DP helper DP5", app.is_double_protect_plan("一般家電延長保証（物損付）【5年】DP5"), True)
+    check("DP helper normal", app.is_double_protect_plan("一般家電延長保証【5年】"), False)
+
+
+def test_tc_dp_carry_in_script_display_uses_double_protect():
+    d = app.run_decision(make_form(
+        series="ドライヤー・ヘアアイロン",
+        manufacturer="パナソニック",
+        model_number="EH-NA0J-W",
+        appliance_type="家電",
+        warranty_plan="一般家電延長保証（物損付）【5年】DP5",
+    ))
+    script = d["script_result"]
+    summary = app.build_summary_card_display(d)
+
+    check("DP carry-in repair_type", d["repair_type"], "持込修理")
+    check("DP carry-in script_type", script["script_type"], "ダブルプロテクト")
+    check("DP carry-in display", script["display_name"], "ダブルプロテクト / 持込修理")
+    check("DP carry-in card display", "ダブルプロテクト" in summary["script_display"], True)
+
+
+def test_tc_dp_required_questions_include_amount_confirmation_once():
+    form = make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        model_number="EH-NA0J-W",
+        warranty_plan="DP5",
+    )
+    qs = app.build_required_questions(form, "持込修理", False)
+
+    check("DP amount question exists", app.DOUBLE_PROTECT_AMOUNT_CONFIRMATION in qs, True)
+    check("DP amount question once", qs.count(app.DOUBLE_PROTECT_AMOUNT_CONFIRMATION), 1)
+
+
+def test_tc_dp_summary_separates_cost_and_damage_amount():
+    d = app.run_decision(make_form(
+        series="ドライヤー・ヘアアイロン",
+        manufacturer="パナソニック",
+        model_number="EH-NA0J-W",
+        appliance_type="家電",
+        warranty_plan="DP5",
+    ))
+    summary = app.build_summary_card_display(d)
+
+    check("DP summary cost card keeps estimate", summary["cost"]["value"], d["cost_estimate"])
+    check("DP summary amount status separate", summary["warranty"]["amount_status"], "システム確認")
+    check("DP summary warranty mentions amount", "物損保証金額" in summary["warranty"]["status"], True)
+
+
+def test_tc_dp_after_call_texts_include_dp_notes():
+    form = make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        model_number="EH-NA0J-W",
+        warranty_plan="DP5",
+    )
+    form.update(rakuteru_no="RT-1", call_line="家電保証対応業務（24時間）")
+    texts = app._build_after_call_texts(
+        form,
+        app.determine_warranty_status(form),
+        "持込修理",
+        "WRT修理センター",
+        "加入者",
+        "",
+    )
+
+    check("DP attention memo note", "物損付 / DP案件" in texts["attention_memo"], True)
+    check("DP rakutel note", "物損時の保証金額はシステムにて確認要" in texts["rakutel_text"], True)
+    check("DP teams short note", "DP案件・保証金額確認要" in texts["teams_chat_message"], True)
+
+
 # ============================================================
 # Standalone runner
 # ============================================================
@@ -1665,6 +1740,11 @@ _ALL_TESTS = [
     test_tc_bic_camera_call_line_vendor,
     test_tc_is_over_10years_rentals_tokyo,
     test_tc_is_under_10years_rentals_tokyo,
+    test_tc_dp_plan_detection_helper,
+    test_tc_dp_carry_in_script_display_uses_double_protect,
+    test_tc_dp_required_questions_include_amount_confirmation_once,
+    test_tc_dp_summary_separates_cost_and_damage_amount,
+    test_tc_dp_after_call_texts_include_dp_notes,
 ]
 
 if __name__ == "__main__":

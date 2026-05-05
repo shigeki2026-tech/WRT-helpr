@@ -625,6 +625,50 @@ def should_offer_master_registration_candidate(form: dict, decision: dict) -> bo
     return has_product_source and (unknown_product or needs_repair_master)
 
 
+DOUBLE_PROTECT_KEYWORDS = ("物損", "ダブル", "DP")
+DOUBLE_PROTECT_AMOUNT_CONFIRMATION = "【物損付/DP】物損時の保証金額をシステムで確認"
+DOUBLE_PROTECT_DAMAGE_CONFIRMATION = "【物損付/DP】事故状況・破損状況を確認"
+
+
+def is_double_protect_plan(warranty_plan: str) -> bool:
+    plan = (warranty_plan or "").strip()
+    if not plan:
+        return False
+    plan_upper = plan.upper()
+    return "物損" in plan or "ダブル" in plan or "DP" in plan_upper
+
+
+def double_protect_plan_label(warranty_plan: str) -> str:
+    plan = (warranty_plan or "").strip()
+    if not is_double_protect_plan(plan):
+        return "通常保証"
+    labels = []
+    if "物損" in plan:
+        labels.append("物損付")
+    dp_match = re.search(r"DP\s*\d*", plan, flags=re.IGNORECASE)
+    if dp_match:
+        labels.append(dp_match.group(0).upper().replace(" ", ""))
+    elif "ダブル" in plan:
+        labels.append("ダブルプロテクト")
+    return " / ".join(dict.fromkeys(labels)) or "物損付 / DP"
+
+
+def double_protect_amount_status(warranty_plan: str) -> str:
+    return "システム確認" if is_double_protect_plan(warranty_plan) else "対象外"
+
+
+def _append_unique(items: list, value: str) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
+def _dedupe_preserve_order(items: list) -> list:
+    result = []
+    for item in items:
+        _append_unique(result, item)
+    return result
+
+
 def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str, warranty_plan: str) -> str:
     """
     - warranty_plan に「物損」「ダブル」「DP」のいずれかを含む → ダブルプロテクト系を優先
@@ -634,8 +678,7 @@ def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str
     """
     if df_tpl.empty:
         return ""
-    plan = (warranty_plan or "").strip()
-    is_dp = any(kw in plan for kw in ["物損", "ダブル", "DP"])
+    is_dp = is_double_protect_plan(warranty_plan)
     repair_kw = (
         "出張修理" if repair_type == "出張修理"
         else "持込修理" if repair_type == "持込修理"
@@ -841,14 +884,19 @@ def _line_label_for_call_line(call_line: str) -> str:
 
 def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
                            vendor: str, notes_filled: str = "") -> str:
+    dp_note = ""
+    if is_double_protect_plan(form.get("warranty_plan", "")):
+        dp_note = "\n物損付 / DP案件: 物損時の保証金額はシステムにて確認要"
     memo = (
         f"WRT-NO: {form.get('wrt_no','─')}\n"
         f"テンプレート: {form.get('template_code', '─')} {form.get('template_label', '─')}\n"
         f"製品: {form.get('product','─')} / {form.get('manufacturer','─')} {form.get('model_number','─')}\n"
         f"保証期間判定: {warranty_result.get('title','─')}\n"
+        f"保証種別: {double_protect_plan_label(form.get('warranty_plan', ''))}\n"
         f"修理形態: {repair_type}\n"
         f"症状: {form.get('symptom','─')}\n"
         f"拠点候補: {vendor}"
+        f"{dp_note}"
     )
     if notes_filled:
         memo += f"\n\n【備考】\n{notes_filled}"
@@ -875,6 +923,8 @@ def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") ->
     )
     if rakuteru:
         rakutel_text += f"\n楽テルNO：{rakuteru}"
+    if is_double_protect_plan(form.get("warranty_plan", "")):
+        rakutel_text += "\n物損付 / DP案件\n物損時の保証金額はシステムにて確認要"
     if notes_filled:
         rakutel_text += f"\n依頼票メモ備考：{notes_filled}"
     return rakutel_text
@@ -892,7 +942,8 @@ def _build_teams_chat_message(form: dict, vendor: str) -> str:
     action = (form.get("teams_action") or "").strip() or "FAX済み"
     operator = (form.get("operator_name") or "").strip()
     operator_part = f"　MPG{operator}" if operator else ""
-    return f"{rakuteru}　{case_name}　{product}　{send_to}へ{action}{operator_part}　ご確認お願いします。"
+    dp_part = "　DP案件・保証金額確認要" if is_double_protect_plan(form.get("warranty_plan", "")) else ""
+    return f"{rakuteru}　{case_name}　{product}　{send_to}へ{action}{operator_part}{dp_part}　ご確認お願いします。"
 
 
 def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
@@ -2132,9 +2183,12 @@ def infer_call_line_attrs(form: dict) -> dict:
 def determine_script_route(form: dict, repair_type: str) -> dict:
     call_line      = form.get("call_line", "")
     appliance_type = form.get("appliance_type", "")
+    is_dp = is_double_protect_plan(form.get("warranty_plan", ""))
     result = {
         "sheet_name": "", "part": "", "price_guidance_allowed": True,
         "notes": [], "escalation_needed": False, "reason": "",
+        "script_type": "ダブルプロテクト" if is_dp else "通常",
+        "display_name": "",
     }
     if call_line in ["ビックカメラ", "ソフマップ"]:
         result.update(sheet_name="⑩-1ビックカメラ・ソフマップ", part="案件別受付",
@@ -2152,10 +2206,16 @@ def determine_script_route(form: dict, repair_type: str) -> dict:
     if appliance_type == "家電" and repair_type == "出張修理":
         result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
                       reason="家電＋出張修理")
+        if is_dp:
+            result.update(display_name="ダブルプロテクト / 出張修理",
+                          reason="家電＋出張修理＋ダブルプロテクト")
         return result
     if appliance_type == "家電" and repair_type == "持込修理":
         result.update(sheet_name="家電出張・持込・新築住設", part="家電・持込修理",
                       reason="家電＋持込修理")
+        if is_dp:
+            result.update(display_name="ダブルプロテクト / 持込修理",
+                          reason="家電＋持込修理＋ダブルプロテクト")
         return result
     result.update(sheet_name="要確認", part="SV/担当確認",
                   escalation_needed=True, reason="家電/住設区分または修理形態が未確定")
@@ -2194,11 +2254,14 @@ def build_required_questions(form: dict, repair_type: str, needs_data_erase: boo
         ]
     else:
         qs = ["製品詳細", "型番", "メーカー", "販売店", "保証内容", "SV/担当確認"]
+    if is_double_protect_plan(form.get("warranty_plan", "")):
+        _append_unique(qs, DOUBLE_PROTECT_AMOUNT_CONFIRMATION)
+        _append_unique(qs, DOUBLE_PROTECT_DAMAGE_CONFIRMATION)
     if not form.get("model_number"):
         qs.insert(0, "型番の確認（未入力）")
     if not form.get("manufacturer"):
         qs.insert(0, "メーカーの確認（未入力）")
-    return qs
+    return _dedupe_preserve_order(qs)
 
 
 # ============================================================
@@ -2229,6 +2292,9 @@ def build_summary_card_display(decision: dict) -> dict:
     working_form = decision.get("working_form", {})
     repair_result = decision.get("repair_result", {})
     watch_confirmation = is_watch_repair_confirmation(working_form, repair_type, repair_result)
+    warranty_result = decision.get("warranty_result", {})
+    warranty_plan = working_form.get("warranty_plan", "")
+    is_dp = is_double_protect_plan(warranty_plan)
 
     cost_status = cost_result.get("cost_status", "confirmed")
     if not script_result.get("price_guidance_allowed", True):
@@ -2284,14 +2350,31 @@ def build_summary_card_display(decision: dict) -> dict:
     if watch_confirmation:
         script_sheet = "腕時計"
         script_part = "SV担当確認"
+    script_type = script_result.get("script_type") or ("ダブルプロテクト" if is_dp else "通常")
+    script_display = script_result.get("display_name") or f"{script_type} / {script_part}"
+
+    warranty_title = warranty_result.get("title", "保証期間未確認")
+    warranty_card = {
+        "value": warranty_title,
+        "status": f"{double_protect_plan_label(warranty_plan)} / 物損保証金額: {double_protect_amount_status(warranty_plan)}",
+        "color": "#7d6608" if is_dp else "#566573",
+        "is_double_protect": is_dp,
+        "plan_label": double_protect_plan_label(warranty_plan),
+        "amount_status": double_protect_amount_status(warranty_plan),
+    }
 
     return {
+        "warranty": warranty_card,
         "repair": repair_card,
         "cost": cost_card,
         "script_sheet": script_sheet,
         "script_part": script_part,
+        "script_type": script_type,
+        "script_display": script_display,
         "cost_status": cost_status,
         "watch_confirmation": watch_confirmation,
+        "is_double_protect": is_dp,
+        "dp_amount_status": double_protect_amount_status(warranty_plan),
     }
 
 
@@ -2324,6 +2407,8 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"型番　　　　: {form.get('model_number', '未入力')}",
         f"商品価格　　: {form.get('product_price', '未入力')}",
         f"保証プラン　: {form.get('warranty_plan', '未入力')}",
+        f"保証種別　　: {double_protect_plan_label(form.get('warranty_plan', ''))}",
+        f"物損保証金額: {double_protect_amount_status(form.get('warranty_plan', ''))}",
         f"保証開始日　: {form.get('warranty_start_date', '未入力')}",
         f"保証終了日　: {form.get('warranty_end_date', '未入力')}",
         "",
@@ -2342,8 +2427,9 @@ def build_history_template(form: dict, repair_type: str, script_result: dict,
         f"家電/住設　 : {form.get('appliance_type', '未入力')}",
         f"修理形態　　: {repair_type}",
         f"保証外概算　: {cost_estimate}",
+        f"物損保証金額確認: {double_protect_amount_status(form.get('warranty_plan', ''))}",
         f"参照シート　: {script_result.get('sheet_name', '')}",
-        f"該当パート　: {script_result.get('part', '')}",
+        f"該当パート　: {script_result.get('display_name') or script_result.get('part', '')}",
         f"注意事項　　: {' / '.join(script_result.get('notes', [])) or 'なし'}",
         f"修理拠点候補: {vendor}",
         f"次対応　　　: ",
@@ -3086,6 +3172,7 @@ def render_tab_call():
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
+        st.markdown("##### 案件基本")
         if SHOW_CALL_TYPE_IN_CALL_FORM:
             call_type_opts = ["", "新規入電", "折り返し", "再入電", "その他"]
             form["call_type"] = st.selectbox(
@@ -3105,6 +3192,8 @@ def render_tab_call():
             index=pref_opts.index(form.get("prefecture","")) if form.get("prefecture") in pref_opts else 0)
         render_field_marker("address", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["address"]       = st.text_input("お客様住所",   form.get("address",""))
+
+        st.markdown("##### 製品")
         product_opts = get_product_options()
         current_product = form.get("product", "")
         if current_product and current_product not in product_opts:
@@ -3155,8 +3244,11 @@ def render_tab_call():
             form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
-        form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
+
+        st.markdown("##### 保証")
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
+        if is_double_protect_plan(form.get("warranty_plan", "")):
+            st.warning(f"物損付 / DP案件: {double_protect_plan_label(form.get('warranty_plan', ''))}。物損保証金額はシステム確認。")
         render_warranty_date_input(
             "warranty_start_date", "保証開始日",
             form, missing_fields_set, invalid_fields_set, pre_diagnostics,
@@ -3179,18 +3271,14 @@ def render_tab_call():
             "warranty_end_date", "保証終了日",
             form, missing_fields_set, invalid_fields_set, pre_diagnostics,
         )
+        form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
+
+        st.markdown("##### 販売店")
         render_field_marker("store_name", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["store_name"]    = st.text_input("販売店",       form.get("store_name",""))
-        form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
-        form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
-        form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
-        form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-        form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
-        form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
-        form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
         render_field_marker("extra_condition", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["extra_condition"] = st.text_area(
-            "補足条件・費用判定メモ",
+            "修理受付注意点 / 補足条件・費用判定メモ",
             form.get("extra_condition",""),
             height=90,
             placeholder="例: 家庭用 / 業務用 / ガス漏れ / 未確認",
@@ -3202,6 +3290,15 @@ def render_tab_call():
                     form["extra_condition"] = label
                     st.session_state.form = form
                     st.rerun()
+
+        st.markdown("##### 受付補足")
+        form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
+        form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
+        form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
+        form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
+        form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
+        form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
+        form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
         st.session_state.form = form
 
     # ── 判定実行（form確定後・right描画前に1回だけ）──
@@ -3285,23 +3382,29 @@ def render_tab_call():
         cost_card_value = summary_display["cost"]["value"]  # UI v3
         cost_card_status = summary_display["cost"]["status"]  # UI v3
         cost_card_color = summary_display["cost"]["color"]  # UI v3
+        warranty_card_value = summary_display["warranty"]["value"]  # UI v3
+        warranty_card_status = summary_display["warranty"]["status"]  # UI v3
+        warranty_card_color = summary_display["warranty"]["color"]  # UI v3
 
         script_link = lookup_script_link(script_result)  # UI v3
         script_sheet = summary_display["script_sheet"]  # UI v3
         script_part = summary_display["script_part"]  # UI v3
+        script_type = summary_display["script_type"]  # UI v3
+        script_display = summary_display["script_display"]  # UI v3
         if script_link.get("matched"):  # UI v3
-            script_card_color = "#1a5276"  # UI v3
-            script_card_value = f"{script_sheet[:8]} / {script_part}"  # UI v3
+            script_card_color = "#6c3483" if summary_display["is_double_protect"] else "#1a5276"  # UI v3
+            script_card_value = script_type  # UI v3
             script_status = (  # UI v3
+                f'{_ui_v3_escape(script_display)}<br>'  # UI v3
                 f'<a href="{_ui_v3_escape(script_link.get("url", ""))}" target="_blank" '  # UI v3
                 f'style="color:#aed6f1;">{_ui_v3_escape(script_link.get("display_name", "参照リンク"))}を開く↗</a>'  # UI v3
             )  # UI v3
         else:  # UI v3
-            script_card_color = "#2c3e50"  # UI v3
-            script_card_value = f"{script_sheet} / {script_part}"  # UI v3
-            script_status = "URL未登録（手動で参照）"  # UI v3
+            script_card_color = "#6c3483" if summary_display["is_double_protect"] else "#2c3e50"  # UI v3
+            script_card_value = script_type  # UI v3
+            script_status = f"{_ui_v3_escape(script_sheet)} / {_ui_v3_escape(script_display)}<br>URL未登録（手動で参照）"  # UI v3
 
-        card_cols = st.columns(4)
+        card_cols = st.columns(5)
         product_display = decision.get("normalized_product") or form.get("product") or "未選択"
         manufacturer_display = (form.get("manufacturer") or "").strip()
         model_display = (form.get("model_number") or "").strip()
@@ -3313,15 +3416,20 @@ def render_tab_call():
             )
         with card_cols[1]:
             st.markdown(
-                _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),
+                _ui_v3_card("保証", warranty_card_value, warranty_card_status, warranty_card_color),
                 unsafe_allow_html=True,
             )
         with card_cols[2]:
             st.markdown(
-                _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),
+                _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),
                 unsafe_allow_html=True,
             )
         with card_cols[3]:
+            st.markdown(
+                _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),
+                unsafe_allow_html=True,
+            )
+        with card_cols[4]:
             st.markdown(
                 _ui_v3_card("参照スクリプト", script_card_value, script_status, script_card_color),
                 unsafe_allow_html=True,
@@ -3355,6 +3463,7 @@ def render_tab_call():
                 cost_rq = cost_result.get("required_questions", "").strip()
                 if cost_rq:
                     req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
+            req_questions = _dedupe_preserve_order(req_questions)
             for i, q in enumerate(req_questions, 1):
                 color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
                 st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
@@ -3518,6 +3627,8 @@ def render_tab_after_call():
             template_selection["store_rule"])
         st.caption("販売店テンプレート判定：")
         st.info(store_rule_display)
+        if is_double_protect_plan(warranty_plan_val):
+            st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
         if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
             filtered = df_tpl[df_tpl["category"] == call_line_val] if call_line_val else df_tpl.iloc[0:0]
