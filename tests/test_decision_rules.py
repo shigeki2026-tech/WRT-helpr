@@ -1605,6 +1605,123 @@ def test_tc_dp_after_call_texts_include_dp_notes():
     check("DP teams short note", "DP案件・保証金額確認要" in texts["teams_chat_message"], True)
 
 
+def test_call_time_warning_product_missing_is_separate():
+    d = app.run_decision(make_form(appliance_type="家電"))
+    steps = app.build_next_action_steps(d["diagnostics"])
+
+    assert "製品を入力してください" in steps
+    assert not any("製品・家電/住設区分を入力してSV確認" in step for step in steps)
+
+
+def test_call_time_warning_product_missing_disappears_after_product_input():
+    d = app.run_decision(make_form(product="ドライヤー", appliance_type="家電"))
+    steps = app.build_next_action_steps(d["diagnostics"])
+
+    assert "製品を入力してください" not in steps
+
+
+def test_call_time_warning_appliance_type_missing_is_separate():
+    d = app.run_decision(make_form(product="ドライヤー"))
+    steps = app.build_next_action_steps(d["diagnostics"])
+
+    assert "家電/住設区分を入力してください" in steps
+    assert not any("製品・家電/住設区分を入力してSV確認" in step for step in steps)
+
+
+def test_call_time_warning_appliance_type_missing_disappears_after_input():
+    d = app.run_decision(make_form(product="ドライヤー", appliance_type="家電"))
+    steps = app.build_next_action_steps(d["diagnostics"])
+
+    assert "家電/住設区分を入力してください" not in steps
+
+
+def test_cer_escalation_remains_separate_from_missing_field_warnings():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        prefecture="福岡県",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    ))
+    call_steps = app.build_next_action_steps(d["diagnostics"])
+    after_steps = app.build_after_call_steps(d["diagnostics"])
+    vendor_item = _diag_area(d["diagnostics"], "修理拠点判定")
+
+    assert "製品を入力してください" not in call_steps
+    assert "家電/住設区分を入力してください" not in call_steps
+    assert any("終話後に担当へエスカレーション" in step for step in after_steps)
+    assert "CER" in d["vendor"]
+    assert vendor_item["status"] == "warning"
+
+
+def test_aircon_sharp_does_not_leave_manufacturer_confirmation():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        manufacturer_original="",
+        appliance_type="家電",
+    ))
+    rq = d["cost_result"].get("required_questions", "")
+    steps = app.build_next_action_steps(d["diagnostics"])
+
+    assert "メーカーを確認してください" not in rq
+    assert "メーカーを確認してください" not in steps
+    assert d["cost_result"]["cost_status"] == "confirmed"
+
+
+def test_aircon_other_manufacturer_keeps_manufacturer_confirmation():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="その他・要確認",
+        appliance_type="家電",
+    ))
+
+    assert "メーカーを確認してください" in d["cost_result"].get("required_questions", "")
+
+
+def test_aircon_blank_manufacturer_keeps_manufacturer_confirmation():
+    d = app.run_decision(make_form(product="エアコン", appliance_type="家電"))
+
+    assert "メーカーを確認してください" in d["cost_result"].get("required_questions", "")
+
+
+def test_empty_form_includes_call_memo():
+    form = app.empty_form()
+
+    assert "call_memo" in form
+    assert form["call_memo"] == ""
+
+
+def test_call_memo_does_not_affect_run_decision():
+    base = make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        appliance_type="家電",
+        prefecture="東京都",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    with_memo = dict(base)
+    with_memo["call_memo"] = "お客様が追加で話していた一時メモ"
+
+    d1 = app.run_decision(base)
+    d2 = app.run_decision(with_memo)
+
+    for key in [
+        "repair_type",
+        "cost_estimate",
+        "vendor",
+        "normalized_product",
+        "needs_data_erase",
+        "overall_status",
+    ]:
+        assert d1[key] == d2[key]
+    assert d1["cost_result"] == d2["cost_result"]
+    assert d1["script_result"] == d2["script_result"]
+    assert d1["diagnostics"] == d2["diagnostics"]
+
+
 # ============================================================
 # Standalone runner
 # ============================================================

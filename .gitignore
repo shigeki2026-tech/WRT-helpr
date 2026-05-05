@@ -6,3 +6,4 @@ __pycache__/
 .codex_tmp/
 .codex_test_deps/
 config/teams_config.json
+config/local_user_settings.json

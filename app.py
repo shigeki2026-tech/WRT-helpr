@@ -23,12 +23,23 @@ except ImportError:
 # ============================================================
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEAMS_CONFIG_PATH = os.path.join(APP_DIR, "config", "teams_config.json")
+LOCAL_USER_SETTINGS_PATH = os.path.join(APP_DIR, "config", "local_user_settings.json")
 TEAMS_SEND_SCRIPT_PATH = os.path.join(APP_DIR, "scripts", "send_teams_message.ps1")
 DEFAULT_TEAMS_CONFIG = {
     "enabled": False,
     "chat_id": "",
     "chat_name": "WRT報告用チャット",
     "send_mode": "powershell_graph",
+}
+REQUEST_PDF_FOLDERS = {
+    "wrt": {
+        "name": "WRT修理受付センター",
+        "url": "https://drive.google.com/drive/folders/14EgcYq4JfgPRH4XA6rVUULSow8uyrGI7",
+    },
+    "cer": {
+        "name": "CER",
+        "url": "https://drive.google.com/drive/u/0/folders/1zatFuNMucZWxwGQkketgjicfngo_9wEP",
+    },
 }
 
 PREFECTURES = [
@@ -56,6 +67,7 @@ FIELD_LABELS = {
     "manufacturer_original": "メーカー原文 / コピー元メーカー名",
     "pc_manufacturer_type": "PCメーカー区分",
     "model_number": "型番",
+    "call_memo": "通話中メモ",
     "product_price": "商品価格",
     "warranty_plan": "保証プラン",
     "warranty_start_date": "保証開始日",
@@ -903,17 +915,47 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
     return memo
 
 
+def _rakutel_call_direction(form: dict) -> str:
+    direction = (form.get("call_direction") or "").strip()
+    return direction if direction in ("受電", "架電") else "受電"
+
+
+def _rakutel_counterparty(form: dict, caller_type: str = "") -> str:
+    counterparty = (form.get("counterparty_type") or "").strip()
+    legacy_caller = (caller_type or "").strip()
+    form_caller = (form.get("caller_type") or "").strip()
+    if legacy_caller and counterparty and form_caller and counterparty == form_caller and legacy_caller != form_caller:
+        return legacy_caller
+    if counterparty:
+        return counterparty
+    return (legacy_caller or form_caller or "加入者").strip() or "加入者"
+
+
+def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
+    operator = (form.get("operator_name") or "").strip() or "●●"
+    counterparty = _rakutel_counterparty(form, caller_type)
+    if _rakutel_call_direction(form) == "架電":
+        return f"MPG{operator}→{counterparty}"
+    return f"{counterparty}→MPG{operator}"
+
+
+def _rakutel_call_heading(form: dict) -> str:
+    line_label = _line_label_for_call_line(form.get("call_line", ""))
+    if _rakutel_call_direction(form) == "架電":
+        return f"【{line_label}から架電】"
+    return f"【{line_label}に入電】"
+
+
 def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") -> str:
     operator = (form.get("operator_name") or "").strip() or "●●"
     extracted_time = (form.get("extracted_time") or "").strip()
     contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
     rakuteru = (form.get("rakuteru_no") or "").strip()
-    line_label = _line_label_for_call_line(form.get("call_line", ""))
 
     rakutel_text = (
-        f"【{line_label}へ受電】\n"
-        f"{extracted_time} {caller_type}→MPG{operator}\n"
-        f"【修理受付済】\n"
+        f"{_rakutel_call_heading(form)}\n"
+        f"{extracted_time}　{_rakutel_call_arrow(form, caller_type)}\n\n"
+        f"【修理受付】\n"
         f"※保証対象外の事例ご案内済\n"
         f"日程調整時の連絡先：{contact}\n"
         f"WRT-NO：{form.get('wrt_no','─')}\n"
@@ -934,33 +976,210 @@ def _build_teams_report(form: dict, caller_type: str, notes_filled: str = "") ->
     return _build_rakutel_text(form, caller_type, notes_filled)
 
 
-def _build_teams_chat_message(form: dict, vendor: str) -> str:
+def _escape_teams_html(value) -> str:
+    return (str(value or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def get_request_pdf_folder_info(vendor: str) -> dict:
+    vendor_text = (vendor or "").strip()
+    if "WRT修理受付センター" in vendor_text or "WRT修理センター" in vendor_text:
+        return {"required": True, **REQUEST_PDF_FOLDERS["wrt"]}
+    if "CER候補" in vendor_text or "CER" in vendor_text:
+        return {"required": True, **REQUEST_PDF_FOLDERS["cer"]}
+    return {"required": False, "name": "", "url": ""}
+
+
+def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
+                                 repair_result: dict | None = None,
+                                 script_result: dict | None = None,
+                                 diagnostics: list | None = None) -> dict:
+    vendor_result = vendor_result or {}
+    reason = (vendor_result.get("reason") or "").strip()
+    vendor_text = (vendor or vendor_result.get("vendor_name") or "").strip()
+
+    if not reason and repair_result:
+        reason = (repair_result.get("reason") or "").strip()
+    if not reason and script_result:
+        reason = (script_result.get("reason") or "").strip()
+    if not reason and diagnostics:
+        for item in diagnostics:
+            if not isinstance(item, dict):
+                continue
+            text = (item.get("message") or item.get("detail") or "").strip()
+            if text:
+                reason = text
+                break
+
+    if not reason:
+        target = vendor_text or "修理拠点"
+        reason = f"{target}について担当確認が必要"
+    elif vendor_text and vendor_text not in reason:
+        reason = f"{vendor_text}のため担当確認が必要（判定根拠: {reason}）"
+
+    if "CER" in vendor_text:
+        next_action = "担当へCER手配可否を確認"
+    elif "担当エスカ" in vendor_text or "要確認" in vendor_text:
+        next_action = "修理拠点・手配可否を担当へ確認"
+    else:
+        next_action = "修理拠点・手配可否を担当へ確認"
+
+    return {
+        "title": "⚠️ 担当エスカレーション推奨",
+        "reason": reason,
+        "next_action": next_action,
+    }
+
+
+def build_vendor_candidate_card_info(vendor: str, vendor_result: dict | None = None) -> dict:
+    vendor_result = vendor_result or {}
+    folder = get_request_pdf_folder_info(vendor)
+    action = "依頼書PDF格納" if folder.get("required") else ""
+    return {
+        "vendor": vendor,
+        "reason": (vendor_result.get("reason") or "").strip(),
+        "needs_escalation": bool(vendor_result.get("needs_escalation")),
+        "escalation": build_vendor_escalation_info(vendor, vendor_result) if vendor_result.get("needs_escalation") else {},
+        "request_folder": folder,
+        "arrangement_method": action,
+    }
+
+
+def resolve_teams_request_action(form: dict, vendor: str, contact_type: str = "") -> str:
+    manual_action = (form.get("teams_action") or "").strip()
+    if manual_action:
+        return manual_action
+
+    vendor_text = (vendor or "").strip()
+    if contact_type == "callback" or "翌営業日折り返し" in vendor_text:
+        return "折り返し対応依頼済み"
+    if get_request_pdf_folder_info(vendor_text).get("required"):
+        return "依頼書PDF格納済み"
+    if "ユナイトサービス" in vendor_text or "ユナイト" in vendor_text:
+        return "FAX済み"
+    if "担当エスカ" in vendor_text or "要確認" in vendor_text:
+        return "担当確認依頼済み"
+    return "手配済み"
+
+
+def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -> str:
     rakuteru = (form.get("rakuteru_no") or "").strip()
     case_name = (form.get("call_line") or "").strip()
     product = (form.get("product") or "").strip()
     send_to = (vendor or "").strip()
-    action = (form.get("teams_action") or "").strip() or "FAX済み"
+    action = resolve_teams_request_action(form, vendor, contact_type)
     operator = (form.get("operator_name") or "").strip()
-    operator_part = f"　MPG{operator}" if operator else ""
-    dp_part = "　DP案件・保証金額確認要" if is_double_protect_plan(form.get("warranty_plan", "")) else ""
-    return f"{rakuteru}　{case_name}　{product}　{send_to}へ{action}{operator_part}{dp_part}　ご確認お願いします。"
+    lines = []
+    if rakuteru:
+        lines.append(rakuteru)
+    for value in [case_name, product, f"{send_to}へ{action}" if send_to or action else ""]:
+        if value:
+            lines.append(value)
+    if is_double_protect_plan(form.get("warranty_plan", "")):
+        lines.append("DP案件・保証金額確認要")
+    closing = "ご確認お願いします。"
+    if operator:
+        closing += operator
+    lines.append(closing)
+    return "\n".join(lines)
 
 
 def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
-                            vendor: str, caller_type: str, notes_filled: str) -> dict:
+                            vendor: str, caller_type: str, notes_filled: str,
+                            contact_type: str = "") -> dict:
     return {
         "attention_memo": _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled),
         "rakutel_text": _build_rakutel_text(form, caller_type, notes_filled),
-        "teams_chat_message": _build_teams_chat_message(form, vendor),
+        "teams_chat_message": _build_teams_chat_message(form, vendor, contact_type),
     }
 
 
 def _get_teams_send_body(form: dict) -> str:
-    return (form.get("teams_chat_message") or "").strip()
+    message = (form.get("teams_chat_message") or "").strip()
+    if not message:
+        return ""
+    return teams_plain_text_to_html(
+        message,
+        bold_first_line=bool((form.get("rakuteru_no") or "").strip()),
+    )
 
 
-def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dict) -> bool:
-    return bool(teams_enabled and confirmed and _get_teams_send_body(form))
+def teams_plain_text_to_html(message: str, bold_first_line: bool = False) -> str:
+    lines = str(message or "").splitlines()
+    html_lines = []
+    for index, line in enumerate(lines):
+        escaped = _escape_teams_html(line)
+        if index == 0 and bold_first_line and line.strip():
+            escaped = f"<b>{escaped}</b>"
+        html_lines.append(escaped)
+    return "<br>\n".join(html_lines)
+
+
+def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dict,
+                                 pdf_storage_confirmed: bool = True) -> bool:
+    return bool(teams_enabled and confirmed and pdf_storage_confirmed and _get_teams_send_body(form))
+
+
+def load_local_user_settings(path: str | None = None) -> dict:
+    settings_path = path or LOCAL_USER_SETTINGS_PATH
+    if not os.path.exists(settings_path):
+        return {"default_operator_name": ""}
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if not isinstance(loaded, dict):
+            return {"default_operator_name": ""}
+        return {
+            "default_operator_name": str(loaded.get("default_operator_name", "") or "").strip()
+        }
+    except Exception:
+        return {"default_operator_name": ""}
+
+
+def save_local_user_settings(settings: dict, path: str | None = None) -> dict:
+    settings_path = path or LOCAL_USER_SETTINGS_PATH
+    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    clean = {
+        "default_operator_name": str(settings.get("default_operator_name", "") or "").strip()
+    }
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(clean, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return clean
+
+
+def apply_default_operator_name(form: dict, settings: dict | None = None) -> dict:
+    settings = settings or load_local_user_settings()
+    default_name = (settings.get("default_operator_name") or "").strip()
+    if default_name and not (form.get("operator_name") or "").strip():
+        form["operator_name"] = default_name
+    return form
+
+
+def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
+    new_form = apply_default_operator_name(empty_form(), settings)
+    session_state["form"] = new_form
+    session_state["extracted"] = {}
+    session_state["pasted_text"] = ""
+    session_state["copy_panel_open"] = True
+    session_state["master_registration_candidate"] = {}
+    for key in [
+        "memo_after",
+        "rakutel_text_display",
+        "teams_chat_message_display",
+        "teams_send_confirmed",
+        "request_pdf_storage_confirmed",
+        "tpl_label_select_after",
+        "teams_action_input",
+        "call_memo_input",
+        "after_call_memo_display",
+    ]:
+        if key in session_state:
+            del session_state[key]
+    return new_form
 
 
 def load_teams_config() -> dict:
@@ -2562,13 +2781,29 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     else:
         missing_for_script: list = []
         reasons: list = []
-        script_next_action = "製品・家電/住設区分を入力してSV確認"
         if not (form.get("product") or "").strip():
             missing_for_script.append("product")
             reasons.append("製品が未選択")
         if not (form.get("appliance_type") or "").strip():
             missing_for_script.append("appliance_type")
             reasons.append("家電/住設が未選択")
+        if "product" in missing_for_script:
+            items.append(_item(
+                "参照スクリプト判定", "warning", "製品未入力",
+                "製品が未選択のため参照スクリプトを確定できません。",
+                missing_fields=["product"],
+                next_action="製品を入力してください",
+                impact="call_time_required",
+            ))
+        if "appliance_type" in missing_for_script:
+            items.append(_item(
+                "参照スクリプト判定", "warning", "家電/住設区分未入力",
+                "家電/住設区分が未選択のため参照スクリプトを確定できません。",
+                missing_fields=["appliance_type"],
+                next_action="家電/住設区分を入力してください",
+                impact="call_time_required",
+            ))
+        script_next_action = "SV/担当に確認"
         repair_type = result.get("repair_type", "")
         if not repair_type or repair_type == "要確認":
             if form.get("product") == "腕時計":
@@ -2578,14 +2813,16 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
                 reasons.append("修理形態が要確認または未確定")
         if escalation_needed:
             reasons.append("エスカレーションが必要")
-        reason_str = " / ".join(reasons) if reasons else "スクリプト参照先が確定していません"
-        items.append(_item(
-            "参照スクリプト判定", "warning", "スクリプト参照先が未確定",
-            reason_str,
-            missing_fields=missing_for_script,
-            next_action=script_next_action,
-            impact="call_time_required" if missing_for_script else "after_call_ok",
-        ))
+        non_missing_reasons = [r for r in reasons if r not in ("製品が未選択", "家電/住設が未選択")]
+        if non_missing_reasons or not missing_for_script:
+            reason_str = " / ".join(non_missing_reasons) if non_missing_reasons else "スクリプト参照先が確定していません"
+            items.append(_item(
+                "参照スクリプト判定", "warning", "スクリプト参照先が未確定",
+                reason_str,
+                missing_fields=[],
+                next_action=script_next_action,
+                impact="call_time_required" if not missing_for_script else "after_call_ok",
+            ))
 
     # ── 3. 概算費用判定 ──────────────────────────────────────────
     cost_result   = result.get("cost_result", {})
@@ -2978,6 +3215,12 @@ def render_field_attention(field_name: str, missing_fields: set, invalid_fields:
     elif field_name in missing_fields:
         if field_name in ("warranty_start_date", "warranty_end_date"):
             msg = f"⚠️ 必須確認：{field_label(field_name)}を確認してください"
+        elif field_name == "product":
+            msg = "⚠️ 必須確認：製品を入力してください"
+            action_text = ""
+        elif field_name == "appliance_type":
+            msg = "⚠️ 必須確認：家電/住設区分を入力してください"
+            action_text = ""
         else:
             msg = "⚠️ 必須確認"
         if action_text:
@@ -3045,6 +3288,8 @@ def empty_form() -> dict:
     form["rakuteru_no"] = ""
     form["contact_phone"] = ""
     form["caller_type"] = "加入者"
+    form["call_direction"] = "受電"
+    form["counterparty_type"] = "加入者"
     form["extracted_time"] = ""
     form["attention_memo"] = ""
     form["rakutel_text"] = ""
@@ -3058,6 +3303,7 @@ def init_session():
     else:
         for key, value in empty_form().items():
             st.session_state.form.setdefault(key, value)
+    st.session_state.form = apply_default_operator_name(st.session_state.form)
     if "extracted" not in st.session_state:
         st.session_state.extracted = {}
     if "pasted_text" not in st.session_state:
@@ -3099,6 +3345,13 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
+        st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
+        if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_call"):
+            if st.button("🧹 この案件をクリア", key="clear_case_call", type="secondary", use_container_width=True):
+                reset_case_session_state(st.session_state)
+                st.success("案件情報をクリアしました。")
+                st.rerun()
+
         with st.expander(  # UI v3
             "📋 コピー情報取り込み",  # UI v3
             expanded=st.session_state.get("copy_panel_open", True),  # UI v3
@@ -3244,6 +3497,14 @@ def render_tab_call():
             form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
+
+        form["call_memo"] = st.text_area(
+            "通話中メモ",
+            form.get("call_memo", ""),
+            height=100,
+            key="call_memo_input",
+            placeholder="通話中の一時メモ、補足発言、聞き取り途中の内容など",
+        )
 
         st.markdown("##### 保証")
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
@@ -3443,8 +3704,14 @@ def render_tab_call():
             for idx, step in enumerate(next_action_steps, 1):  # UI v3
                 st.markdown(f"**STEP {idx}.** {step}")  # UI v3
 
-        if "担当エスカ" in (vendor or ""):  # UI v3
-            st.warning(f"🏭 修理拠点: {vendor}（終話後確認）")  # UI v3
+        if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):  # UI v3
+            esc = build_vendor_escalation_info(vendor, vendor_result)
+            st.warning(
+                f"🏭 修理拠点: {vendor}（終話後確認）\n\n"
+                f"{esc['title']}\n\n"
+                f"理由：{esc['reason']}\n\n"
+                f"次アクション：終話後に担当へエスカレーションして拠点確定"
+            )  # UI v3
         else:  # UI v3
             st.success(f"🏭 修理拠点: {vendor} ✅ 確定")  # UI v3
 
@@ -3590,6 +3857,12 @@ def render_tab_call():
 def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
+    st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
+    if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_after"):
+        if st.button("🧹 この案件をクリア", key="clear_case_after", type="secondary"):
+            reset_case_session_state(st.session_state)
+            st.success("案件情報をクリアしました。")
+            st.rerun()
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
@@ -3615,6 +3888,14 @@ def render_tab_after_call():
             placeholder="例: 大濱",
             key="operator_name_input",
         )
+        if st.button("この名前を既定値として保存", key="save_default_operator_name"):
+            saved = save_local_user_settings({
+                "default_operator_name": form.get("operator_name", "")
+            })
+            if saved.get("default_operator_name"):
+                st.success(f"既定オペレーター名を保存しました: {saved['default_operator_name']}")
+            else:
+                st.warning("オペレーター名が空のため、既定値も空で保存しました。")
         st.session_state.form = form
         st.markdown("##### 📋 テンプレート（業者送付コード）")
         df_tpl = load_template_codes()
@@ -3697,12 +3978,25 @@ def render_tab_after_call():
 
         st.markdown("##### 🏭 修理拠点候補")
         vr = decision["vendor_result"]
+        vendor_card = build_vendor_candidate_card_info(vendor, vr)
         if vr["matched"]:
             st.info(f"{vendor}\n\n（判定根拠: {vr.get('reason','')}）")
             if vr["needs_escalation"]:
-                st.warning("⚠️ 担当エスカレーション推奨")
+                esc = vendor_card["escalation"]
+                st.warning(
+                    f"{esc['title']}\n\n"
+                    f"理由：{esc['reason']}\n\n"
+                    f"次アクション：{esc['next_action']}"
+                )
         else:
             st.info(vendor)
+
+        request_folder = vendor_card["request_folder"]
+        if request_folder.get("required"):
+            if vendor_card.get("arrangement_method"):
+                st.caption(f"手配方法：{vendor_card['arrangement_method']}")
+            st.caption("依頼書PDF格納先：")
+            st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
 
         st.markdown("##### 📋 手配方法・連絡先")
         st.markdown(
@@ -3716,15 +4010,6 @@ def render_tab_after_call():
         )
 
     with col2:
-        caller_type = st.selectbox(
-            "発信者区分",
-            ["加入者", "販売店", "修理業者"],
-            index=["加入者", "販売店", "修理業者"].index(
-                form.get("caller_type", "加入者")),
-            key="caller_type_select",
-        )
-        form["caller_type"] = caller_type
-
         contact_phone = st.text_input(
             "日程調整時の連絡先",
             value=form.get("contact_phone", "") or form.get("phone_number", ""),
@@ -3734,11 +4019,55 @@ def render_tab_after_call():
         form["contact_phone"] = contact_phone
         st.session_state.form = form
 
+        st.markdown("##### 🗒️ 通話中メモ")
+        form["call_memo"] = st.text_area(
+            "通話中メモ",
+            form.get("call_memo", ""),
+            height=100,
+            key="after_call_memo_display",
+            help="ラクテル用テキストや注意内容メモには自動反映されません。必要に応じて手動で転記してください。",
+        )
+        st.session_state.form = form
+
+        form["teams_action"] = st.text_input(
+            "Teams報告アクション（手入力優先）",
+            value=form.get("teams_action", ""),
+            placeholder=resolve_teams_request_action(form, vendor, decision["vendor_result"].get("contact_type", "")),
+            key="teams_action_input",
+        )
+        st.session_state.form = form
+
+        # ── ラクテル用テキスト設定 ──
+        st.markdown("##### 📝 ラクテル用テキスト設定")
+        call_direction_options = ["受電", "架電"]
+        call_direction = st.selectbox(
+            "通話方向",
+            call_direction_options,
+            index=call_direction_options.index(form.get("call_direction", "受電"))
+            if form.get("call_direction", "受電") in call_direction_options else 0,
+            key="call_direction_select",
+        )
+        counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
+        default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
+        counterparty_type = st.selectbox(
+            "相手区分",
+            counterparty_options,
+            index=counterparty_options.index(default_counterparty)
+            if default_counterparty in counterparty_options else 0,
+            key="counterparty_type_select",
+        )
+        form["call_direction"] = call_direction
+        form["counterparty_type"] = counterparty_type
+        form["caller_type"] = counterparty_type
+        caller_type = counterparty_type
+        st.session_state.form = form
+
         # ── 注意内容メモ（備考欄反映）──
         st.markdown("##### 📝 注意内容メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
         generated_texts = _build_after_call_texts(
-            form, warranty_result, repair_type, vendor, caller_type, notes_filled)
+            form, warranty_result, repair_type, vendor, caller_type, notes_filled,
+            decision["vendor_result"].get("contact_type", ""))
         if st.button("🔄 ラクテル用・Teams用テキストを再生成", use_container_width=True):
             form["attention_memo"] = generated_texts["attention_memo"]
             form["rakutel_text"] = generated_texts["rakutel_text"]
@@ -3768,6 +4097,7 @@ def render_tab_after_call():
 
         # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
+        request_folder = get_request_pdf_folder_info(vendor)
         teams_chat_message = st.text_area(
             "Teams報告文",
             form.get("teams_chat_message") or generated_texts["teams_chat_message"],
@@ -3787,12 +4117,19 @@ def render_tab_after_call():
         if teams_config.get("error"):
             st.error(teams_config["error"])
 
+        pdf_storage_confirmed = True
+        if request_folder.get("required"):
+            pdf_storage_confirmed = st.checkbox(
+                "依頼書PDFを指定フォルダへ格納しました",
+                key="request_pdf_storage_confirmed",
+            )
         confirmed = st.checkbox(
             "送信内容と送信先を確認しました",
             key="teams_send_confirmed",
         )
         teams_send_body = _get_teams_send_body(form)
-        send_disabled = not _can_send_teams_chat_message(teams_enabled, confirmed, form)
+        send_disabled = not _can_send_teams_chat_message(
+            teams_enabled, confirmed, form, pdf_storage_confirmed)
         if st.button("Teamsチャットへ送信", disabled=send_disabled, type="primary", use_container_width=True):
             result = send_teams_message_via_powershell(teams_send_body)
             append_teams_send_log(result, teams_send_body, chat_name)

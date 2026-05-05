@@ -28,7 +28,7 @@ try {
 
     $bodyParameter = @{
         body = @{
-            contentType = "text"
+            contentType = "html"
             content = $messageBody
         }
     }
