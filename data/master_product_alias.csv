@@ -1,4 +1,4 @@
-priority,enabled,keyword,normalized_product,product_group,notes
+﻿priority,enabled,keyword,normalized_product,product_group,notes
 10,1,ドライヤー・ヘアアイロン,ドライヤー,生活家電,
 10,1,ヘアアイロン,ドライヤー,生活家電,
 10,1,ガス給湯器,ガス給湯器,給湯器,
@@ -38,3 +38,4 @@ priority,enabled,keyword,normalized_product,product_group,notes
 10,1,腕時計,腕時計,時計,
 10,1,クォーツ,腕時計,時計,
 10,1,時計,腕時計,時計,
+10,1,電気調理器・調理圧力鍋,電気調理器,キッチン家電,

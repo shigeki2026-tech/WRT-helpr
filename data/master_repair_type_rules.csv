@@ -1,4 +1,4 @@
-priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_keyword,repair_type,needs_confirmation,notes
+﻿priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_keyword,repair_type,needs_confirmation,notes
 10,1,洗濯機,,,,出張修理,0,
 10,1,冷蔵庫,,,,出張修理,0,
 10,1,エアコン,,,,出張修理,0,
@@ -38,3 +38,4 @@ priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_ke
 10,1,ホームシアター,,,,要確認,1,
 10,1,腕時計,,,,要確認,1,腕時計ルール未登録 / 担当確認（腕時計はSV/担当確認）
 20,1,,山善,,,要確認,1,山善製品は個別確認
+10,1,電気調理器,,,,持込修理,0,キッチン家電・調理圧力鍋
