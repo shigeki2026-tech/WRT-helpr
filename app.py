@@ -1164,7 +1164,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
     session_state["form"] = new_form
     session_state["extracted"] = {}
     session_state["pasted_text"] = ""
-    session_state["copy_panel_open"] = True
+    session_state["copy_panel_open"] = False
     session_state["master_registration_candidate"] = {}
     for key in [
         "memo_after",
@@ -3354,7 +3354,7 @@ def render_tab_call():
 
         with st.expander(  # UI v3
             "📋 コピー情報取り込み",  # UI v3
-            expanded=st.session_state.get("copy_panel_open", True),  # UI v3
+            expanded=st.session_state.get("copy_panel_open", False),  # UI v3
         ):  # UI v3
             if _PYPERCLIP_AVAILABLE:
                 st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
@@ -3415,8 +3415,19 @@ def render_tab_call():
                     st.success("フォームへ反映しました。")
                     st.rerun()
 
-        st.subheader("📝 受付情報フォーム")
         form = st.session_state.form
+        st.markdown("##### 📝 通話中メモ（自由記入）")
+        st.info("判定には使いません。通話中の一時メモ用です。")
+        form["call_memo"] = st.text_area(
+            "📝 通話中メモ（自由記入）",
+            form.get("call_memo", ""),
+            height=140,
+            key="call_memo_input",
+            placeholder="通話中の一時メモ、補足発言、聞き取り途中の内容など",
+        )
+        st.session_state.form = form
+
+        st.subheader("📝 受付情報フォーム")
         pre_decision = run_decision(form)  # UI修正v2
         pre_diagnostics = pre_decision.get("diagnostics", {})  # UI修正v2
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
@@ -3497,14 +3508,6 @@ def render_tab_call():
             form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
-
-        form["call_memo"] = st.text_area(
-            "通話中メモ",
-            form.get("call_memo", ""),
-            height=100,
-            key="call_memo_input",
-            placeholder="通話中の一時メモ、補足発言、聞き取り途中の内容など",
-        )
 
         st.markdown("##### 保証")
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))

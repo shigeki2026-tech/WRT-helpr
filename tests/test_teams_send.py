@@ -339,7 +339,7 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert state["form"]["teams_chat_message"] == ""
     assert state["form"]["rakutel_text"] == ""
     assert state["form"]["call_memo"] == ""
-    assert state["copy_panel_open"] is True
+    assert state["copy_panel_open"] is False
     assert "teams_send_confirmed" not in state
     assert "request_pdf_storage_confirmed" not in state
     assert "call_memo_input" not in state
