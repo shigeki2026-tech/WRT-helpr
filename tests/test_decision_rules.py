@@ -13,10 +13,12 @@ Standalone:
 import sys
 import os
 import re
+from pathlib import Path
 from datetime import date, datetime
 
 # Add project root to path so `import app` works from any working directory
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = Path(__file__).resolve().parents[1]
 
 # Mock streamlit so app.py can be imported without a running Streamlit server.
 # st.cache_data is replaced with a pass-through lambda so decorated functions
@@ -38,7 +40,7 @@ def make_form(
     prefecture="", call_line="", appliance_type="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
     is_over_10years=False, manufacturer_original="", pc_manufacturer_type="",
-    warranty_plan="",
+    warranty_plan="", symptom="",
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -58,6 +60,7 @@ def make_form(
         manufacturer_original=manufacturer_original,
         pc_manufacturer_type=pc_manufacturer_type,
         warranty_plan=warranty_plan,
+        symptom=symptom,
     )
     return form
 
@@ -1207,6 +1210,16 @@ def test_tc111_master_script_links_csv_exists():
     check("TC111 master_script_links.csv exists", os.path.exists(path), True)
 
 
+def test_master_script_guidance_csv_exists_and_loads():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "data", "master_script_guidance.csv")
+    df = app.load_script_guidance_csv()
+
+    assert os.path.exists(path)
+    assert not df.empty
+    assert "hearing_items" in df.columns
+
+
 def test_tc112_script_link_lookup_registered_and_blank_url():
     registered = app.lookup_script_link({
         "sheet_name": "家電出張・持込・新築住設",
@@ -1653,6 +1666,242 @@ def test_cer_escalation_remains_separate_from_missing_field_warnings():
     assert any("終話後に担当へエスカレーション" in step for step in after_steps)
     assert "CER" in d["vendor"]
     assert vendor_item["status"] == "warning"
+
+
+def test_now_action_plan_shows_call_required_questions():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        model_number="AY-R22DM",
+        appliance_type="家電",
+        prefecture="東京都",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form,
+        d["repair_type"],
+        d["needs_data_erase"],
+        d["diagnostics"],
+        d["warranty_result"],
+        d["cost_result"],
+    )
+
+    labels = [item["label"] for item in plan["call_required"]]
+    assert "症状の詳細" in labels
+    assert "発生時期" in labels
+    assert "発生頻度" in labels
+
+
+def test_now_action_plan_removes_symptom_after_input():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        symptom="冷えない",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+    )
+
+    assert "症状の詳細" not in [item["label"] for item in plan["call_required"]]
+    assert "症状の詳細" in [item["label"] for item in plan["completed"]]
+
+
+def test_now_action_plan_removes_occurrence_time_after_input():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    form["occurrence_time"] = "昨日から"
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+    )
+
+    assert "発生時期" not in [item["label"] for item in plan["call_required"]]
+    assert "発生時期" in [item["label"] for item in plan["completed"]]
+
+
+def test_now_action_plan_removes_occurrence_frequency_after_input():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    form["occurrence_frequency"] = "毎回"
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+    )
+
+    assert "発生頻度" not in [item["label"] for item in plan["call_required"]]
+    assert "発生頻度" in [item["label"] for item in plan["completed"]]
+
+
+def test_manual_checked_item_moves_to_completed():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+        {"occurrence_time": True},
+    )
+
+    assert "発生時期" not in [item["label"] for item in plan["call_required"]]
+    assert "発生時期" in [item["label"] for item in plan["completed"]]
+
+
+def test_question_categories_put_escalation_after_call():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        prefecture="福岡県",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    categories = app.build_question_categories(
+        form,
+        d["repair_type"],
+        d["needs_data_erase"],
+        d["diagnostics"],
+        d["warranty_result"],
+        d["cost_result"],
+    )
+
+    assert any("終話後に担当へエスカレーションして拠点確定" in item
+               for item in categories["after_call"])
+    assert not any("終話後に担当へエスカレーションして拠点確定" in item["label"]
+                   for item in categories["call_required"])
+
+
+def test_missing_core_fields_are_call_required():
+    form = make_form()
+    d = app.run_decision(form)
+    categories = app.build_question_categories(
+        form,
+        d["repair_type"],
+        d["needs_data_erase"],
+        d["diagnostics"],
+        d["warranty_result"],
+        d["cost_result"],
+    )
+
+    call_required = "\n".join(item["label"] for item in categories["call_required"])
+    assert "製品" in call_required
+    assert "メーカー" in call_required
+    assert "家電/住設" in call_required
+
+
+def test_script_reference_info_for_independent_display():
+    form = make_form(
+        product="ドライヤー",
+        manufacturer="パナソニック",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    info = app.build_script_reference_info(d)
+
+    assert info["title"] == "📘 参照スクリプト"
+    assert info["script_type"]
+    assert info["display"]
+    assert " / " in info["label"]
+
+
+def test_script_reference_info_unregistered_url_message():
+    d = app.run_decision(make_form(
+        product="腕時計",
+        manufacturer="カシオ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    ))
+    info = app.build_script_reference_info(d)
+
+    assert info["matched"] is False
+    assert "URL未登録（手動で参照）" in info["message"]
+
+
+def test_script_guidance_for_appliance_visit_repair():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    reference = app.build_script_reference_info(d)
+    guidance = app.build_script_guidance_panel_info(form, d, reference)
+
+    assert guidance["matched"] is True
+    assert guidance["official_script_label"] == "家電出張修理 該当箇所"
+    assert "症状の詳細" in guidance["hearing_items"]
+    assert "訪問先住所" in guidance["hearing_items"]
+
+
+def test_script_guidance_hearing_items_feed_now_action_candidates():
+    form = make_form(
+        product="エアコン",
+        manufacturer="シャープ",
+        appliance_type="家電",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2027/01/01",
+    )
+    d = app.run_decision(form)
+    guidance = app.build_script_guidance_panel_info(form, d)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d["needs_data_erase"],
+        d["diagnostics"], d["warranty_result"], d["cost_result"],
+        {}, guidance["hearing_items"],
+    )
+
+    symptom_items = [item for item in plan["call_required"] if item["label"] == "症状の詳細"]
+    assert symptom_items
+    assert symptom_items[0]["source"] == "スクリプト補助"
+
+
+def test_official_script_body_is_not_stored_in_guidance_master():
+    df = app.load_script_guidance_csv()
+    joined = "\n".join(
+        " ".join(str(row.get(col, "")) for col in ["title", "hearing_items", "notes"])
+        for _, row in df.iterrows()
+    )
+
+    assert "この度は" not in joined
+    assert "お電話ありがとうございます" not in joined
+    assert all(len(str(row.get("notes", ""))) < 120 for _, row in df.iterrows())
+
+
+def test_script_reference_source_is_above_now_action_source():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    right_panel_index = source.index('st.subheader("⚡ 通話中判定結果")')
+    script_index = source.index('st.markdown("##### 📘 参照スクリプト")', right_panel_index)
+    now_index = source.index('st.markdown("### ✅ 今やること")', right_panel_index)
+
+    assert script_index < now_index
 
 
 def test_aircon_sharp_does_not_leave_manufacturer_confirmation():

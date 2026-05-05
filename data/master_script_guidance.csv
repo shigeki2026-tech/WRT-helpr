@@ -1,0 +1,4 @@
+priority,enabled,script_key,repair_type,appliance_type,product_keyword,manufacturer_keyword,title,hearing_items,notes,official_script_label,official_script_url
+10,1,家電・出張修理,出張修理,家電,,,家電出張修理 通話補助,症状の詳細|発生時期|発生頻度|設置場所|訪問先住所|他窓口へ修理依頼済みか,正式トークはリンク先の公式スクリプトを参照してください。,家電出張修理 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=898484067
+20,1,家電・持込修理,持込修理,家電,,,家電持込修理 通話補助,症状の詳細|発生時期|発生頻度|付属品含めて送付可能か|返送先住所|他窓口へ修理依頼済みか,正式トークはリンク先の公式スクリプトを参照してください。,家電持込修理 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=898484067
+30,1,住設受付,出張修理,住設,,,住設受付 通話補助,症状の詳細|発生時期|発生頻度|設置場所|訪問先住所|他窓口へ修理依頼済みか,正式トークはリンク先の公式スクリプトを参照してください。,住設受付 該当箇所,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=539693209

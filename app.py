@@ -68,6 +68,10 @@ FIELD_LABELS = {
     "pc_manufacturer_type": "PCメーカー区分",
     "model_number": "型番",
     "call_memo": "通話中メモ",
+    "occurrence_time": "発生時期",
+    "occurrence_frequency": "発生頻度",
+    "install_location": "設置場所",
+    "other_repair_requested": "他窓口へ修理依頼済みか",
     "product_price": "商品価格",
     "warranty_plan": "保証プラン",
     "warranty_start_date": "保証開始日",
@@ -208,6 +212,224 @@ def build_after_call_steps(diagnostics: dict) -> list[str]:
     return steps
 
 
+def _append_unique_across(categories: dict, category: str, value: str, seen: set) -> None:
+    value = (value or "").strip()
+    if value and value not in seen:
+        categories[category].append(value)
+        seen.add(value)
+
+
+def _split_required_question_text(text: str) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+    if "、" in text and not text.startswith("【"):
+        return [part.strip() for part in text.split("、") if part.strip()]
+    return [text]
+
+
+def _split_pipe_items(text: str) -> list[str]:
+    return [part.strip() for part in str(text or "").split("|") if part.strip()]
+
+
+def _is_after_call_question(text: str) -> bool:
+    return any(keyword in text for keyword in (
+        "終話後", "担当へエスカレーション", "担当確認", "SV/担当確認",
+        "拠点確定", "修理拠点確認", "Google Drive", "依頼書PDF格納",
+    ))
+
+
+def _is_supplemental_question(text: str) -> bool:
+    if text == DOUBLE_PROTECT_AMOUNT_CONFIRMATION:
+        return False
+    return any(keyword in text for keyword in (
+        "他窓口", "修理依頼済み", "データ消去", "事故状況", "破損状況",
+    ))
+
+
+CHECK_ITEM_DEFINITIONS = {
+    "症状の詳細": {
+        "id": "symptom_detail",
+        "fields": ("symptom",),
+        "input": "textarea",
+        "label": "症状の詳細",
+        "input_label": "症状",
+    },
+    "発生時期": {
+        "id": "occurrence_time",
+        "fields": ("occurrence_time",),
+        "input": "text",
+        "label": "発生時期",
+    },
+    "発生頻度": {
+        "id": "occurrence_frequency",
+        "fields": ("occurrence_frequency",),
+        "input": "text",
+        "label": "発生頻度",
+    },
+    "設置場所": {
+        "id": "install_location",
+        "fields": ("install_location", "install_type"),
+        "input": "text",
+        "label": "設置場所",
+    },
+    "訪問先住所": {
+        "id": "visit_address",
+        "fields": ("address",),
+        "input": "address_with_check",
+        "label": "訪問先住所",
+    },
+    "訪問先住所確認済みチェック": {
+        "id": "visit_address",
+        "fields": ("address",),
+        "input": "address_with_check",
+        "label": "訪問先住所",
+    },
+    "他窓口へ修理依頼済みか": {
+        "id": "other_repair_requested",
+        "fields": ("other_repair_requested",),
+        "input": "checkbox",
+        "label": "他窓口へ修理依頼済みか",
+    },
+    "【物損付/DP】物損時の保証金額をシステムで確認": {
+        "id": "double_protect_amount",
+        "fields": (),
+        "input": "manual",
+        "label": "【物損付/DP】物損時の保証金額をシステムで確認",
+    },
+}
+
+
+def _check_item_definition(label: str) -> dict:
+    clean = (label or "").strip()
+    if clean in CHECK_ITEM_DEFINITIONS:
+        return CHECK_ITEM_DEFINITIONS[clean]
+    for key, definition in CHECK_ITEM_DEFINITIONS.items():
+        if key and key in clean:
+            return {**definition, "label": clean}
+    item_id = re.sub(r"[^0-9A-Za-z_]+", "_", clean).strip("_") or "manual_item"
+    return {"id": f"manual_{item_id}", "fields": (), "input": "manual", "label": clean}
+
+
+def _manual_check_done(manual_check: dict | None, item_id: str) -> bool:
+    return bool((manual_check or {}).get(item_id))
+
+
+def _form_field_done(form: dict, field: str) -> bool:
+    value = form.get(field)
+    if isinstance(value, bool):
+        return value
+    return bool(str(value or "").strip())
+
+
+def build_check_item(label: str, form: dict, manual_check: dict | None = None,
+                     source: str = "") -> dict:
+    definition = _check_item_definition(label)
+    item_id = definition["id"]
+    fields = tuple(definition.get("fields") or ())
+    field_done = any(_form_field_done(form, field) for field in fields)
+    manual_done = _manual_check_done(manual_check, item_id)
+    return {
+        "id": item_id,
+        "label": definition.get("label") or label,
+        "input_label": definition.get("input_label") or definition.get("label") or label,
+        "fields": fields,
+        "input": definition.get("input", "manual"),
+        "done": bool(field_done or manual_done),
+        "source": source,
+    }
+
+
+def build_question_categories(form: dict, repair_type: str, needs_data_erase: bool,
+                              diagnostics: dict | None = None,
+                              warranty_result: dict | None = None,
+                              cost_result: dict | None = None,
+                              manual_check: dict | None = None,
+                              guidance_items: list[str] | None = None) -> dict:
+    """通話中の確認項目を、通話中必須 / 終話後 / 補足に重複なしで分類する。"""
+    diagnostics = diagnostics or {}
+    warranty_result = warranty_result or {}
+    cost_result = cost_result or {}
+    categories = {"call_required": [], "after_call": [], "completed": []}
+    seen: set = set()
+    completed_seen: set = set()
+
+    def _add_call_item(label: str, source: str) -> None:
+        item = build_check_item(label, form, manual_check, source)
+        if item["label"] in seen or item["label"] in completed_seen:
+            return
+        target = categories["completed"] if item["done"] else categories["call_required"]
+        target_seen = completed_seen if item["done"] else seen
+        target.append(item)
+        target_seen.add(item["label"])
+
+    for field in ("appliance_type", "product", "manufacturer"):
+        if not (form.get(field) or "").strip():
+            _add_call_item(field_label(field), "未入力項目")
+
+    for guidance_item in guidance_items or []:
+        _add_call_item(guidance_item, "スクリプト補助")
+
+    req_questions = build_required_questions(form, repair_type, needs_data_erase)
+    if warranty_result.get("warranty_status") == "before_start":
+        req_questions.insert(0, "メーカー保証期間を確認")
+        req_questions.insert(1, "メーカーまたは販売店窓口への誘導")
+    elif warranty_result.get("warranty_status") == "unknown":
+        req_questions.insert(0, "保証開始日・保証終了日を確認")
+    elif warranty_result.get("warranty_status") == "expired":
+        req_questions.insert(0, "受付不可。保証期間終了後であることを案内")
+    if cost_result.get("cost_status") == "pending":
+        cost_rq = (cost_result.get("required_questions") or "").strip()
+        if cost_rq:
+            req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
+
+    for question in req_questions:
+        for part in _split_required_question_text(question):
+            if _is_after_call_question(part):
+                bucket = "after_call"
+            elif _is_supplemental_question(part):
+                bucket = "call_required"
+            else:
+                bucket = "call_required"
+            if bucket == "after_call":
+                _append_unique_across(categories, "after_call", part, seen)
+            else:
+                _add_call_item(part, "確認項目")
+
+    for item in sort_diagnostic_items(diagnostics.get("items", [])):
+        for field in item.get("missing_fields", []) or []:
+            bucket = "after_call" if item.get("impact") == "after_call_ok" else "call_required"
+            if bucket == "after_call":
+                _append_unique_across(categories, bucket, field_label(field), seen)
+            else:
+                _add_call_item(field_label(field), item.get("area", "判定診断"))
+        action = (item.get("next_action") or "").strip()
+        if item.get("impact") == "after_call_ok":
+            _append_unique_across(categories, "after_call", action, seen)
+        elif item.get("impact") in ("blocking", "call_time_required"):
+            _add_call_item(action, item.get("area", "判定診断"))
+
+    return categories
+
+
+def build_now_action_plan(form: dict, repair_type: str, needs_data_erase: bool,
+                          diagnostics: dict | None = None,
+                          warranty_result: dict | None = None,
+                          cost_result: dict | None = None,
+                          manual_check: dict | None = None,
+                          guidance_items: list[str] | None = None) -> dict:
+    """最上部の「今やること」パネルに出す内容を返す。"""
+    categories = build_question_categories(
+        form, repair_type, needs_data_erase, diagnostics, warranty_result, cost_result,
+        manual_check, guidance_items,
+    )
+    return {
+        "call_required": categories["call_required"],
+        "after_call": categories["after_call"],
+        "completed": categories["completed"],
+    }
+
+
 # 国内PCメーカー判定グループ
 DOMESTIC_PC_MAKERS = {
     "パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー", "NEC", "VAIO",
@@ -250,6 +472,11 @@ _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_ke
 _MFR_GROUP_COLS    = ["group_name", "manufacturers", "notes"]
 _AREA_GROUP_COLS   = ["area_group", "prefectures", "notes"]
 _SCRIPT_LINK_COLS   = ["script_sheet", "script_part", "display_name", "url", "notes"]
+_SCRIPT_GUIDANCE_COLS = [
+    "priority", "enabled", "script_key", "repair_type", "appliance_type",
+    "product_keyword", "manufacturer_keyword", "title", "hearing_items",
+    "notes", "official_script_label", "official_script_url",
+]
 _VENDOR_COLS       = ["priority", "enabled", "call_line", "prefecture", "area_group",
                       "manufacturer_keyword", "product_keyword", "store_keyword",
                       "repair_type", "is_over_10years", "vendor_name", "reason",
@@ -357,6 +584,11 @@ def _load_call_lines_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_call_lines.csv", _CALL_LINE_COLS)
 
 
+@st.cache_data
+def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_script_guidance.csv", _SCRIPT_GUIDANCE_COLS)
+
+
 def _csv_mtime(filename: str) -> float:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
     return os.path.getmtime(path) if os.path.exists(path) else 0.0
@@ -388,6 +620,10 @@ def load_store_rules() -> pd.DataFrame:
 
 def load_call_lines() -> pd.DataFrame:
     return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
+
+
+def load_script_guidance_csv() -> pd.DataFrame:
+    return _load_script_guidance_cached(_csv_mtime("master_script_guidance.csv"))
 
 
 MASTER_APPEND_TARGETS = {
@@ -1159,12 +1395,29 @@ def apply_default_operator_name(form: dict, settings: dict | None = None) -> dic
     return form
 
 
+def set_copy_import_expanded(session_state, expanded: bool) -> None:
+    session_state["copy_import_expanded"] = bool(expanded)
+    # Keep the previous key in sync for older session state/tests.
+    session_state["copy_panel_open"] = bool(expanded)
+
+
+def copy_import_expanded(session_state) -> bool:
+    if "copy_import_expanded" in session_state:
+        return bool(session_state.get("copy_import_expanded"))
+    return bool(session_state.get("copy_panel_open", False))
+
+
+def close_copy_import_panel(session_state) -> None:
+    set_copy_import_expanded(session_state, False)
+
+
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
     new_form = apply_default_operator_name(empty_form(), settings)
     session_state["form"] = new_form
+    session_state["call_check_manual"] = {}
     session_state["extracted"] = {}
     session_state["pasted_text"] = ""
-    session_state["copy_panel_open"] = False
+    set_copy_import_expanded(session_state, False)
     session_state["master_registration_candidate"] = {}
     for key in [
         "memo_after",
@@ -1176,8 +1429,13 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_action_input",
         "call_memo_input",
         "after_call_memo_display",
+        "call_memo_common_call",
+        "call_memo_common_after",
     ]:
         if key in session_state:
+            del session_state[key]
+    for key in list(session_state.keys()):
+        if str(key).startswith("manual_check_"):
             del session_state[key]
     return new_form
 
@@ -1342,6 +1600,78 @@ def lookup_script_link(script_result: dict) -> dict:
             "notes": (row.get("notes") or "").strip(),
         }
     return {"matched": False, "display_name": "", "url": "", "notes": ""}
+
+
+def _script_guidance_keyword_matches(value: str, keyword: str) -> bool:
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return True
+    return keyword in (value or "")
+
+
+def _script_guidance_script_key_matches(row_key: str, script_result: dict,
+                                        script_reference: dict | None = None) -> bool:
+    row_key = (row_key or "").strip()
+    if not row_key:
+        return True
+    candidates = [
+        script_result.get("sheet_name", ""),
+        script_result.get("part", ""),
+        script_result.get("display_name", ""),
+    ]
+    if script_reference:
+        candidates.extend([
+            script_reference.get("script_type", ""),
+            script_reference.get("display", ""),
+            script_reference.get("label", ""),
+            script_reference.get("link_text", ""),
+        ])
+    return any(row_key in str(candidate or "") for candidate in candidates)
+
+
+def select_script_guidance(form: dict, decision: dict,
+                           script_reference: dict | None = None) -> dict:
+    """通話補助マスタから、現在の判定に合う聴取事項・注意点を1件選ぶ。"""
+    df = load_script_guidance_csv()
+    if df.empty:
+        return {"matched": False, "hearing_items": [], "notes": "", "title": ""}
+
+    script_result = decision.get("script_result", {})
+    repair_type = (decision.get("repair_type") or "").strip()
+    appliance_type = (form.get("appliance_type") or "").strip()
+    product_text = " ".join([
+        str(decision.get("normalized_product") or ""),
+        str(form.get("product") or ""),
+        str(form.get("series") or ""),
+        str(form.get("product_original") or ""),
+    ])
+    manufacturer_text = " ".join([
+        str(form.get("manufacturer") or ""),
+        str(form.get("manufacturer_original") or ""),
+    ])
+
+    for _, row in df.iterrows():
+        if not _script_guidance_script_key_matches(row.get("script_key", ""), script_result, script_reference):
+            continue
+        row_repair_type = (row.get("repair_type") or "").strip()
+        if row_repair_type and row_repair_type != repair_type:
+            continue
+        row_appliance_type = (row.get("appliance_type") or "").strip()
+        if row_appliance_type and row_appliance_type != appliance_type:
+            continue
+        if not _script_guidance_keyword_matches(product_text, row.get("product_keyword", "")):
+            continue
+        if not _script_guidance_keyword_matches(manufacturer_text, row.get("manufacturer_keyword", "")):
+            continue
+        return {
+            "matched": True,
+            "title": (row.get("title") or "").strip() or "スクリプト補助",
+            "hearing_items": _split_pipe_items(row.get("hearing_items", "")),
+            "notes": (row.get("notes") or "").strip(),
+            "official_script_label": (row.get("official_script_label") or "").strip(),
+            "official_script_url": (row.get("official_script_url") or "").strip(),
+        }
+    return {"matched": False, "hearing_items": [], "notes": "", "title": ""}
 
 
 def load_manufacturer_groups_dict() -> dict:
@@ -2597,6 +2927,62 @@ def build_summary_card_display(decision: dict) -> dict:
     }
 
 
+def build_script_reference_info(decision: dict) -> dict:
+    summary = build_summary_card_display(decision)
+    script_result = decision.get("script_result", {})
+    script_link = lookup_script_link(script_result)
+    script_type = summary["script_type"]
+    script_display = summary["script_part"] or summary["script_display"]
+    if script_type == "ダブルプロテクト" and script_display.startswith("家電・"):
+        script_display = script_display.replace("家電・", "", 1)
+    return {
+        "title": "📘 参照スクリプト",
+        "script_type": script_type,
+        "display": script_display,
+        "label": f"{script_type} / {script_display}",
+        "matched": bool(script_link.get("matched")),
+        "url": script_link.get("url", ""),
+        "link_text": script_link.get("display_name", "スクリプト"),
+        "message": "" if script_link.get("matched") else f"{script_type} / {script_display}\nURL未登録（手動で参照）",
+    }
+
+
+def build_script_guidance_panel_info(form: dict, decision: dict,
+                                     script_reference: dict | None = None) -> dict:
+    """公式本文ではなく、通話補助として表示する聴取事項・注意点を返す。"""
+    script_reference = script_reference or build_script_reference_info(decision)
+    guidance = select_script_guidance(form, decision, script_reference)
+    if guidance.get("matched"):
+        hearing_items = guidance.get("hearing_items", [])
+        notes = guidance.get("notes", "")
+        official_label = guidance.get("official_script_label") or script_reference.get("link_text", "")
+        official_url = guidance.get("official_script_url") or script_reference.get("url", "")
+        official_matched = bool(official_url)
+        title = guidance.get("title") or "スクリプト補助"
+    else:
+        hearing_items = build_required_questions(
+            form,
+            decision.get("repair_type", ""),
+            bool(decision.get("needs_data_erase")),
+        )
+        notes = "正式トークはリンク先の公式スクリプトを参照してください。"
+        official_label = script_reference.get("link_text", "")
+        official_url = script_reference.get("url", "")
+        official_matched = bool(script_reference.get("matched"))
+        title = "基本確認事項"
+
+    return {
+        "title": title,
+        "matched": bool(guidance.get("matched")),
+        "hearing_items": _dedupe_preserve_order(hearing_items),
+        "notes": notes,
+        "official_script_label": official_label or "スクリプト",
+        "official_script_url": official_url,
+        "official_script_matched": official_matched,
+        "script_reference": script_reference,
+    }
+
+
 # ============================================================
 # 履歴テンプレ
 # ============================================================
@@ -3243,6 +3629,76 @@ def render_step_list(title: str, steps: list[str]):
         st.markdown(f"**{idx}.** {step}")
 
 
+def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
+    st.markdown("##### 📝 通話中メモ（共通）")
+    st.caption("判定には使いません。通話中の一時メモ用です。")
+    if st.session_state.get(key) != form.get("call_memo", ""):
+        st.session_state[key] = form.get("call_memo", "")
+    form["call_memo"] = st.text_area(
+        "📝 通話中メモ（共通）",
+        value=form.get("call_memo", ""),
+        height=height,
+        key=key,
+        help="ラクテル用テキストやTeams報告文には自動反映されません。",
+    )
+    st.session_state.form = form
+
+
+def _set_manual_check(item_id: str, value: bool) -> None:
+    manual = dict(st.session_state.get("call_check_manual", {}))
+    manual[item_id] = bool(value)
+    st.session_state["call_check_manual"] = manual
+
+
+def render_now_action_item(item: dict, form: dict) -> None:
+    item_id = item["id"]
+    st.markdown(f"**{item['label']}**")
+    if item.get("source"):
+        st.caption(f"根拠：{item['source']}")
+    input_type = item.get("input")
+    fields = item.get("fields") or ()
+    if input_type == "textarea" and fields:
+        form[fields[0]] = st.text_area(
+            item.get("input_label") or field_label(fields[0]),
+            value=form.get(fields[0], ""),
+            height=70,
+            key=f"now_input_{item_id}",
+        )
+    elif input_type == "text" and fields:
+        form[fields[0]] = st.text_input(
+            item.get("input_label") or field_label(fields[0]),
+            value=form.get(fields[0], ""),
+            key=f"now_input_{item_id}",
+        )
+    elif input_type == "address_with_check":
+        form["address"] = st.text_input(
+            "訪問先住所",
+            value=form.get("address", ""),
+            key="now_input_visit_address",
+        )
+        checked = st.checkbox(
+            "訪問先住所確認済み",
+            value=_manual_check_done(st.session_state.get("call_check_manual", {}), item_id),
+            key=f"manual_check_{item_id}",
+        )
+        _set_manual_check(item_id, checked)
+    elif input_type == "checkbox" and fields:
+        value = st.checkbox(
+            item.get("input_label") or field_label(fields[0]),
+            value=bool(form.get(fields[0])),
+            key=f"now_input_{item_id}",
+        )
+        form[fields[0]] = value
+    else:
+        checked = st.checkbox(
+            "確認済み",
+            value=_manual_check_done(st.session_state.get("call_check_manual", {}), item_id),
+            key=f"manual_check_{item_id}",
+        )
+        _set_manual_check(item_id, checked)
+    st.session_state.form = form
+
+
 def render_warranty_date_input(field_name: str, label: str, form: dict,
                                missing_fields: set, invalid_fields: set, diagnostics: dict):
     """保証日付をカレンダー入力し、フォームには YYYY/MM/DD 文字列で保持する。"""
@@ -3312,6 +3768,8 @@ def init_session():
         st.session_state.teams_send_log = []
     if "master_registration_candidate" not in st.session_state:
         st.session_state.master_registration_candidate = {}
+    if "call_check_manual" not in st.session_state:
+        st.session_state.call_check_manual = {}
 
 
 # ============================================================
@@ -3354,7 +3812,7 @@ def render_tab_call():
 
         with st.expander(  # UI v3
             "📋 コピー情報取り込み",  # UI v3
-            expanded=st.session_state.get("copy_panel_open", False),  # UI v3
+            expanded=copy_import_expanded(st.session_state),  # UI v3
         ):  # UI v3
             if _PYPERCLIP_AVAILABLE:
                 st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
@@ -3370,9 +3828,11 @@ def render_tab_call():
                             if extracted:
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
-                            st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                            st.session_state["copy_panel_open"] = False
-                            st.rerun()
+                                st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                                close_copy_import_panel(st.session_state)
+                                st.rerun()
+                            else:
+                                st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
                     except Exception as e:
                         st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
             else:
@@ -3389,8 +3849,14 @@ def render_tab_call():
 
             if st.button("🔍 抽出する", use_container_width=True):
                 if pasted.strip():
-                    st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                    st.session_state.extracted = extract_fields_from_pasted_text(pasted)
+                    extracted = extract_fields_from_pasted_text(pasted)
+                    st.session_state.extracted = extracted
+                    if extracted:
+                        st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                        close_copy_import_panel(st.session_state)
+                        st.rerun()
+                    else:
+                        st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
                 else:
                     st.warning("テキストを貼り付けてください。")
 
@@ -3411,21 +3877,12 @@ def render_tab_call():
                 if st.button("📥 フォームへ反映", use_container_width=True):
                     st.session_state.form = apply_extracted_fields_to_form(
                         st.session_state.extracted, st.session_state.form)
-                    st.session_state["copy_panel_open"] = False  # UI v3
+                    close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
                     st.rerun()
 
         form = st.session_state.form
-        st.markdown("##### 📝 通話中メモ（自由記入）")
-        st.info("判定には使いません。通話中の一時メモ用です。")
-        form["call_memo"] = st.text_area(
-            "📝 通話中メモ（自由記入）",
-            form.get("call_memo", ""),
-            height=140,
-            key="call_memo_input",
-            placeholder="通話中の一時メモ、補足発言、聞き取り途中の内容など",
-        )
-        st.session_state.form = form
+        render_common_call_memo(form, "call_memo_common_call", height=120)
 
         st.subheader("📝 受付情報フォーム")
         pre_decision = run_decision(form)  # UI修正v2
@@ -3436,7 +3893,7 @@ def render_tab_call():
         appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
-        st.markdown("##### 案件基本")
+        st.markdown("##### 通話中に見る項目")
         if SHOW_CALL_TYPE_IN_CALL_FORM:
             call_type_opts = ["", "新規入電", "折り返し", "再入電", "その他"]
             form["call_type"] = st.selectbox(
@@ -3454,10 +3911,6 @@ def render_tab_call():
         render_field_marker("prefecture", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["prefecture"]    = st.selectbox("都道府県", pref_opts,
             index=pref_opts.index(form.get("prefecture","")) if form.get("prefecture") in pref_opts else 0)
-        render_field_marker("address", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["address"]       = st.text_input("お客様住所",   form.get("address",""))
-
-        st.markdown("##### 製品")
         product_opts = get_product_options()
         current_product = form.get("product", "")
         if current_product and current_product not in product_opts:
@@ -3469,12 +3922,6 @@ def render_tab_call():
             product_opts,
             index=product_opts.index(current_product) if current_product in product_opts else 0,
         )
-        form["product_original"] = st.text_input(
-            "製品メモ / 原文製品名",
-            form.get("product_original",""),
-            placeholder="コピー抽出されたシリーズ名・分類名など",
-        )
-        form["series"]        = st.text_input("シリーズ",     form.get("series",""))
         manufacturer_opts = get_manufacturer_options()
         current_manufacturer = form.get("manufacturer", "")
         if current_manufacturer and current_manufacturer not in manufacturer_opts:
@@ -3486,83 +3933,87 @@ def render_tab_call():
             manufacturer_opts,
             index=manufacturer_opts.index(current_manufacturer) if current_manufacturer in manufacturer_opts else 0,
         )
-        form["manufacturer_original"] = st.text_input(
-            "メーカー原文 / コピー元メーカー名",
-            form.get("manufacturer_original",""),
-            placeholder="コピー抽出されたメーカー名など",
-        )
-        if form.get("product") == "パソコン":
-            current_pc_type = form.get("pc_manufacturer_type") or infer_pc_manufacturer_type(
-                form.get("manufacturer_original", ""),
-                form.get("manufacturer", ""),
-            )
-            if current_pc_type not in PC_MANUFACTURER_TYPE_OPTIONS:
-                current_pc_type = PC_MANUFACTURER_TYPE_UNKNOWN
-            render_field_marker("pc_manufacturer_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
-            form["pc_manufacturer_type"] = st.selectbox(
-                "PCメーカー区分",
-                PC_MANUFACTURER_TYPE_OPTIONS,
-                index=PC_MANUFACTURER_TYPE_OPTIONS.index(current_pc_type),
-            )
-        else:
-            form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
-
-        st.markdown("##### 保証")
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
         if is_double_protect_plan(form.get("warranty_plan", "")):
             st.warning(f"物損付 / DP案件: {double_protect_plan_label(form.get('warranty_plan', ''))}。物損保証金額はシステム確認。")
-        render_warranty_date_input(
-            "warranty_start_date", "保証開始日",
-            form, missing_fields_set, invalid_fields_set, pre_diagnostics,
-        )
-        # 製造10年以上チェック（賃貸・既築案件の業者判定に使用）
-        warranty_start = form.get("warranty_start_date", "")
-        years_hint = ""
-        if warranty_start:
-            start_dt = parse_date_safe(warranty_start)
-            if start_dt:
-                years = (date.today() - start_dt).days // 365
-                years_hint = f"（保証開始日から約 {years} 年）"
-        form["is_over_10years"] = st.checkbox(
-            f"製造10年以上 {years_hint}",
-            value=form.get("is_over_10years", False),
-            key="is_over_10years_cb",
-            help="賃貸・既築案件の修理業者判定に使用します。製造年が不明な場合はお客様に確認してください。",
-        )
-        render_warranty_date_input(
-            "warranty_end_date", "保証終了日",
-            form, missing_fields_set, invalid_fields_set, pre_diagnostics,
-        )
-        form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
 
-        st.markdown("##### 販売店")
-        render_field_marker("store_name", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["store_name"]    = st.text_input("販売店",       form.get("store_name",""))
-        render_field_marker("extra_condition", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["extra_condition"] = st.text_area(
-            "修理受付注意点 / 補足条件・費用判定メモ",
-            form.get("extra_condition",""),
-            height=90,
-            placeholder="例: 家庭用 / 業務用 / ガス漏れ / 未確認",
-        )
-        if "エアコン" in (form.get("product") or ""):
-            q_cols = st.columns(4)
-            for idx, label in enumerate(["家庭用", "業務用", "ガス漏れ", "未確認"]):
-                if q_cols[idx].button(label, key=f"ac_extra_{label}", use_container_width=True):
-                    form["extra_condition"] = label
-                    st.session_state.form = form
-                    st.rerun()
-
-        st.markdown("##### 受付補足")
-        form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
-        form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
-        form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
-        form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-        form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
-        form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
-        form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
+        with st.expander("補助情報を開く", expanded=False):
+            render_field_marker("address", missing_fields_set, invalid_fields_set, pre_diagnostics)
+            form["address"]       = st.text_input("お客様住所",   form.get("address",""))
+            form["product_original"] = st.text_input(
+                "製品メモ / 原文製品名",
+                form.get("product_original",""),
+                placeholder="コピー抽出されたシリーズ名・分類名など",
+            )
+            form["series"]        = st.text_input("シリーズ",     form.get("series",""))
+            form["manufacturer_original"] = st.text_input(
+                "メーカー原文 / コピー元メーカー名",
+                form.get("manufacturer_original",""),
+                placeholder="コピー抽出されたメーカー名など",
+            )
+            if form.get("product") == "パソコン":
+                current_pc_type = form.get("pc_manufacturer_type") or infer_pc_manufacturer_type(
+                    form.get("manufacturer_original", ""),
+                    form.get("manufacturer", ""),
+                )
+                if current_pc_type not in PC_MANUFACTURER_TYPE_OPTIONS:
+                    current_pc_type = PC_MANUFACTURER_TYPE_UNKNOWN
+                render_field_marker("pc_manufacturer_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
+                form["pc_manufacturer_type"] = st.selectbox(
+                    "PCメーカー区分",
+                    PC_MANUFACTURER_TYPE_OPTIONS,
+                    index=PC_MANUFACTURER_TYPE_OPTIONS.index(current_pc_type),
+                )
+            else:
+                form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
+            form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
+            form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
+            form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
+            form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
+            form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
+            form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
+            form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
+            form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
+            render_warranty_date_input(
+                "warranty_start_date", "保証開始日",
+                form, missing_fields_set, invalid_fields_set, pre_diagnostics,
+            )
+            # 製造10年以上チェック（賃貸・既築案件の業者判定に使用）
+            warranty_start = form.get("warranty_start_date", "")
+            years_hint = ""
+            if warranty_start:
+                start_dt = parse_date_safe(warranty_start)
+                if start_dt:
+                    years = (date.today() - start_dt).days // 365
+                    years_hint = f"（保証開始日から約 {years} 年）"
+            form["is_over_10years"] = st.checkbox(
+                f"製造10年以上 {years_hint}",
+                value=form.get("is_over_10years", False),
+                key="is_over_10years_cb",
+                help="賃貸・既築案件の修理業者判定に使用します。製造年が不明な場合はお客様に確認してください。",
+            )
+            render_warranty_date_input(
+                "warranty_end_date", "保証終了日",
+                form, missing_fields_set, invalid_fields_set, pre_diagnostics,
+            )
+            render_field_marker("store_name", missing_fields_set, invalid_fields_set, pre_diagnostics)
+            form["store_name"]    = st.text_input("販売店",       form.get("store_name",""))
+            render_field_marker("extra_condition", missing_fields_set, invalid_fields_set, pre_diagnostics)
+            form["extra_condition"] = st.text_area(
+                "補足条件",
+                form.get("extra_condition",""),
+                height=90,
+                placeholder="例: 家庭用 / 業務用 / ガス漏れ / 未確認",
+            )
+            if "エアコン" in (form.get("product") or ""):
+                q_cols = st.columns(4)
+                for idx, label in enumerate(["家庭用", "業務用", "ガス漏れ", "未確認"]):
+                    if q_cols[idx].button(label, key=f"ac_extra_{label}", use_container_width=True):
+                        form["extra_condition"] = label
+                        st.session_state.form = form
+                        st.rerun()
         st.session_state.form = form
 
     # ── 判定実行（form確定後・right描画前に1回だけ）──
@@ -3592,8 +4043,55 @@ def render_tab_call():
     # UI改修: 右カラムはゾーンB/C/Dの順で判定結果を表示
     with col_result:
         st.subheader("⚡ 通話中判定結果")
-        next_action_steps = build_next_action_steps(diagnostics)
-        after_call_steps = build_after_call_steps(diagnostics)
+        manual_check = st.session_state.get("call_check_manual", {})
+        script_reference = build_script_reference_info(decision)
+        script_guidance = build_script_guidance_panel_info(st.session_state.form, decision, script_reference)
+        question_categories = build_question_categories(
+            st.session_state.form, repair_type, needs_data_erase,
+            diagnostics, warranty_result, cost_result, manual_check,
+            script_guidance.get("hearing_items", []),
+        )
+        now_action_plan = build_now_action_plan(
+            st.session_state.form, repair_type, needs_data_erase,
+            diagnostics, warranty_result, cost_result, manual_check,
+            script_guidance.get("hearing_items", []),
+        )
+
+        st.markdown("##### 📘 参照スクリプト")
+        st.markdown(f"**{script_reference['label']}**")
+        if script_reference["matched"]:
+            st.markdown(f"[{script_reference['link_text']}を開く]({script_reference['url']})")
+        else:
+            st.info("URL未登録（手動で参照）")
+
+        with st.expander("📘 スクリプト補助", expanded=True):
+            official_url = script_guidance.get("official_script_url", "")
+            st.markdown("**公式スクリプト：**")
+            if official_url:
+                st.markdown(f"[{script_guidance.get('official_script_label') or 'スクリプト'}を開く]({official_url})")
+            else:
+                st.caption("URL未登録（手動で参照）")
+            st.markdown("**このケースの聴取事項：**")
+            for hearing_item in script_guidance.get("hearing_items", []):
+                st.markdown(f"- {hearing_item}")
+            if script_guidance.get("notes"):
+                st.markdown("**注意：**")
+                st.info(script_guidance["notes"])
+
+        st.markdown("### ✅ 今やること")
+        if now_action_plan["call_required"]:
+            for item in now_action_plan["call_required"]:
+                render_now_action_item(item, st.session_state.form)
+        else:
+            st.success("通話中の必須確認はありません")
+        if now_action_plan["after_call"]:
+            st.markdown("**終話後でよい**")
+            for idx, step in enumerate(now_action_plan["after_call"], 1):
+                st.markdown(f"{idx}. {step}")
+        if now_action_plan["completed"]:
+            with st.expander("✅ 完了済み", expanded=False):
+                for item in now_action_plan["completed"]:
+                    st.markdown(f"- {item['label']}")
 
         # UI改修: ゾーンB（最優先アラート）
         missing_warranty_fields = []
@@ -3630,15 +4128,21 @@ def render_tab_call():
                     .replace(">", "&gt;")  # UI v3
                     .replace('"', "&quot;"))  # UI v3
 
-        def _ui_v3_card(label: str, value: str, status: str, bg_color: str) -> str:  # UI v3
-            return (  # UI v3
-                f'<div style="background:{bg_color};color:white;padding:16px 20px;'  # UI v3
-                f'border-radius:10px;font-size:1.0em;line-height:1.8;margin-bottom:8px;">'  # UI v3
-                f'<div style="font-size:0.8em;opacity:0.85;">{_ui_v3_escape(label)}</div>'  # UI v3
-                f'<div style="font-size:1.4em;font-weight:bold;">{_ui_v3_escape(value)}</div>'  # UI v3
-                f'<div style="font-size:0.9em;">{status}</div>'  # UI v3
-                f'</div>'  # UI v3
-            )  # UI v3
+        def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str) -> str:  # UI v3
+            body = "".join(
+                f'<div style="display:flex;gap:8px;line-height:1.65;">'
+                f'<span style="min-width:5.5em;opacity:0.82;">{_ui_v3_escape(label)}</span>'
+                f'<span style="font-weight:600;">{value}</span>'
+                f'</div>'
+                for label, value in lines
+            )
+            return (
+                f'<div style="background:{bg_color};color:white;padding:14px 16px;'
+                f'border-radius:8px;font-size:0.95em;margin-bottom:8px;min-height:148px;">'
+                f'<div style="font-size:1.05em;font-weight:700;margin-bottom:8px;">{_ui_v3_escape(title)}</div>'
+                f'{body}'
+                f'</div>'
+            )
 
         repair_card_value = summary_display["repair"]["value"]  # UI v3
         repair_card_status = summary_display["repair"]["status"]  # UI v3
@@ -3650,94 +4154,98 @@ def render_tab_call():
         warranty_card_status = summary_display["warranty"]["status"]  # UI v3
         warranty_card_color = summary_display["warranty"]["color"]  # UI v3
 
-        script_link = lookup_script_link(script_result)  # UI v3
-        script_sheet = summary_display["script_sheet"]  # UI v3
-        script_part = summary_display["script_part"]  # UI v3
-        script_type = summary_display["script_type"]  # UI v3
-        script_display = summary_display["script_display"]  # UI v3
-        if script_link.get("matched"):  # UI v3
-            script_card_color = "#6c3483" if summary_display["is_double_protect"] else "#1a5276"  # UI v3
-            script_card_value = script_type  # UI v3
-            script_status = (  # UI v3
-                f'{_ui_v3_escape(script_display)}<br>'  # UI v3
-                f'<a href="{_ui_v3_escape(script_link.get("url", ""))}" target="_blank" '  # UI v3
-                f'style="color:#aed6f1;">{_ui_v3_escape(script_link.get("display_name", "参照リンク"))}を開く↗</a>'  # UI v3
-            )  # UI v3
-        else:  # UI v3
-            script_card_color = "#6c3483" if summary_display["is_double_protect"] else "#2c3e50"  # UI v3
-            script_card_value = script_type  # UI v3
-            script_status = f"{_ui_v3_escape(script_sheet)} / {_ui_v3_escape(script_display)}<br>URL未登録（手動で参照）"  # UI v3
-
-        card_cols = st.columns(5)
         product_display = decision.get("normalized_product") or form.get("product") or "未選択"
         manufacturer_display = (form.get("manufacturer") or "").strip()
         model_display = (form.get("model_number") or "").strip()
-        product_sub = " ".join(filter(None, [manufacturer_display, model_display])) or "─"
-        with card_cols[0]:
+        product_line = " / ".join(filter(None, [
+            product_display,
+            " ".join(filter(None, [manufacturer_display, model_display])),
+        ]))
+        st.caption(f"製品：{product_line or '未選択'}")
+
+        acceptance_label = {
+            "active": "受付判定へ進む",
+            "before_start": "受付不可",
+            "expired": "受付不可",
+            "unknown": "要確認",
+        }.get(warranty_status, "要確認")
+        vendor_card = build_vendor_candidate_card_info(vendor, vendor_result)
+        request_folder = vendor_card["request_folder"]
+        block_cols = st.columns(3)
+        with block_cols[0]:
             st.markdown(
-                _ui_v3_card("製品", product_display, product_sub, "#2e4057"),
+                _ui_v3_block("受付可否", [
+                    ("保証", _ui_v3_escape(warranty_card_value)),
+                    ("判定", _ui_v3_escape(acceptance_label)),
+                    ("DP/物損", _ui_v3_escape(double_protect_plan_label(form.get("warranty_plan", "")) if summary_display["is_double_protect"] else "通常保証")),
+                ], warranty_card_color),
                 unsafe_allow_html=True,
             )
-        with card_cols[1]:
+        with block_cols[1]:
             st.markdown(
-                _ui_v3_card("保証", warranty_card_value, warranty_card_status, warranty_card_color),
+                _ui_v3_block("修理方針", [
+                    ("形態", _ui_v3_escape(repair_card_value)),
+                    ("概算費用", _ui_v3_escape(cost_card_value)),
+                    ("案内可否", _ui_v3_escape(cost_card_status)),
+                ], repair_card_color),
                 unsafe_allow_html=True,
             )
-        with card_cols[2]:
+        with block_cols[2]:
             st.markdown(
-                _ui_v3_card("修理形態", repair_card_value, repair_card_status, repair_card_color),
-                unsafe_allow_html=True,
-            )
-        with card_cols[3]:
-            st.markdown(
-                _ui_v3_card("概算費用（保証対象外）", cost_card_value, cost_card_status, cost_card_color),
-                unsafe_allow_html=True,
-            )
-        with card_cols[4]:
-            st.markdown(
-                _ui_v3_card("参照スクリプト", script_card_value, script_status, script_card_color),
+                _ui_v3_block("拠点・対応", [
+                    ("拠点候補", _ui_v3_escape(vendor or "未確定")),
+                    ("手配方法", _ui_v3_escape(vendor_card.get("arrangement_method") or "終話後処理")),
+                    ("エスカ", _ui_v3_escape("必要" if vendor_card.get("needs_escalation") else "不要")),
+                ], "#7d6608" if vendor_card.get("needs_escalation") else "#1e8449"),
                 unsafe_allow_html=True,
             )
 
         if warranty_status == "expired":
             st.caption("参考値（受付不可）")
 
-        # UI改修: 次に聞くことSTEPを判定サマリー直下に表示
-        if next_action_steps:
-            for idx, step in enumerate(next_action_steps, 1):  # UI v3
-                st.markdown(f"**STEP {idx}.** {step}")  # UI v3
-
         if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):  # UI v3
             esc = build_vendor_escalation_info(vendor, vendor_result)
-            st.warning(
-                f"🏭 修理拠点: {vendor}（終話後確認）\n\n"
-                f"{esc['title']}\n\n"
-                f"理由：{esc['reason']}\n\n"
-                f"次アクション：終話後に担当へエスカレーションして拠点確定"
+            drive_line = ""
+            if request_folder.get("required"):
+                drive_line = (
+                    f'<div><strong>依頼書PDF格納先：</strong>'
+                    f'<a href="{_ui_v3_escape(request_folder.get("url", ""))}" target="_blank">'
+                    f'{_ui_v3_escape(request_folder.get("name", ""))} Google Drive を開く↗</a></div>'
+                )
+            st.markdown(
+                (
+                    '<div style="background:#fff3cd;border:1px solid #f1c40f;'
+                    'border-radius:8px;padding:14px 16px;color:#3b2f00;line-height:1.7;">'
+                    f'<div style="font-weight:700;">⚠️ 拠点：{_ui_v3_escape(vendor)}（担当確認）</div>'
+                    f'<div><strong>理由：</strong>{_ui_v3_escape(esc["reason"])}</div>'
+                    f'<div><strong>次アクション：</strong>{_ui_v3_escape("終話後に担当へエスカレーションして拠点確定")}</div>'
+                    f'{drive_line}'
+                    '</div>'
+                ),
+                unsafe_allow_html=True,
             )  # UI v3
         else:  # UI v3
             st.success(f"🏭 修理拠点: {vendor} ✅ 確定")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
-            req_questions = build_required_questions(
-                st.session_state.form, repair_type, needs_data_erase)
-            if warranty_result.get("warranty_status") == "before_start":
-                req_questions.insert(0, "メーカー保証期間を確認")
-                req_questions.insert(1, "メーカーまたは販売店窓口への誘導")
-            elif warranty_result.get("warranty_status") == "unknown":
-                req_questions.insert(0, "保証開始日・保証終了日を確認")
-            elif warranty_result.get("warranty_status") == "expired":
-                req_questions.insert(0, "受付不可。保証期間終了後であることを案内")
-            if cost_result.get("cost_status") == "pending":
-                cost_rq = cost_result.get("required_questions", "").strip()
-                if cost_rq:
-                    req_questions.insert(0, f"【費用確定のため必須】{cost_rq}")
-            req_questions = _dedupe_preserve_order(req_questions)
-            for i, q in enumerate(req_questions, 1):
-                color = "#c0392b" if ("必須" in q or "未入力" in q) else "inherit"
-                st.markdown(f'<span style="color:{color};">{i}. {q}</span>',
-                            unsafe_allow_html=True)
+            category_defs = [
+                ("🔴 通話中に必ず確認", "call_required", "#c0392b"),
+                ("🟡 終話後でよい", "after_call", "#7d6608"),
+                ("✅ 完了済み", "completed", "#1e8449"),
+            ]
+            for title, key, color in category_defs:
+                st.markdown(f"**{title}**")
+                items = question_categories.get(key, [])
+                if items:
+                    for item in items:
+                        label = item["label"] if isinstance(item, dict) else item
+                        st.markdown(f'<span style="color:{color};">- {label}</span>',
+                                    unsafe_allow_html=True)
+                elif key == "call_required":
+                    st.caption("通話中の必須確認はありません")
+                else:
+                    st.caption("該当なし")
 
         with st.expander("📊 判定診断パネル", expanded=False):  # UI v3
             _diag_icon = {"ok": "✅", "warning": "⚠️", "error": "❌"}
@@ -3788,11 +4296,6 @@ def render_tab_call():
                 warranty_result, diagnostics)
             st.markdown("##### 📄 対応履歴テンプレ")
             st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
-
-        if after_call_steps:
-            with st.expander("終話後対応", expanded=False):  # UI v3
-                for idx, step in enumerate(after_call_steps, 1):
-                    st.markdown(f"**{idx}.** {step}")
 
         if should_offer_master_registration_candidate(st.session_state.form, decision):
             with st.expander("マスタ登録候補", expanded=False):
@@ -3860,6 +4363,7 @@ def render_tab_call():
 def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
+    render_common_call_memo(form, "call_memo_common_after", height=100)
     st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
     if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_after"):
         if st.button("🧹 この案件をクリア", key="clear_case_after", type="secondary"):
@@ -4020,16 +4524,6 @@ def render_tab_after_call():
             placeholder="電話番号（デフォルトはフォームの電話番号）",
         )
         form["contact_phone"] = contact_phone
-        st.session_state.form = form
-
-        st.markdown("##### 🗒️ 通話中メモ")
-        form["call_memo"] = st.text_area(
-            "通話中メモ",
-            form.get("call_memo", ""),
-            height=100,
-            key="after_call_memo_display",
-            help="ラクテル用テキストや注意内容メモには自動反映されません。必要に応じて手動で転記してください。",
-        )
         st.session_state.form = form
 
         form["teams_action"] = st.text_input(

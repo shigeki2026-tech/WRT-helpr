@@ -326,9 +326,14 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
         "teams_chat_message_display": "old teams",
         "call_memo_input": "old call memo",
         "after_call_memo_display": "old call memo",
+        "call_memo_common_call": "old call memo",
+        "call_memo_common_after": "old call memo",
+        "call_check_manual": {"occurrence_time": True},
+        "manual_check_occurrence_time": True,
         "teams_send_confirmed": True,
         "request_pdf_storage_confirmed": True,
         "copy_panel_open": False,
+        "copy_import_expanded": True,
     })
 
     form = app.reset_case_session_state(state, {"default_operator_name": "大濱"})
@@ -340,10 +345,57 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert state["form"]["rakutel_text"] == ""
     assert state["form"]["call_memo"] == ""
     assert state["copy_panel_open"] is False
+    assert state["copy_import_expanded"] is False
     assert "teams_send_confirmed" not in state
     assert "request_pdf_storage_confirmed" not in state
     assert "call_memo_input" not in state
     assert "after_call_memo_display" not in state
+    assert "call_memo_common_call" not in state
+    assert "call_memo_common_after" not in state
+    assert state["call_check_manual"] == {}
+    assert "manual_check_occurrence_time" not in state
+
+
+def test_copy_import_panel_state_helpers_close_new_and_legacy_keys():
+    state = SessionState({"copy_import_expanded": True, "copy_panel_open": True})
+
+    app.close_copy_import_panel(state)
+
+    assert state["copy_import_expanded"] is False
+    assert state["copy_panel_open"] is False
+    assert app.copy_import_expanded(state) is False
+
+
+def test_copy_import_expanded_falls_back_to_legacy_key():
+    state = SessionState({"copy_panel_open": True})
+
+    assert app.copy_import_expanded(state) is True
+
+
+def test_copy_import_success_paths_close_panel_and_rerun():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    clipboard_index = source.index('if st.button("📋 クリップボードから直接抽出"')
+    manual_index = source.index('if st.button("🔍 抽出する"', clipboard_index)
+    reflect_index = source.index('if st.button("📥 フォームへ反映"', manual_index)
+    clipboard_area = source[clipboard_index:manual_index]
+    manual_area = source[manual_index:reflect_index]
+    reflect_area = source[reflect_index:source.index("form = st.session_state.form", reflect_index)]
+
+    assert "close_copy_import_panel(st.session_state)" in clipboard_area
+    assert "st.rerun()" in clipboard_area
+    assert "close_copy_import_panel(st.session_state)" in manual_area
+    assert "st.rerun()" in manual_area
+    assert "close_copy_import_panel(st.session_state)" in reflect_area
+    assert "st.rerun()" in reflect_area
+
+
+def test_call_memo_tabs_use_same_form_field_source():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert 'render_common_call_memo(form, "call_memo_common_call"' in source
+    assert 'render_common_call_memo(form, "call_memo_common_after"' in source
+    assert 'form["call_memo"] = st.text_area' in source
 
 
 def test_regenerated_teams_message_reflects_late_operator_name():
@@ -461,6 +513,32 @@ def test_cer_drive_link_info_is_available_on_vendor_card():
     assert card["request_folder"]["name"] == "CER"
     assert "drive.google.com" in card["request_folder"]["url"]
     assert card["arrangement_method"] == "依頼書PDF格納"
+
+
+def test_cer_escalation_block_source_groups_drive_link_with_action():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    block_index = source.index("drive_line =")
+    block_end = source.index("修理拠点: {vendor} ✅ 確定", block_index)
+    block_source = source[block_index:block_end]
+
+    assert "拠点：" in block_source
+    assert "理由：" in block_source
+    assert "次アクション：" in block_source
+    assert "依頼書PDF格納先：" in block_source
+    assert "Google Drive を開く" in block_source
+
+
+def test_teams_chat_message_never_includes_drive_url_for_cer():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_0300",
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "エアコン",
+    })
+    message = app._build_teams_chat_message(form, "CER候補（担当確認）")
+
+    assert "drive.google.com" not in message
+    assert "folders/" not in message
 
 
 def test_teams_area_source_does_not_render_drive_link():
