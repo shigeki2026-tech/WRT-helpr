@@ -328,12 +328,14 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
         "after_call_memo_display": "old call memo",
         "call_memo_common_call": "old call memo",
         "call_memo_common_after": "old call memo",
+        "case_memo_common": "old call memo",
         "call_check_manual": {"occurrence_time": True},
         "manual_check_occurrence_time": True,
         "teams_send_confirmed": True,
         "request_pdf_storage_confirmed": True,
         "copy_panel_open": False,
         "copy_import_expanded": True,
+        "show_copy_import": False,
     })
 
     form = app.reset_case_session_state(state, {"default_operator_name": "大濱"})
@@ -344,26 +346,37 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert state["form"]["teams_chat_message"] == ""
     assert state["form"]["rakutel_text"] == ""
     assert state["form"]["call_memo"] == ""
-    assert state["copy_panel_open"] is False
-    assert state["copy_import_expanded"] is False
+    assert state["show_copy_import"] is True
+    assert state["copy_panel_open"] is True
+    assert state["copy_import_expanded"] is True
     assert "teams_send_confirmed" not in state
     assert "request_pdf_storage_confirmed" not in state
     assert "call_memo_input" not in state
     assert "after_call_memo_display" not in state
     assert "call_memo_common_call" not in state
     assert "call_memo_common_after" not in state
+    assert "case_memo_common" not in state
     assert state["call_check_manual"] == {}
     assert "manual_check_occurrence_time" not in state
 
 
 def test_copy_import_panel_state_helpers_close_new_and_legacy_keys():
-    state = SessionState({"copy_import_expanded": True, "copy_panel_open": True})
+    state = SessionState({"show_copy_import": True, "copy_import_expanded": True, "copy_panel_open": True})
 
     app.close_copy_import_panel(state)
 
+    assert state["show_copy_import"] is False
     assert state["copy_import_expanded"] is False
     assert state["copy_panel_open"] is False
     assert app.copy_import_expanded(state) is False
+
+
+def test_clear_case_reopens_copy_import_panel():
+    state = SessionState({"show_copy_import": False, "copy_import_expanded": False, "copy_panel_open": False})
+
+    app.reset_case_session_state(state, {"default_operator_name": ""})
+
+    assert state["show_copy_import"] is True
 
 
 def test_copy_import_expanded_falls_back_to_legacy_key():
@@ -390,12 +403,36 @@ def test_copy_import_success_paths_close_panel_and_rerun():
     assert "st.rerun()" in reflect_area
 
 
+def test_copy_import_uses_self_managed_ui_not_expander():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    copy_section = source[source.index("toggle_copy_import"):source.index("form = st.session_state.form")]
+
+    assert "show_copy_import(st.session_state)" in copy_section
+    assert "st.expander" not in copy_section
+
+
+def test_copy_import_failure_paths_do_not_close_panel():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    clipboard_fail_index = source.index("クリップボードが空です")
+    clipboard_fail_area = source[clipboard_fail_index:source.index("else:", clipboard_fail_index)]
+    manual_fail_index = source.index("テキストを貼り付けてください。")
+    manual_fail_area = source[manual_fail_index:source.index("if st.session_state.extracted", manual_fail_index)]
+
+    assert "close_copy_import_panel" not in clipboard_fail_area
+    assert "close_copy_import_panel" not in manual_fail_area
+
+
 def test_call_memo_tabs_use_same_form_field_source():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert 'render_common_call_memo(form, "call_memo_common_call"' in source
-    assert 'render_common_call_memo(form, "call_memo_common_after"' in source
+    main_index = source.index("def main():")
+    tabs_index = source.index("st.tabs", main_index)
+    memo_index = source.index('render_common_case_memo(st.session_state.form, "case_memo_common"', main_index)
+    assert main_index < memo_index < tabs_index
     assert 'form["call_memo"] = st.text_area' in source
+    assert "render_tab_local_call_memo_enabled() -> bool" in source
+    assert 'render_common_call_memo(form, "call_memo_common_call"' not in source
+    assert 'render_common_call_memo(form, "call_memo_common_after"' not in source
 
 
 def test_regenerated_teams_message_reflects_late_operator_name():

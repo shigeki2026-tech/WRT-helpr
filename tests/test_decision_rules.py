@@ -1899,7 +1899,7 @@ def test_script_reference_source_is_above_now_action_source():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     right_panel_index = source.index('st.subheader("⚡ 通話中判定結果")')
     script_index = source.index('st.markdown("##### 📘 参照スクリプト")', right_panel_index)
-    now_index = source.index('st.markdown("### ✅ 今やること")', right_panel_index)
+    now_index = source.index('st.markdown("### ✅ 今聞くこと")', right_panel_index)
 
     assert script_index < now_index
 

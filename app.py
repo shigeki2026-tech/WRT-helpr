@@ -1395,20 +1395,29 @@ def apply_default_operator_name(form: dict, settings: dict | None = None) -> dic
     return form
 
 
-def set_copy_import_expanded(session_state, expanded: bool) -> None:
-    session_state["copy_import_expanded"] = bool(expanded)
-    # Keep the previous key in sync for older session state/tests.
-    session_state["copy_panel_open"] = bool(expanded)
+def set_show_copy_import(session_state, show: bool) -> None:
+    session_state["show_copy_import"] = bool(show)
+    # Keep previous keys in sync for older session state/tests.
+    session_state["copy_import_expanded"] = bool(show)
+    session_state["copy_panel_open"] = bool(show)
+
+
+def show_copy_import(session_state) -> bool:
+    if "show_copy_import" in session_state:
+        return bool(session_state.get("show_copy_import"))
+    if "copy_import_expanded" in session_state:
+        return bool(session_state.get("copy_import_expanded"))
+    if "copy_panel_open" in session_state:
+        return bool(session_state.get("copy_panel_open"))
+    return True
 
 
 def copy_import_expanded(session_state) -> bool:
-    if "copy_import_expanded" in session_state:
-        return bool(session_state.get("copy_import_expanded"))
-    return bool(session_state.get("copy_panel_open", False))
+    return show_copy_import(session_state)
 
 
 def close_copy_import_panel(session_state) -> None:
-    set_copy_import_expanded(session_state, False)
+    set_show_copy_import(session_state, False)
 
 
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
@@ -1417,7 +1426,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
     session_state["call_check_manual"] = {}
     session_state["extracted"] = {}
     session_state["pasted_text"] = ""
-    set_copy_import_expanded(session_state, False)
+    set_show_copy_import(session_state, True)
     session_state["master_registration_candidate"] = {}
     for key in [
         "memo_after",
@@ -1431,6 +1440,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "after_call_memo_display",
         "call_memo_common_call",
         "call_memo_common_after",
+        "case_memo_common",
     ]:
         if key in session_state:
             del session_state[key]
@@ -3629,19 +3639,27 @@ def render_step_list(title: str, steps: list[str]):
         st.markdown(f"**{idx}.** {step}")
 
 
-def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
-    st.markdown("##### 📝 通話中メモ（共通）")
-    st.caption("判定には使いません。通話中の一時メモ用です。")
+def render_common_case_memo(form: dict, key: str = "case_memo_common", height: int = 110) -> None:
+    st.markdown("##### 📝 案件メモ（通話中・終話後共通）")
+    st.caption("判定には使いません。通話中の一時メモ・終話後の転記メモ用です。")
     if st.session_state.get(key) != form.get("call_memo", ""):
         st.session_state[key] = form.get("call_memo", "")
     form["call_memo"] = st.text_area(
-        "📝 通話中メモ（共通）",
+        "📝 案件メモ（通話中・終話後共通）",
         value=form.get("call_memo", ""),
         height=height,
         key=key,
         help="ラクテル用テキストやTeams報告文には自動反映されません。",
     )
     st.session_state.form = form
+
+
+def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
+    render_common_case_memo(form, key, height)
+
+
+def render_tab_local_call_memo_enabled() -> bool:
+    return False
 
 
 def _set_manual_check(item_id: str, value: bool) -> None:
@@ -3770,6 +3788,8 @@ def init_session():
         st.session_state.master_registration_candidate = {}
     if "call_check_manual" not in st.session_state:
         st.session_state.call_check_manual = {}
+    if "show_copy_import" not in st.session_state:
+        set_show_copy_import(st.session_state, show_copy_import(st.session_state))
 
 
 # ============================================================
@@ -3810,10 +3830,13 @@ def render_tab_call():
                 st.success("案件情報をクリアしました。")
                 st.rerun()
 
-        with st.expander(  # UI v3
-            "📋 コピー情報取り込み",  # UI v3
-            expanded=copy_import_expanded(st.session_state),  # UI v3
-        ):  # UI v3
+        toggle_label = "📋 コピー情報取り込みを閉じる" if show_copy_import(st.session_state) else "📋 コピー情報取り込みを開く"
+        if st.button(toggle_label, key="toggle_copy_import", use_container_width=True):
+            set_show_copy_import(st.session_state, not show_copy_import(st.session_state))
+            st.rerun()
+
+        if show_copy_import(st.session_state):
+            st.markdown("##### 📋 コピー情報取り込み")
             if _PYPERCLIP_AVAILABLE:
                 st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
                 if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="primary"):
@@ -3882,7 +3905,6 @@ def render_tab_call():
                     st.rerun()
 
         form = st.session_state.form
-        render_common_call_memo(form, "call_memo_common_call", height=120)
 
         st.subheader("📝 受付情報フォーム")
         pre_decision = run_decision(form)  # UI修正v2
@@ -4064,57 +4086,33 @@ def render_tab_call():
         else:
             st.info("URL未登録（手動で参照）")
 
-        with st.expander("📘 スクリプト補助", expanded=True):
-            official_url = script_guidance.get("official_script_url", "")
-            st.markdown("**公式スクリプト：**")
-            if official_url:
-                st.markdown(f"[{script_guidance.get('official_script_label') or 'スクリプト'}を開く]({official_url})")
-            else:
-                st.caption("URL未登録（手動で参照）")
-            st.markdown("**このケースの聴取事項：**")
-            for hearing_item in script_guidance.get("hearing_items", []):
-                st.markdown(f"- {hearing_item}")
-            if script_guidance.get("notes"):
-                st.markdown("**注意：**")
-                st.info(script_guidance["notes"])
+        hearing_items = script_guidance.get("hearing_items", [])
+        if hearing_items:
+            compact_hearing = " / ".join(hearing_items[:5])
+            if len(hearing_items) > 5:
+                compact_hearing += " / ..."
+            st.caption(f"聴取事項：{compact_hearing}")
+        if script_guidance.get("notes"):
+            st.caption("注意：正式トークはリンク先を正本として参照")
+        if len(hearing_items) > 5 or script_guidance.get("notes"):
+            with st.expander("📘 スクリプト補助の詳細", expanded=False):
+                st.markdown("**聴取事項：**")
+                for hearing_item in hearing_items:
+                    st.markdown(f"- {hearing_item}")
+                if script_guidance.get("notes"):
+                    st.markdown("**注意：**")
+                    st.info(script_guidance["notes"])
 
-        st.markdown("### ✅ 今やること")
+        st.markdown("### ✅ 今聞くこと")
         if now_action_plan["call_required"]:
             for item in now_action_plan["call_required"]:
                 render_now_action_item(item, st.session_state.form)
         else:
             st.success("通話中の必須確認はありません")
-        if now_action_plan["after_call"]:
-            st.markdown("**終話後でよい**")
-            for idx, step in enumerate(now_action_plan["after_call"], 1):
-                st.markdown(f"{idx}. {step}")
         if now_action_plan["completed"]:
             with st.expander("✅ 完了済み", expanded=False):
                 for item in now_action_plan["completed"]:
                     st.markdown(f"- {item['label']}")
-
-        # UI改修: ゾーンB（最優先アラート）
-        missing_warranty_fields = []
-        if not st.session_state.form.get("warranty_start_date"):
-            missing_warranty_fields.append("保証開始日")
-        if not st.session_state.form.get("warranty_end_date"):
-            missing_warranty_fields.append("保証終了日")
-
-        if warranty_status == "expired":
-            st.error("### 保証期間終了 — 受付不可\n次のアクション：受付不可を案内して終話")
-        elif warranty_status == "before_start":
-            st.warning(
-                "### 保証開始日前 — メーカー保証または販売店・メーカー窓口へ誘導\n"
-                "次のアクション：メーカー保証期間・窓口を案内"
-            )
-        elif warranty_status == "unknown":
-            missing_text = "、".join(missing_warranty_fields) if missing_warranty_fields else "保証期間情報"
-            st.warning(
-                "### 保証期間未確認 — 保証開始日・保証終了日を確認してください\n"
-                f"不足項目：{missing_text}"
-            )
-        else:
-            st.success("保証期間内 — 受付判定へ進む")
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
@@ -4171,34 +4169,30 @@ def render_tab_call():
         }.get(warranty_status, "要確認")
         vendor_card = build_vendor_candidate_card_info(vendor, vendor_result)
         request_folder = vendor_card["request_folder"]
-        block_cols = st.columns(3)
-        with block_cols[0]:
-            st.markdown(
-                _ui_v3_block("受付可否", [
-                    ("保証", _ui_v3_escape(warranty_card_value)),
-                    ("判定", _ui_v3_escape(acceptance_label)),
-                    ("DP/物損", _ui_v3_escape(double_protect_plan_label(form.get("warranty_plan", "")) if summary_display["is_double_protect"] else "通常保証")),
-                ], warranty_card_color),
-                unsafe_allow_html=True,
-            )
-        with block_cols[1]:
-            st.markdown(
-                _ui_v3_block("修理方針", [
-                    ("形態", _ui_v3_escape(repair_card_value)),
-                    ("概算費用", _ui_v3_escape(cost_card_value)),
-                    ("案内可否", _ui_v3_escape(cost_card_status)),
-                ], repair_card_color),
-                unsafe_allow_html=True,
-            )
-        with block_cols[2]:
-            st.markdown(
-                _ui_v3_block("拠点・対応", [
-                    ("拠点候補", _ui_v3_escape(vendor or "未確定")),
-                    ("手配方法", _ui_v3_escape(vendor_card.get("arrangement_method") or "終話後処理")),
-                    ("エスカ", _ui_v3_escape("必要" if vendor_card.get("needs_escalation") else "不要")),
-                ], "#7d6608" if vendor_card.get("needs_escalation") else "#1e8449"),
-                unsafe_allow_html=True,
-            )
+        st.markdown("### 🧭 判定要点")
+        vendor_short = "終話後エスカ" if vendor_card.get("needs_escalation") else (vendor_card.get("arrangement_method") or "手配へ")
+        st.info(
+            "\n".join([
+                f"受付可否：{warranty_card_value} / {acceptance_label}",
+                f"修理方針：{repair_card_value} / {cost_card_value}",
+                f"拠点対応：{vendor or '未確定'} / {vendor_short}",
+            ])
+        )
+
+        # 詳細アラート
+        missing_warranty_fields = []
+        if not st.session_state.form.get("warranty_start_date"):
+            missing_warranty_fields.append("保証開始日")
+        if not st.session_state.form.get("warranty_end_date"):
+            missing_warranty_fields.append("保証終了日")
+
+        if warranty_status == "expired":
+            st.error("保証期間終了 — 受付不可 / 受付不可を案内して終話")
+        elif warranty_status == "before_start":
+            st.warning("保証開始日前 — メーカー保証または販売店・メーカー窓口へ誘導")
+        elif warranty_status == "unknown":
+            missing_text = "、".join(missing_warranty_fields) if missing_warranty_fields else "保証期間情報"
+            st.warning(f"保証期間未確認 — 不足項目：{missing_text}")
 
         if warranty_status == "expired":
             st.caption("参考値（受付不可）")
@@ -4363,7 +4357,6 @@ def render_tab_call():
 def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
-    render_common_call_memo(form, "call_memo_common_after", height=100)
     st.warning("次の案件へ移る前は、必要な送信・記録が完了していることを確認してください。")
     if st.checkbox("この案件をクリアする準備ができています", key="clear_case_confirm_after"):
         if st.button("🧹 この案件をクリア", key="clear_case_after", type="secondary"):
@@ -4923,6 +4916,7 @@ def main():
     st.title("🔧 修理受付 支援ツール MVP")
     st.caption("通話中の判断補助ツール — 正式スクリプト本文は先方管理のExcelを参照してください")
     init_session()
+    render_common_case_memo(st.session_state.form, "case_memo_common", height=90)
     tab1, tab2, tab3 = st.tabs(["📞 通話中判定", "📋 終話後処理", "⚙️ マスタ管理"])
     with tab1:
         render_tab_call()
