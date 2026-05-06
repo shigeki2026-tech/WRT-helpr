@@ -249,6 +249,52 @@ def test_vendor_rule_candidate_for_unconfirmed_vendor():
     assert candidate["needs_escalation"] == "1"
 
 
+def test_vendor_missing_reason_includes_current_conditions():
+    form = app.empty_form()
+    form.update({
+        "product": "冷蔵庫",
+        "manufacturer": "アクア",
+        "prefecture": "埼玉県",
+    })
+
+    reason = app.build_vendor_missing_reason(form, "出張修理")
+
+    assert "冷蔵庫 × アクア × 埼玉県 × 出張修理" in reason
+    assert "修理拠点ルールが未登録" in reason
+
+
+def test_vendor_rule_candidate_uses_missing_reason_and_excludes_personal_fields():
+    form = app.empty_form()
+    form.update({
+        "call_line": "住設業務",
+        "prefecture": "埼玉県",
+        "product": "冷蔵庫",
+        "manufacturer": "アクア",
+        "store_name": "アート引越センター（浦和支店）",
+        "customer_name": "山田太郎",
+        "phone_number": "090-0000-0000",
+        "address": "埼玉県さいたま市1-1-1",
+    })
+    missing_reason = app.build_vendor_missing_reason(form, "出張修理")
+    decision = {
+        "vendor": "担当エスカ（要確認）",
+        "vendor_result": {"needs_escalation": True, "vendor_missing_reason": missing_reason},
+        "repair_type": "出張修理",
+        "area_group": "関東",
+    }
+
+    candidate = app.build_inline_vendor_rule_candidate(form, decision)
+    candidate_text = str(candidate)
+
+    assert candidate["prefecture"] == "埼玉県"
+    assert candidate["product_keyword"] == "冷蔵庫"
+    assert candidate["manufacturer_keyword"] == "アクア"
+    assert candidate["repair_type"] == "出張修理"
+    assert candidate["reason"] == missing_reason
+    for blocked_value in ("山田太郎", "090-0000-0000", "埼玉県さいたま市1-1-1"):
+        assert blocked_value not in candidate_text
+
+
 def test_vendor_rule_append_creates_backup():
     data_dir = _make_data_dir()
     path = _write_master_csv(data_dir, "master_vendor_rules.csv", app._VENDOR_COLS)

@@ -1255,9 +1255,20 @@ def test_nav_tabs_has_three_labels():
 
     main_index = source.index("def main():")
     main_source = source[main_index:]
-    assert "📞 通話中判定" in main_source
-    assert "📋 終話後処理" in main_source
-    assert "⚙️ マスタ管理" in main_source
+    assert '"通話中判定"' in main_source
+    assert '"終話後処理"' in main_source
+    assert '"マスタ管理"' in main_source
+
+
+def test_nav_tabs_do_not_use_red_tinted_emoji_labels():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    main_index = source.index("def main():")
+    main_source = source[main_index:]
+    tabs_index = main_source.index("st.tabs(")
+    tabs_source = main_source[tabs_index:main_source.index("])", tabs_index)]
+
+    for emoji in ("📞", "📋", "⚙️"):
+        assert emoji not in tabs_source
 
 
 def test_nav_no_pill_radio_css():

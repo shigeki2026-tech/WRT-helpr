@@ -1060,7 +1060,7 @@ def build_inline_vendor_rule_candidate(form: dict, decision: dict) -> dict:
         "repair_type": repair_type,
         "is_over_10years": "1" if form.get("is_over_10years") else "",
         "vendor_name": "担当エスカ（要確認）",
-        "reason": "インライン登録候補",
+        "reason": vendor_result.get("vendor_missing_reason") or vendor_result.get("reason") or "インライン登録候補",
         "needs_escalation": "1",
         "notes": "",
         "contact_type": "",
@@ -1516,6 +1516,9 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
         if not reason:
             reason = "現在の条件では修理拠点を自動確定できません"
         next_action = "終話後に担当へ確認し、拠点を確定"
+
+    if is_generic_escalation and vendor_result.get("vendor_missing_reason"):
+        next_action = "担当へ確認するか、修理拠点ルール候補を作成してください。"
 
     return {
         "title": title,
@@ -3038,6 +3041,18 @@ def determine_cost_estimate(form: dict, repair_type: str) -> str:
 # ============================================================
 # Layer 4: 修理拠点候補判定
 # ============================================================
+def build_vendor_missing_reason(form: dict, repair_type: str) -> str:
+    product = (form.get("product") or form.get("product_original") or "製品未入力").strip()
+    manufacturer = (
+        form.get("manufacturer")
+        or form.get("manufacturer_original")
+        or "メーカー未入力"
+    ).strip()
+    prefecture = (form.get("prefecture") or "都道府県未入力").strip()
+    repair_type = (repair_type or "修理形態未入力").strip()
+    return f"{product} × {manufacturer} × {prefecture} × {repair_type} に一致する修理拠点ルールが未登録です。"
+
+
 def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
     """
     master_vendor_rules.csv を使って修理拠点候補を判定する。
@@ -3099,7 +3114,9 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
 
     return {
         "matched": False, "vendor_name": "担当エスカ（要確認）",
-        "reason": "", "needs_escalation": True, "keyword": "",
+        "reason": build_vendor_missing_reason(form, repair_type),
+        "vendor_missing_reason": build_vendor_missing_reason(form, repair_type),
+        "needs_escalation": True, "keyword": "",
         "priority": None, "csv_name": "", "notes": "",
     }
 
@@ -3991,6 +4008,12 @@ def run_decision(form: dict) -> dict:
         vendor = vendor_result["vendor_name"]
     else:
         vendor = determine_vendor_candidate(working_form)
+        vendor_result["vendor_name"] = vendor
+        if "担当エスカ" in vendor or "要確認" in vendor:
+            vendor_result["reason"] = vendor_result.get("vendor_missing_reason") or build_vendor_missing_reason(working_form, repair_type)
+        else:
+            vendor_result["reason"] = ""
+            vendor_result["vendor_missing_reason"] = ""
 
     _result_core = {
         # ── 主要判定結果 ──
@@ -4592,8 +4615,16 @@ def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
     candidate = build_inline_vendor_rule_candidate(form, decision)
     if not candidate:
         return
-    st.warning("修理拠点未確定")
-    with st.expander("修理拠点ルール候補を開く", expanded=False):
+    vendor_result = decision.get("vendor_result", {}) or {}
+    if vendor_result.get("vendor_missing_reason"):
+        st.warning(f"拠点未確定：担当確認が必要\n\n理由：{vendor_result['vendor_missing_reason']}")
+    else:
+        st.warning("修理拠点未確定")
+    if st.button("修理拠点ルール候補を開く", key="inline_vendor_open_v2", type="secondary"):
+        st.session_state["inline_vendor_registration_open"] = True
+    if not st.session_state.get("inline_vendor_registration_open"):
+        return
+    with st.expander("修理拠点ルール候補を開く", expanded=True):
         vendor_default = candidate["vendor_name"] if candidate["vendor_name"] in VENDOR_INLINE_OPTIONS else VENDOR_INLINE_OPTIONS[-1]
         row = {
             "priority": "10",
@@ -6046,9 +6077,9 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
 </style>
 """, unsafe_allow_html=True)
     tab_call, tab_after, tab_master = st.tabs([
-        "📞 通話中判定",
-        "📋 終話後処理",
-        "⚙️ マスタ管理",
+        "通話中判定",
+        "終話後処理",
+        "マスタ管理",
     ])
     with tab_call:
         render_tab_call()
