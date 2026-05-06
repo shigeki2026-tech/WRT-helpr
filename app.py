@@ -506,7 +506,15 @@ _STORE_RULE_COLS = [
     "priority", "enabled", "store_keyword", "normalized_store",
     "template_code", "template_label", "template_group", "notes"
 ]
-_CALL_LINE_COLS = ["priority", "enabled", "call_line", "line_group", "notes"]
+_CALL_LINE_COLS = [
+    "priority", "enabled", "call_line", "line_group", "notes",
+    "call_line_code", "display_name", "aliases",
+]
+_VENDOR_SEND_TEMPLATE_COLS = [
+    "priority", "enabled", "template_code", "template_label", "repair_type",
+    "warranty_type", "attention_memo_template", "rakutel_template",
+    "teams_template", "notes",
+]
 # legacy
 _MASTER_REQUIRED_COLS = [
     "priority", "enabled", "match_target", "keyword",
@@ -554,7 +562,8 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
     df = pd.DataFrame(valid_rows, columns=header, dtype=str)  # CSV読み込み改善
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        return pd.DataFrame(columns=required_cols)
+        for col in missing:
+            df[col] = ""
     df["priority"] = pd.to_numeric(df["priority"], errors="coerce").fillna(999).astype(int)
     df["enabled"]  = pd.to_numeric(df["enabled"],  errors="coerce").fillna(0).astype(int)
     df = df[df["enabled"] == 1].copy()
@@ -602,6 +611,11 @@ def _load_call_lines_cached(mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def _load_vendor_send_templates_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_vendor_send_templates.csv", _VENDOR_SEND_TEMPLATE_COLS)
+
+
+@st.cache_data
 def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_script_guidance.csv", _SCRIPT_GUIDANCE_COLS)
 
@@ -639,6 +653,10 @@ def load_call_lines() -> pd.DataFrame:
     return _load_call_lines_cached(_csv_mtime("master_call_lines.csv"))
 
 
+def load_vendor_send_templates() -> pd.DataFrame:
+    return _load_vendor_send_templates_cached(_csv_mtime("master_vendor_send_templates.csv"))
+
+
 def load_script_guidance_csv() -> pd.DataFrame:
     return _load_script_guidance_cached(_csv_mtime("master_script_guidance.csv"))
 
@@ -649,6 +667,8 @@ MASTER_APPEND_TARGETS = {
     "master_vendor_rules.csv": _VENDOR_COLS,
     "master_store_rules.csv": _STORE_RULE_COLS,
     "master_manufacturer_groups.csv": _MFR_GROUP_COLS,
+    "master_call_lines.csv": _CALL_LINE_COLS,
+    "master_vendor_send_templates.csv": _VENDOR_SEND_TEMPLATE_COLS,
 }
 MASTER_CANDIDATE_SOURCE_FIELDS = [
     "product_original", "product", "series",
@@ -760,6 +780,91 @@ def _append_master_csv_row(
 
     _clear_streamlit_cache()
     return {"ok": True, "reason": "appended", "row": clean_row, "backup_path": backup_path, "path": path}
+
+
+def _upsert_master_csv_row(
+    filename: str,
+    row: dict,
+    *,
+    key_cols: list[str],
+    required_cols: list[str],
+    data_dir: str | None = None,
+) -> dict:
+    columns = MASTER_APPEND_TARGETS[filename]
+    clean_row = {col: str(row.get(col, "") or "").strip() for col in columns}
+    clean_row["priority"] = clean_row.get("priority") or "10"
+    clean_row["enabled"] = clean_row.get("enabled") or "1"
+
+    missing = [col for col in required_cols if not clean_row.get(col)]
+    if missing:
+        return {"ok": False, "reason": "missing_required", "missing": missing, "row": clean_row}
+
+    header, rows = _read_master_csv_rows(filename, columns, data_dir)
+    clean_key = tuple(_normalize_duplicate_value(clean_row.get(col)) for col in key_cols)
+    updated = False
+    for index, existing in enumerate(rows):
+        existing_key = tuple(_normalize_duplicate_value(existing.get(col)) for col in key_cols)
+        if existing_key == clean_key:
+            merged = dict(existing)
+            merged.update(clean_row)
+            rows[index] = merged
+            updated = True
+            break
+    if not updated:
+        rows.append(clean_row)
+
+    path = _safe_master_csv_path(filename, data_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup_path = _master_backup_path(filename, data_dir)
+    if os.path.exists(path):
+        shutil.copy2(path, backup_path)
+    else:
+        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerow(columns)
+
+    output_columns = [col for col in header if col] or columns
+    for col in columns:
+        if col not in output_columns:
+            output_columns.append(col)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _clear_streamlit_cache()
+    return {
+        "ok": True,
+        "reason": "updated" if updated else "appended",
+        "row": clean_row,
+        "backup_path": backup_path,
+        "path": path,
+    }
+
+
+def upsert_master_call_line(row: dict, data_dir: str | None = None) -> dict:
+    display_name = str(row.get("display_name") or row.get("call_line") or "").strip()
+    call_line_code = str(row.get("call_line_code") or display_name or "").strip()
+    merged = dict(row)
+    merged["call_line"] = str(row.get("call_line") or display_name).strip()
+    merged["display_name"] = display_name
+    merged["call_line_code"] = call_line_code
+    return _upsert_master_csv_row(
+        "master_call_lines.csv",
+        merged,
+        key_cols=["call_line_code"],
+        required_cols=["display_name"],
+        data_dir=data_dir,
+    )
+
+
+def upsert_vendor_send_template(row: dict, data_dir: str | None = None) -> dict:
+    return _upsert_master_csv_row(
+        "master_vendor_send_templates.csv",
+        row,
+        key_cols=["template_code"],
+        required_cols=["template_code"],
+        data_dir=data_dir,
+    )
 
 
 def append_master_product_alias(row: dict, data_dir: str | None = None) -> dict:
@@ -1179,7 +1284,7 @@ def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, 
     """
     if df_tpl.empty or not call_line:
         return ""
-    filtered = df_tpl[df_tpl["category"] == call_line]
+    filtered = df_tpl[df_tpl["category"].apply(lambda value: call_line_master_values_match(value, call_line))]
     if filtered.empty:
         return ""
     return _auto_select_template_from_candidates(filtered, repair_type, warranty_plan)
@@ -1353,6 +1458,62 @@ def _fill_template_notes(notes: str, form: dict) -> str:
     return notes_filled
 
 
+def _estimated_fee_for_template(cost_estimate: str = "") -> str:
+    value = (cost_estimate or "").strip()
+    if not value or value in ("確認中", "未確定", "要確認"):
+        return "確認中"
+    return value
+
+
+def build_vendor_send_template_context(
+    form: dict,
+    warranty_result: dict | None = None,
+    repair_type: str = "",
+    vendor: str = "",
+    cost_estimate: str = "",
+) -> dict:
+    warranty_result = warranty_result or {}
+    return {
+        "wrt_no": form.get("wrt_no", ""),
+        "template_code": form.get("template_code", ""),
+        "template_label": form.get("template_label", ""),
+        "product": form.get("product", ""),
+        "manufacturer": form.get("manufacturer", ""),
+        "model": form.get("model_number", ""),
+        "warranty_status": warranty_result.get("title", ""),
+        "repair_type": repair_type,
+        "vendor_name": vendor,
+        "estimated_fee": _estimated_fee_for_template(cost_estimate or form.get("cost_estimate", "")),
+        "operator_name": form.get("operator_name", ""),
+        "rakuteru_no": form.get("rakuteru_no", ""),
+    }
+
+
+def render_vendor_send_template_text(template_text: str, context: dict) -> str:
+    def replace(match):
+        key = match.group(1).strip()
+        return str(context.get(key, ""))
+
+    return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", replace, template_text or "")
+
+
+def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
+    df = load_vendor_send_templates()
+    if df.empty:
+        return {}
+    code = (form.get("template_code") or "").strip()
+    label = (form.get("template_label") or "").strip()
+    if code:
+        matched = df[df["template_code"] == code]
+        if not matched.empty:
+            return matched.iloc[0].to_dict()
+    if label:
+        matched = df[df["template_label"] == label]
+        if not matched.empty:
+            return matched.iloc[0].to_dict()
+    return {}
+
+
 def _line_label_for_call_line(call_line: str) -> str:
     line_group = get_line_group(call_line)
     if not line_group:
@@ -1369,7 +1530,17 @@ def _line_label_for_call_line(call_line: str) -> str:
 
 
 def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
-                           vendor: str, notes_filled: str = "") -> str:
+                           vendor: str, notes_filled: str = "", cost_estimate: str = "") -> str:
+    template_row = get_vendor_send_template_for_form(
+        form, repair_type, double_protect_plan_label(form.get("warranty_plan", ""))
+    )
+    attention_template = (template_row.get("attention_memo_template") or "").strip() if template_row else ""
+    if attention_template:
+        context = build_vendor_send_template_context(
+            form, warranty_result, repair_type, vendor, cost_estimate
+        )
+        return render_vendor_send_template_text(attention_template, context)
+
     dp_note = ""
     if is_double_protect_plan(form.get("warranty_plan", "")):
         dp_note = "\n物損付 / DP案件: 物損時の保証金額はシステムにて確認要"
@@ -1417,7 +1588,7 @@ def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
 
 
 def _rakutel_call_heading(form: dict) -> str:
-    line_label = _line_label_for_call_line(form.get("call_line", ""))
+    line_label = normalize_call_line_for_display(form.get("call_line", "")) or _line_label_for_call_line(form.get("call_line", ""))
     if _rakutel_call_direction(form) == "架電":
         return f"【{line_label}から架電】"
     return f"【{line_label}に入電】"
@@ -1560,7 +1731,7 @@ def resolve_teams_request_action(form: dict, vendor: str, contact_type: str = ""
 
 def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -> str:
     rakuteru = (form.get("rakuteru_no") or "").strip()
-    case_name = (form.get("call_line") or "").strip()
+    case_name = normalize_call_line_for_display(form.get("call_line", ""))
     product = (form.get("product") or "").strip()
     send_to = (vendor or "").strip()
     action = resolve_teams_request_action(form, vendor, contact_type)
@@ -1583,8 +1754,9 @@ def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -
 def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
                             vendor: str, caller_type: str, notes_filled: str,
                             contact_type: str = "") -> dict:
+    cost_estimate = form.get("cost_estimate", "")
     return {
-        "attention_memo": _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled),
+        "attention_memo": _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled, cost_estimate),
         "rakutel_text": _build_rakutel_text(form, caller_type, notes_filled),
         "teams_chat_message": _build_teams_chat_message(form, vendor, contact_type),
     }
@@ -2211,13 +2383,54 @@ def get_product_options() -> list:
     return options
 
 
+def _split_master_aliases(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[;；]", str(value or "")) if item.strip()]
+
+
+def _call_line_row_names(row) -> list[str]:
+    names = []
+    for col in ("display_name", "call_line"):
+        value = str(row.get(col) or "").strip()
+        if value:
+            names.append(value)
+    names.extend(_split_master_aliases(row.get("aliases", "")))
+    return names
+
+
+def _call_line_display_name(row) -> str:
+    return str(row.get("display_name") or row.get("call_line") or "").strip()
+
+
+def normalize_call_line_for_display(call_line: str) -> str:
+    value = (call_line or "").strip()
+    if not value:
+        return ""
+    df = load_call_lines()
+    if df.empty:
+        return value
+    folded = value.casefold()
+    for _, row in df.iterrows():
+        if any(name.casefold() == folded for name in _call_line_row_names(row)):
+            return _call_line_display_name(row) or value
+    return value
+
+
+def call_line_master_values_match(master_value: str, call_line: str) -> bool:
+    master_norm = normalize_call_line_for_display(master_value)
+    value_norm = normalize_call_line_for_display(call_line)
+    if master_norm and value_norm and master_norm.casefold() == value_norm.casefold():
+        return True
+    return (master_value or "").strip().casefold() == (call_line or "").strip().casefold()
+
+
 def get_call_line_options() -> list:
     """master_call_lines.csv の call_line から回線名候補を生成する。"""
     options = [""]
     seen = {""}
     df = load_call_lines()
     if not df.empty:
-        for val in df["call_line"].tolist():
+        for _, row in df.iterrows():
+            val = _call_line_display_name(row)
             if val and val not in seen:
                 options.append(val)
                 seen.add(val)
@@ -2229,10 +2442,11 @@ def get_line_group(call_line: str) -> str:
     df = load_call_lines()
     if df.empty:
         return ""
-    rows = df[df["call_line"] == call_line]
-    if rows.empty:
-        return ""
-    return rows.iloc[0].get("line_group", "")
+    value = (call_line or "").strip().casefold()
+    for _, row in df.iterrows():
+        if any(name.casefold() == value for name in _call_line_row_names(row)):
+            return row.get("line_group", "")
+    return ""
 
 
 def normalize_product_for_select(product: str) -> str:
@@ -3079,7 +3293,7 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
             io10 = (row.get("is_over_10years") or "").strip()
 
             # call_line: 完全一致（空=ワイルドカード）
-            if cl and cl.lower() != call_line.lower():         continue
+            if cl and not call_line_master_values_match(cl, call_line):         continue
             # prefecture: 完全一致（空=ワイルドカード）
             if pref and pref != prefecture:                     continue
             # area_group: CSVのNTT東西エリアと既存の地域グループを両方参照（空=ワイルドカード）
@@ -3947,6 +4161,7 @@ def run_decision(form: dict) -> dict:
     inferred_call_line_attrs = infer_call_line_attrs(working_form)
     if inferred_call_line_attrs.get("call_line"):
         working_form["call_line"] = inferred_call_line_attrs["call_line"]
+    working_form["call_line"] = normalize_call_line_for_display(working_form.get("call_line", ""))
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -4670,6 +4885,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         st.markdown("##### 案件基本")
     st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
 
+    form["call_line"] = normalize_call_line_for_display(form.get("call_line", ""))
     call_line_opts = get_call_line_options()
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
@@ -5446,7 +5662,7 @@ def render_tab_after_call():
             st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
         if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
-            filtered = df_tpl[df_tpl["category"] == call_line_val] if call_line_val else df_tpl.iloc[0:0]
+            filtered = df_tpl[df_tpl["category"].apply(lambda value: call_line_master_values_match(value, call_line_val))] if call_line_val else df_tpl.iloc[0:0]
             auto_label = template_selection.get("label", "")
             if not filtered.empty or auto_label:
                 tpl_labels = [""] + filtered["label"].tolist()
@@ -5549,7 +5765,7 @@ def render_tab_after_call():
         st.markdown("##### 📝 注意内容メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
         generated_attention_memo = _build_after_call_memo(
-            form, warranty_result, repair_type, vendor, notes_filled)
+            form, warranty_result, repair_type, vendor, notes_filled, cost_estimate)
         attention_hash = get_after_call_regeneration_hash(
             form, "attention_memo", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
@@ -5855,6 +6071,103 @@ def _render_manufacturer_group_append_ui() -> None:
         st.rerun()
 
 
+def _render_call_line_master_edit_ui() -> None:
+    st.markdown("##### 回線名マスタ編集")
+    df = load_call_lines()
+    labels = []
+    if not df.empty:
+        labels = [
+            f"{row.get('call_line_code') or row.get('call_line') or row.get('display_name')} / {_call_line_display_name(row)}"
+            for _, row in df.iterrows()
+        ]
+    mode = st.radio("編集モード", ["既存編集", "新規追加"], horizontal=True, key="call_line_master_mode")
+    selected_row = {}
+    if mode == "既存編集" and labels:
+        selected = st.selectbox("既存回線名", labels, key="call_line_master_select")
+        selected_row = df.iloc[labels.index(selected)].to_dict()
+
+    enabled_default = str(selected_row.get("enabled", "1") or "1")
+    row = {
+        "priority": st.text_input("priority", value=str(selected_row.get("priority", "10") or "10"), key="call_line_master_priority"),
+        "enabled": st.selectbox("enabled", ["1", "0"], index=0 if enabled_default != "0" else 1, key="call_line_master_enabled"),
+        "call_line": st.text_input("legacy call_line", value=str(selected_row.get("call_line", "") or ""), key="call_line_master_legacy"),
+        "line_group": st.text_input("line_group", value=str(selected_row.get("line_group", "") or ""), key="call_line_master_line_group"),
+        "notes": st.text_input("notes", value=str(selected_row.get("notes", "") or ""), key="call_line_master_notes"),
+        "call_line_code": st.text_input("call_line_code", value=str(selected_row.get("call_line_code", "") or ""), key="call_line_master_code"),
+        "display_name": st.text_input("display_name", value=str(selected_row.get("display_name", "") or _call_line_display_name(selected_row)), key="call_line_master_display"),
+        "aliases": st.text_input("aliases（; 区切り）", value=str(selected_row.get("aliases", "") or ""), key="call_line_master_aliases"),
+    }
+    _preview_master_row(row, _CALL_LINE_COLS)
+    display = row["display_name"].strip()
+    code = (row["call_line_code"] or display).strip()
+    duplicate_display = False
+    if display and not df.empty:
+        for _, existing in df.iterrows():
+            same_code = _normalize_duplicate_value(existing.get("call_line_code") or existing.get("call_line")) == _normalize_duplicate_value(code)
+            same_display = _normalize_duplicate_value(_call_line_display_name(existing)) == _normalize_duplicate_value(display)
+            if same_display and not same_code:
+                duplicate_display = True
+                break
+    if duplicate_display:
+        st.warning("同じ display_name の回線名が既にあります。")
+    disabled = not display or duplicate_display
+    if st.button("回線名マスタを保存", key="call_line_master_save", type="primary", disabled=disabled):
+        result = upsert_master_call_line(row)
+        _show_master_append_result(result)
+        if result.get("ok"):
+            bump_case_basic_revision(st.session_state)
+        st.rerun()
+
+
+def _render_vendor_send_template_edit_ui() -> None:
+    st.markdown("##### テンプレート編集")
+    df = load_vendor_send_templates()
+    labels = []
+    if not df.empty:
+        labels = [
+            f"{row.get('template_code')} / {row.get('template_label')}"
+            for _, row in df.iterrows()
+        ]
+    mode = st.radio("テンプレート編集モード", ["既存編集", "新規追加"], horizontal=True, key="vendor_send_template_mode")
+    selected_row = {}
+    if mode == "既存編集" and labels:
+        selected = st.selectbox("template_code で検索", labels, key="vendor_send_template_select")
+        selected_row = df.iloc[labels.index(selected)].to_dict()
+
+    enabled_default = str(selected_row.get("enabled", "1") or "1")
+    row = {
+        "priority": st.text_input("priority", value=str(selected_row.get("priority", "10") or "10"), key="vendor_send_tpl_priority"),
+        "enabled": st.selectbox("enabled", ["1", "0"], index=0 if enabled_default != "0" else 1, key="vendor_send_tpl_enabled"),
+        "template_code": st.text_input("template_code", value=str(selected_row.get("template_code", "") or ""), key="vendor_send_tpl_code"),
+        "template_label": st.text_input("template_label", value=str(selected_row.get("template_label", "") or ""), key="vendor_send_tpl_label"),
+        "repair_type": st.text_input("repair_type", value=str(selected_row.get("repair_type", "") or ""), key="vendor_send_tpl_repair_type"),
+        "warranty_type": st.text_input("warranty_type", value=str(selected_row.get("warranty_type", "") or ""), key="vendor_send_tpl_warranty_type"),
+        "attention_memo_template": st.text_area("attention_memo_template", value=str(selected_row.get("attention_memo_template", "") or ""), height=160, key="vendor_send_tpl_attention"),
+        "rakutel_template": st.text_area("rakutel_template", value=str(selected_row.get("rakutel_template", "") or ""), height=120, key="vendor_send_tpl_rakutel"),
+        "teams_template": st.text_area("teams_template", value=str(selected_row.get("teams_template", "") or ""), height=120, key="vendor_send_tpl_teams"),
+        "notes": st.text_input("notes", value=str(selected_row.get("notes", "") or ""), key="vendor_send_tpl_notes"),
+    }
+    _preview_master_row(row, _VENDOR_SEND_TEMPLATE_COLS)
+    preview_context = build_vendor_send_template_context(
+        st.session_state.get("form") or {},
+        {},
+        row.get("repair_type", ""),
+        "",
+        "5,000円～7,000円前後",
+    )
+    st.caption("プレースホルダー差し込みプレビュー")
+    st.text_area(
+        "attention_memo_template preview",
+        render_vendor_send_template_text(row["attention_memo_template"], preview_context),
+        height=140,
+        key="vendor_send_tpl_preview",
+    )
+    disabled = not row["template_code"].strip()
+    if st.button("テンプレートを保存", key="vendor_send_tpl_save", type="primary", disabled=disabled):
+        _show_master_append_result(upsert_vendor_send_template(row))
+        st.rerun()
+
+
 def _render_master_candidate_box() -> None:
     candidate = st.session_state.get("master_registration_candidate") or {}
     if not candidate:
@@ -5949,6 +6262,8 @@ def render_tab_master():
 
     with master_tabs[4]:
         st.markdown("##### 📄 master_template_codes.csv")
+        with st.expander("業者送付コードテンプレートを編集", expanded=False):
+            _render_vendor_send_template_edit_ui()
         df = load_template_codes()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_template_codes.csv")
@@ -5956,6 +6271,13 @@ def render_tab_master():
             st.success(f"読み込み済み: {len(df)} 行（有効行）")
             st.dataframe(df, use_container_width=True)
             st.caption("業者送付テンプレートコードと案件区分候補")
+
+        df_send_tpl = load_vendor_send_templates()
+        st.markdown("##### master_vendor_send_templates.csv")
+        if df_send_tpl.empty:
+            st.info("CSVが見つかりません: data/master_vendor_send_templates.csv")
+        else:
+            st.dataframe(df_send_tpl, use_container_width=True)
 
     with master_tabs[5]:
         st.markdown("##### 📄 master_store_rules.csv")
@@ -5971,6 +6293,8 @@ def render_tab_master():
 
     with master_tabs[6]:
         st.markdown("##### 📄 master_call_lines.csv")
+        with st.expander("回線名マスタを編集", expanded=False):
+            _render_call_line_master_edit_ui()
         df = load_call_lines()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_call_lines.csv")

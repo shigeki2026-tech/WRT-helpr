@@ -350,6 +350,81 @@ def test_master_append_clears_streamlit_cache(monkeypatch):
     clear_mock.assert_called_once()
 
 
+def test_call_line_master_upsert_updates_row_and_creates_backup(monkeypatch):
+    data_dir = _make_data_dir()
+    path = _write_master_csv(
+        data_dir,
+        "master_call_lines.csv",
+        app._CALL_LINE_COLS,
+        [{
+            "priority": "10",
+            "enabled": "1",
+            "call_line": "家電保証対応業務（24時間）",
+            "line_group": "家電",
+            "notes": "",
+            "call_line_code": "home_appliance",
+            "display_name": "家電保証対応業務（24時間）",
+            "aliases": "",
+        }],
+    )
+    clear_mock = mock.MagicMock()
+    monkeypatch.setattr(app, "_clear_streamlit_cache", clear_mock)
+
+    result = app.upsert_master_call_line(
+        {
+            "priority": "10",
+            "enabled": "1",
+            "call_line": "家電保証対応業務（24時間）",
+            "line_group": "家電",
+            "notes": "旧表示名から変更",
+            "call_line_code": "home_appliance",
+            "display_name": "家電業務",
+            "aliases": "家電保証対応業務（24時間）;家電保証対応業務",
+        },
+        data_dir=str(data_dir),
+    )
+
+    rows = _read_rows(path)
+    assert result["ok"] is True
+    assert rows[0]["display_name"] == "家電業務"
+    assert "家電保証対応業務（24時間）" in rows[0]["aliases"]
+    assert os.path.exists(result["backup_path"])
+    clear_mock.assert_called_once()
+
+
+def test_vendor_send_template_upsert_creates_backup_and_clears_cache(monkeypatch):
+    data_dir = _make_data_dir()
+    path = _write_master_csv(data_dir, "master_vendor_send_templates.csv", app._VENDOR_SEND_TEMPLATE_COLS)
+    clear_mock = mock.MagicMock()
+    monkeypatch.setattr(app, "_clear_streamlit_cache", clear_mock)
+
+    result = app.upsert_vendor_send_template(
+        {
+            "template_code": "0009",
+            "template_label": "【出張修理】自然故障",
+            "repair_type": "出張修理",
+            "warranty_type": "自然故障",
+            "attention_memo_template": "※修理キャンセル時の概算費用{{estimated_fee}}",
+        },
+        data_dir=str(data_dir),
+    )
+
+    rows = _read_rows(path)
+    assert result["ok"] is True
+    assert rows[0]["template_code"] == "0009"
+    assert "{{estimated_fee}}" in rows[0]["attention_memo_template"]
+    assert os.path.exists(result["backup_path"])
+    clear_mock.assert_called_once()
+
+
+def test_master_ui_has_call_line_and_vendor_template_editors():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+
+    assert "回線名マスタ編集" in source
+    assert "テンプレート編集" in source
+    assert "業者送付コードテンプレートを編集" in source
+
+
 def test_master_registration_candidate_excludes_personal_fields():
     form = app.empty_form()
     form.update(

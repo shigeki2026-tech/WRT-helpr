@@ -96,6 +96,62 @@ def test_empty_teams_chat_message_is_not_sendable():
     assert app._can_send_teams_chat_message(True, True, form) is False
 
 
+def test_teams_and_rakutel_use_call_line_display_name_for_old_alias():
+    form = app.empty_form()
+    form.update({
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "ドライヤー",
+        "rakuteru_no": "2026_05_0162",
+    })
+
+    assert "家電業務" in app._build_teams_chat_message(form, "WRT修理センター")
+    assert "家電業務" in app._build_rakutel_text(form, "加入者")
+
+
+def test_attention_memo_0009_uses_vendor_send_template_with_estimated_fee():
+    form = app.empty_form()
+    form.update({
+        "template_code": "0009",
+        "template_label": "【出張修理】自然故障",
+        "product": "冷蔵庫",
+        "manufacturer": "アクア",
+    })
+
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "WRT修理センター",
+        cost_estimate="5,000円～7,000円前後",
+    )
+
+    assert memo == "\n".join([
+        "具体的な症状：",
+        "発生時期：",
+        "発生頻度：",
+        "※保証対象外時の案内済み",
+        "※修理キャンセル時の概算費用5,000円～7,000円前後",
+    ])
+
+
+def test_attention_memo_0009_uses_confirming_when_estimated_fee_is_blank():
+    form = app.empty_form()
+    form.update({
+        "template_code": "0009",
+        "template_label": "【出張修理】自然故障",
+    })
+
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "WRT修理センター",
+        cost_estimate="",
+    )
+
+    assert "※修理キャンセル時の概算費用確認中" in memo
+
+
 def test_teams_action_wrt_repair_center_uses_pdf_storage():
     form = app.empty_form()
     form.update({"rakuteru_no": "2026_05_0162", "call_line": "家電保証対応業務（24時間）", "product": "ドライヤー"})
@@ -208,7 +264,7 @@ def test_teams_message_uses_expected_multiline_format():
 
     assert message == "\n".join([
         "2026_05_0162",
-        "家電保証対応業務（24時間）",
+        "家電業務",
         "ドライヤー",
         "WRT修理センターへ依頼書PDF格納済み",
         "DP案件・保証金額確認要",
@@ -278,7 +334,7 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
     message = app._build_teams_chat_message(form, "担当エスカ（要確認）")
     lines = message.splitlines()
 
-    assert lines[0] == "家電保証対応業務（24時間）"
+    assert lines[0] == "家電業務"
     assert not message.startswith("<b>")
     assert "<b>" not in lines[0]
 
@@ -779,7 +835,7 @@ def test_regenerated_rakutel_text_reflects_late_operator_name():
     )
 
     assert "MPG大濱" in texts["rakutel_text"]
-    assert "【家電回線に入電】" in texts["rakutel_text"]
+    assert "【家電業務に入電】" in texts["rakutel_text"]
     assert "【修理受付】" in texts["rakutel_text"]
     assert "2026/5/4 09:30　販売店" in texts["rakutel_text"]
 
@@ -796,7 +852,7 @@ def test_rakutel_text_inbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電回線に入電】" in text
+    assert "【家電業務に入電】" in text
     assert "加入者→MPG大濱" in text
 
 
@@ -812,7 +868,7 @@ def test_rakutel_text_outbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電回線から架電】" in text
+    assert "【家電業務から架電】" in text
     assert "MPG大濱→加入者" in text
 
 

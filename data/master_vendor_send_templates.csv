@@ -1,0 +1,6 @@
+priority,enabled,template_code,template_label,repair_type,warranty_type,attention_memo_template,rakutel_template,teams_template,notes
+10,1,0009,【出張修理】自然故障,出張修理,自然故障,"具体的な症状：
+発生時期：
+発生頻度：
+※保証対象外時の案内済み
+※修理キャンセル時の概算費用{{estimated_fee}}",,,家電出張修理・自然故障の注意内容メモ

@@ -1525,6 +1525,30 @@ def test_tc_call_line_options_loaded():
     assert "京阪不動産" in options
 
 
+def test_call_line_display_name_uses_home_appliance_business_and_alias_is_accepted():
+    options = app.get_call_line_options()
+
+    assert "家電業務" in options
+    assert "家電保証対応業務（24時間）" not in options
+    assert app.normalize_call_line_for_display("家電保証対応業務（24時間）") == "家電業務"
+    assert app.get_line_group("家電保証対応業務（24時間）") == "家電"
+
+
+def test_auto_template_selection_accepts_old_call_line_alias():
+    df_sample = app.pd.DataFrame([
+        {
+            "template_code": "0009",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】自然故障",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "",
+        }
+    ])
+
+    assert app._auto_select_template("家電業務", "出張修理", "自然故障", df_sample) == "【出張修理】自然故障"
+
+
 def test_tc_bic_camera_call_line_vendor():
     d = app.run_decision(make_form(call_line="ビックカメラ", product="洗濯機"))
     assert d["vendor"] == "ソフマップ修理センター"
