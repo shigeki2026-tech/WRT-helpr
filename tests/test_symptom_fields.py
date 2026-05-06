@@ -253,3 +253,109 @@ def test_reset_clears_now_input_widget_keys():
     app.reset_case_session_state(session)
     for key in list(session.keys()):
         assert not key.startswith("now_input_"), f"now_input_ キーが残っている: {key}"
+
+
+# ============================================================
+# 通話中判定画面（今聞くこと）への表示確認
+# ============================================================
+
+def _make_call_plan(product="エアコン", manufacturer="シャープ",
+                    warranty_start="2026/01/01", warranty_end="2027/01/01"):
+    form = app.empty_form()
+    form.update({
+        "product": product,
+        "manufacturer": manufacturer,
+        "appliance_type": "家電",
+        "warranty_start_date": warranty_start,
+        "warranty_end_date": warranty_end,
+    })
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d.get("needs_data_erase", False),
+        d.get("diagnostics"), d.get("warranty_result"), d.get("cost_result"),
+    )
+    return plan
+
+
+def test_now_action_shows_occurrence_time():
+    """通話中判定画面の「今聞くこと」に「発生時期」が表示される。"""
+    plan = _make_call_plan()
+    all_items = plan["call_required"] + plan["completed"]
+    labels = [item["label"] for item in all_items]
+    assert "発生時期" in labels, f"発生時期が今聞くことに見当たらない: {labels}"
+
+
+def test_now_action_shows_occurrence_frequency():
+    """通話中判定画面の「今聞くこと」に「発生頻度」が表示される。"""
+    plan = _make_call_plan()
+    all_items = plan["call_required"] + plan["completed"]
+    labels = [item["label"] for item in all_items]
+    assert "発生頻度" in labels, f"発生頻度が今聞くことに見当たらない: {labels}"
+
+
+def test_occurrence_time_moves_to_completed_after_input():
+    """occurrence_time を入力すると「発生時期」が完了済みに移動する。"""
+    form = app.empty_form()
+    form.update({
+        "product": "エアコン",
+        "manufacturer": "シャープ",
+        "appliance_type": "家電",
+        "warranty_start_date": "2026/01/01",
+        "warranty_end_date": "2027/01/01",
+        "occurrence_time": "昨日から",
+    })
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d.get("needs_data_erase", False),
+        d.get("diagnostics"), d.get("warranty_result"), d.get("cost_result"),
+    )
+    call_labels = [item["label"] for item in plan["call_required"]]
+    done_labels = [item["label"] for item in plan["completed"]]
+    assert "発生時期" not in call_labels
+    assert "発生時期" in done_labels
+
+
+def test_occurrence_frequency_moves_to_completed_after_input():
+    """occurrence_frequency を入力すると「発生頻度」が完了済みに移動する。"""
+    form = app.empty_form()
+    form.update({
+        "product": "エアコン",
+        "manufacturer": "シャープ",
+        "appliance_type": "家電",
+        "warranty_start_date": "2026/01/01",
+        "warranty_end_date": "2027/01/01",
+        "occurrence_frequency": "常時",
+    })
+    d = app.run_decision(form)
+    plan = app.build_now_action_plan(
+        form, d["repair_type"], d.get("needs_data_erase", False),
+        d.get("diagnostics"), d.get("warranty_result"), d.get("cost_result"),
+    )
+    call_labels = [item["label"] for item in plan["call_required"]]
+    done_labels = [item["label"] for item in plan["completed"]]
+    assert "発生頻度" not in call_labels
+    assert "発生頻度" in done_labels
+
+
+def test_occurrence_time_in_memo_when_filled():
+    """occurrence_time の入力値が注意内容メモに反映される。"""
+    memo = _build_memo_0009(occurrence_time="昨日から")
+    assert "発生時期：昨日から" in memo
+
+
+def test_occurrence_frequency_in_memo_when_filled():
+    """occurrence_frequency の入力値が注意内容メモに反映される。"""
+    memo = _build_memo_0009(occurrence_frequency="常時")
+    assert "発生頻度：常時" in memo
+
+
+def test_occurrence_time_blank_when_not_filled():
+    """occurrence_time が未入力のとき、発生時期欄は空欄で生成される。"""
+    memo = _build_memo_0009(occurrence_time="")
+    assert "発生時期：\n" in memo + "\n"
+
+
+def test_occurrence_frequency_blank_when_not_filled():
+    """occurrence_frequency が未入力のとき、発生頻度欄は空欄で生成される。"""
+    memo = _build_memo_0009(occurrence_frequency="")
+    assert "発生頻度：\n" in memo + "\n"

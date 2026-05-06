@@ -5283,7 +5283,9 @@ def render_tab_call():
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-            form["symptom_detail"] = st.text_area("具体的な症状", form.get("symptom_detail",""), height=60)
+            form["symptom_detail"]      = st.text_area("具体的な症状", form.get("symptom_detail",""), height=60)
+            form["occurrence_time"]      = st.text_input("発生時期",   form.get("occurrence_time",""))
+            form["occurrence_frequency"] = st.text_input("発生頻度",   form.get("occurrence_frequency",""))
             form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
             form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
             render_warranty_date_input(
