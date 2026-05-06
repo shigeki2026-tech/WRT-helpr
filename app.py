@@ -1377,6 +1377,66 @@ def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
     }
 
 
+AFTER_CALL_REGEN_SECTION_FIELDS = {
+    "attention_memo": (
+        "call_line", "appliance_type", "product", "manufacturer", "store_name",
+        "warranty_plan", "warranty_start_date", "warranty_end_date", "product_price",
+        "template_code", "template_label",
+    ),
+    "rakutel_text": (
+        "call_line", "appliance_type", "product", "manufacturer", "store_name",
+        "model_number", "wrt_no", "customer_name", "phone_number", "contact_phone",
+        "operator_name", "extracted_time", "rakuteru_no", "warranty_plan",
+        "call_direction", "counterparty_type", "caller_type", "template_code", "template_label",
+    ),
+    "teams_chat_message": (
+        "call_line", "product", "operator_name", "rakuteru_no", "teams_action",
+        "warranty_plan", "template_code", "template_label",
+    ),
+}
+
+
+def build_after_call_regeneration_context(form: dict, section: str, vendor: str = "",
+                                         contact_type: str = "", notes_filled: str = "",
+                                         repair_type: str = "") -> dict:
+    fields = AFTER_CALL_REGEN_SECTION_FIELDS.get(section, ())
+    return {
+        "section": section,
+        "fields": {field: form.get(field, "") for field in fields},
+        "vendor": vendor,
+        "contact_type": contact_type,
+        "notes_filled": notes_filled,
+        "repair_type": repair_type,
+    }
+
+
+def after_call_regeneration_context_hash(context: dict) -> str:
+    payload = json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+    return stable_hash_text(payload, 16)
+
+
+def get_after_call_regeneration_hash(form: dict, section: str, vendor: str = "",
+                                     contact_type: str = "", notes_filled: str = "",
+                                     repair_type: str = "") -> str:
+    return after_call_regeneration_context_hash(
+        build_after_call_regeneration_context(
+            form, section, vendor=vendor, contact_type=contact_type,
+            notes_filled=notes_filled, repair_type=repair_type,
+        )
+    )
+
+
+def mark_after_call_section_regenerated(session_state, section: str, context_hash: str) -> None:
+    hashes = dict(session_state.get("_after_call_regenerated_hashes") or {})
+    hashes[section] = context_hash
+    session_state["_after_call_regenerated_hashes"] = hashes
+
+
+def after_call_section_needs_regeneration(session_state, section: str, context_hash: str) -> bool:
+    hashes = session_state.get("_after_call_regenerated_hashes") or {}
+    return bool(hashes.get(section) and hashes.get(section) != context_hash)
+
+
 def _get_teams_send_body(form: dict) -> str:
     message = (form.get("teams_chat_message") or "").strip()
     if not message:
@@ -1486,6 +1546,38 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
     return True
 
 
+CASE_BASIC_WIDGET_PREFIXES = (
+    "call_line_input_",
+    "appliance_type_input_",
+    "product_input_",
+    "manufacturer_input_",
+    "store_name_input_",
+)
+
+CASE_BASIC_WIDGET_TO_FIELD = {
+    "call_line_input_global": "call_line",
+    "appliance_type_input_global": "appliance_type",
+    "product_input_global": "product",
+    "manufacturer_input_global": "manufacturer",
+    "store_name_input_global": "store_name",
+}
+
+
+def request_case_basic_widget_refresh(session_state) -> None:
+    session_state["_pending_case_basic_widget_refresh"] = True
+
+
+def process_pending_case_basic_widget_refresh(session_state) -> bool:
+    if not session_state.get("_pending_case_basic_widget_refresh"):
+        return False
+    for key in list(session_state.keys()):
+        if str(key).startswith(CASE_BASIC_WIDGET_PREFIXES):
+            del session_state[key]
+    session_state["_case_basic_widget_synced_values"] = {}
+    del session_state["_pending_case_basic_widget_refresh"]
+    return True
+
+
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
     new_form = apply_default_operator_name(empty_form(), settings)
     session_state["form"] = new_form
@@ -1502,6 +1594,8 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "request_pdf_storage_confirmed",
         "tpl_label_select_after",
         "teams_action_input",
+        "_case_basic_widget_synced_values",
+        "_after_call_regenerated_hashes",
         "call_memo_input",
         "after_call_memo_display",
         "case_memo_common",
@@ -1512,7 +1606,11 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
             del session_state[key]
     session_state["case_memo_global"] = ""
     for key in list(session_state.keys()):
-        if str(key).startswith(("manual_check_", "now_input_")):
+        if str(key).startswith((
+            "manual_check_",
+            "now_input_",
+            *CASE_BASIC_WIDGET_PREFIXES,
+        )):
             del session_state[key]
     return new_form
 
@@ -3936,8 +4034,42 @@ def build_case_basic_template_display(form: dict, repair_type: str = "") -> str:
     return format_store_template_rule_display(selected.get("store_rule", {}))
 
 
-def render_after_call_basic_panel(form: dict) -> dict:
-    st.markdown("##### 🧾 案件基本（共通）")
+def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
+    last_synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
+    next_synced = {}
+    for widget_key, field in CASE_BASIC_WIDGET_TO_FIELD.items():
+        form_value = form.get(field, "")
+        if widget_key in session_state:
+            widget_value = session_state.get(widget_key, "")
+            last_value = last_synced.get(widget_key)
+            if widget_value == form_value:
+                pass
+            elif last_value is not None and widget_value != last_value:
+                form[field] = widget_value
+                form_value = widget_value
+            elif not form_value and widget_value:
+                form[field] = widget_value
+                form_value = widget_value
+            else:
+                session_state[widget_key] = form_value
+        next_synced[widget_key] = form.get(field, "")
+    session_state["_case_basic_widget_synced_values"] = next_synced
+    session_state["form"] = form
+    return form
+
+
+def remember_case_basic_widget_synced_values(form: dict, session_state) -> None:
+    session_state["_case_basic_widget_synced_values"] = {
+        widget_key: form.get(field, "")
+        for widget_key, field in CASE_BASIC_WIDGET_TO_FIELD.items()
+    }
+
+
+def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
+    if show_template_result:
+        st.markdown("##### 🧾 案件基本（共通）")
+    else:
+        st.markdown("##### 案件基本")
     st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
 
     call_line_opts = get_call_line_options()
@@ -3952,12 +4084,12 @@ def render_after_call_basic_panel(form: dict) -> dict:
             call_line_opts,
             index=call_line_opts.index(form.get("call_line", ""))
             if form.get("call_line", "") in call_line_opts else 0,
-            key="call_line_input_after",
+            key=f"call_line_input_{key_suffix}",
         )
         form["product"] = st.text_input(
             "製品",
             value=form.get("product", ""),
-            key="product_input_after",
+            key=f"product_input_{key_suffix}",
         )
     with col_b:
         form["appliance_type"] = st.selectbox(
@@ -3965,7 +4097,7 @@ def render_after_call_basic_panel(form: dict) -> dict:
             appliance_type_opts,
             index=appliance_type_opts.index(form.get("appliance_type", ""))
             if form.get("appliance_type", "") in appliance_type_opts else 0,
-            key="appliance_type_input_after",
+            key=f"appliance_type_input_{key_suffix}",
         )
         manufacturer_opts = get_manufacturer_options()
         current_manufacturer = form.get("manufacturer", "")
@@ -3977,24 +4109,30 @@ def render_after_call_basic_panel(form: dict) -> dict:
             manufacturer_opts,
             index=manufacturer_opts.index(current_manufacturer)
             if current_manufacturer in manufacturer_opts else 0,
-            key="manufacturer_input_after",
+            key=f"manufacturer_input_{key_suffix}",
         )
     with col_c:
         form["store_name"] = st.text_input(
             "販売店",
             value=form.get("store_name", ""),
-            key="store_name_input_after",
+            key=f"store_name_input_{key_suffix}",
         )
-        preview_decision = run_decision(form)
-        template_display = build_case_basic_template_display(
-            form,
-            preview_decision.get("repair_type", ""),
-        )
-        st.markdown("**テンプレート判定結果**")
-        st.info(template_display)
+        if show_template_result:
+            preview_decision = run_decision(form)
+            template_display = build_case_basic_template_display(
+                form,
+                preview_decision.get("repair_type", ""),
+            )
+            st.markdown("**テンプレート判定結果**")
+            st.info(template_display)
 
     st.session_state.form = form
+    remember_case_basic_widget_synced_values(form, st.session_state)
     return form
+
+
+def render_global_case_basic_panel(form: dict) -> dict:
+    return render_shared_case_basic_editor(form, "global", show_template_result=True)
 
 
 def _set_manual_check(item_id: str, value: bool) -> None:
@@ -4198,6 +4336,7 @@ def render_tab_call():
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
                                 st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                                request_case_basic_widget_refresh(st.session_state)
                                 close_copy_import_panel(st.session_state)
                                 st.rerun()
                             else:
@@ -4221,9 +4360,7 @@ def render_tab_call():
                     extracted = extract_fields_from_pasted_text(pasted)
                     st.session_state.extracted = extracted
                     if extracted:
-                        st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                        close_copy_import_panel(st.session_state)
-                        st.rerun()
+                        st.success("抽出しました。内容を確認してからフォームへ反映してください。")
                     else:
                         st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
                 else:
@@ -4246,22 +4383,22 @@ def render_tab_call():
                 if st.button("📥 フォームへ反映", use_container_width=True):
                     st.session_state.form = apply_extracted_fields_to_form(
                         st.session_state.extracted, st.session_state.form)
+                    st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                    request_case_basic_widget_refresh(st.session_state)
                     close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
                     st.rerun()
 
         form = st.session_state.form
 
-        st.subheader("📝 受付情報フォーム")
+        st.subheader("📝 受付補足情報")
         pre_decision = run_decision(form)  # UI修正v2
         pre_diagnostics = pre_decision.get("diagnostics", {})  # UI修正v2
         missing_fields_set, invalid_fields_set = collect_diagnostic_field_sets(pre_diagnostics)
 
-        call_line_opts    = get_call_line_options()
-        appliance_type_opts = ["", "家電", "住設"]
         pref_opts = [""] + PREFECTURES
 
-        st.markdown("##### 通話中に見る項目")
+        st.markdown("##### 通話中に見る補足項目")
         if SHOW_CALL_TYPE_IN_CALL_FORM:
             call_type_opts = ["", "新規入電", "折り返し", "再入電", "その他"]
             form["call_type"] = st.selectbox(
@@ -4270,37 +4407,9 @@ def render_tab_call():
                 index=call_type_opts.index(form.get("call_type", ""))
                 if form.get("call_type", "") in call_type_opts else 0,
             )
-        render_field_marker("call_line", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["call_line"]     = st.selectbox("回線名", call_line_opts,
-            index=call_line_opts.index(form.get("call_line","")) if form.get("call_line") in call_line_opts else 0)
-        render_field_marker("appliance_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["appliance_type"]= st.selectbox("家電/住設", appliance_type_opts,
-            index=appliance_type_opts.index(form.get("appliance_type","")) if form.get("appliance_type") in appliance_type_opts else 0)
         render_field_marker("prefecture", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["prefecture"]    = st.selectbox("都道府県", pref_opts,
             index=pref_opts.index(form.get("prefecture","")) if form.get("prefecture") in pref_opts else 0)
-        product_opts = get_product_options()
-        current_product = form.get("product", "")
-        if current_product and current_product not in product_opts:
-            form["product_original"] = form.get("product_original") or current_product
-            current_product = PRODUCT_OTHER
-        render_field_marker("product", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["product"] = st.selectbox(
-            "製品",
-            product_opts,
-            index=product_opts.index(current_product) if current_product in product_opts else 0,
-        )
-        manufacturer_opts = get_manufacturer_options()
-        current_manufacturer = form.get("manufacturer", "")
-        if current_manufacturer and current_manufacturer not in manufacturer_opts:
-            form["manufacturer_original"] = form.get("manufacturer_original") or current_manufacturer
-            current_manufacturer = normalize_manufacturer_for_select(current_manufacturer)
-        render_field_marker("manufacturer", missing_fields_set, invalid_fields_set, pre_diagnostics)
-        form["manufacturer"] = st.selectbox(
-            "メーカー",
-            manufacturer_opts,
-            index=manufacturer_opts.index(current_manufacturer) if current_manufacturer in manufacturer_opts else 0,
-        )
         render_field_marker("model_number", missing_fields_set, invalid_fields_set, pre_diagnostics)
         form["model_number"]  = st.text_input("型番",         form.get("model_number",""))
         form["warranty_plan"] = st.text_input("保証プラン",   form.get("warranty_plan",""))
@@ -4676,7 +4785,6 @@ def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
     render_case_clear_controls("after")
-    form = render_after_call_basic_panel(form)
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
@@ -4718,10 +4826,7 @@ def render_tab_after_call():
         warranty_plan_val = form.get("warranty_plan", "")
         template_selection = select_template_for_form(
             form, repair_type_val, warranty_plan_val, df_tpl)
-        store_rule_display = format_store_template_rule_display(
-            template_selection["store_rule"])
-        st.caption("販売店テンプレート判定：")
-        st.info(store_rule_display)
+        st.caption("使用する業者送付コード・テンプレートを確認します。")
         if is_double_protect_plan(warranty_plan_val):
             st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
@@ -4822,34 +4927,28 @@ def render_tab_after_call():
         form["contact_phone"] = contact_phone
         st.session_state.form = form
 
-        form["teams_action"] = st.text_input(
-            "Teams報告アクション（手入力優先）",
-            value=form.get("teams_action", ""),
-            placeholder=resolve_teams_request_action(form, vendor, decision["vendor_result"].get("contact_type", "")),
-            key="teams_action_input",
-        )
-        st.session_state.form = form
-
         caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
+        contact_type = decision["vendor_result"].get("contact_type", "")
 
         # ── 注意内容メモ（備考欄反映）──
         st.markdown("##### 📝 注意内容メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
-        generated_texts = _build_after_call_texts(
-            form, warranty_result, repair_type, vendor, caller_type, notes_filled,
-            decision["vendor_result"].get("contact_type", ""))
-        if st.button("🔄 ラクテル用・Teams用テキストを再生成", use_container_width=True):
-            form["attention_memo"] = generated_texts["attention_memo"]
-            form["rakutel_text"] = generated_texts["rakutel_text"]
-            form["teams_chat_message"] = generated_texts["teams_chat_message"]
+        generated_attention_memo = _build_after_call_memo(
+            form, warranty_result, repair_type, vendor, notes_filled)
+        attention_hash = get_after_call_regeneration_hash(
+            form, "attention_memo", vendor=vendor, contact_type=contact_type,
+            notes_filled=notes_filled, repair_type=repair_type)
+        if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
+            st.warning("基本項目が変更されています。注意内容メモを再生成してください。")
+        if st.button("注意内容メモを再生成", key="regenerate_attention_memo", use_container_width=True):
+            form["attention_memo"] = generated_attention_memo
             st.session_state["memo_after"] = form["attention_memo"]
-            st.session_state["rakutel_text_display"] = form["rakutel_text"]
-            st.session_state["teams_chat_message_display"] = form["teams_chat_message"]
+            mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
 
         memo_display = st.text_area(
             "注意内容メモ",
-            form.get("attention_memo") or generated_texts["attention_memo"],
+            form.get("attention_memo") or generated_attention_memo,
             height=260,
             key="memo_after",
         )
@@ -4878,9 +4977,31 @@ def render_tab_after_call():
         form["counterparty_type"] = counterparty_type
         form["caller_type"] = counterparty_type
         st.session_state.form = form
+        caller_type = counterparty_type
+        generated_rakutel_text = _build_rakutel_text(form, caller_type, notes_filled)
+        rakutel_hash = get_after_call_regeneration_hash(
+            form, "rakutel_text", vendor=vendor, contact_type=contact_type,
+            notes_filled=notes_filled, repair_type=repair_type)
+        missing_rakutel_fields = [
+            label for field, label in [
+                ("call_line", "回線名"),
+                ("product", "製品"),
+                ("manufacturer", "メーカー"),
+            ]
+            if not (form.get(field) or "").strip()
+        ]
+        if missing_rakutel_fields:
+            st.warning("未入力の基本項目があります: " + " / ".join(missing_rakutel_fields))
+        if after_call_section_needs_regeneration(st.session_state, "rakutel_text", rakutel_hash):
+            st.warning("基本項目が変更されています。ラクテル用テキストを再生成してください。")
+        if st.button("ラクテル用テキストを再生成", key="regenerate_rakutel_text", use_container_width=True):
+            form["rakutel_text"] = generated_rakutel_text
+            st.session_state["rakutel_text_display"] = form["rakutel_text"]
+            mark_after_call_section_regenerated(st.session_state, "rakutel_text", rakutel_hash)
+            st.session_state.form = form
         rakutel_text_display = st.text_area(
             "ラクテル用テキスト",
-            form.get("rakutel_text") or generated_texts["rakutel_text"],
+            form.get("rakutel_text") or generated_rakutel_text,
             height=180,
             key="rakutel_text_display",
         )
@@ -4896,10 +5017,30 @@ def render_tab_after_call():
         )
         form["rakuteru_no"] = rakuteru_val
         st.session_state.form = form
+        form["teams_action"] = st.text_input(
+            "Teams報告アクション（手入力優先）",
+            value=form.get("teams_action", ""),
+            placeholder=resolve_teams_request_action(form, vendor, contact_type),
+            key="teams_action_input",
+        )
+        st.session_state.form = form
         request_folder = get_request_pdf_folder_info(vendor)
+        generated_teams_message = _build_teams_chat_message(form, vendor, contact_type)
+        teams_hash = get_after_call_regeneration_hash(
+            form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
+            notes_filled=notes_filled, repair_type=repair_type)
+        if not (form.get("rakuteru_no") or "").strip():
+            st.warning("楽テルNOが未入力です。")
+        if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
+            st.warning("基本項目が変更されています。Teams報告文を再生成してください。")
+        if st.button("Teams報告文を再生成", key="regenerate_teams_chat_message", use_container_width=True):
+            form["teams_chat_message"] = generated_teams_message
+            st.session_state["teams_chat_message_display"] = form["teams_chat_message"]
+            mark_after_call_section_regenerated(st.session_state, "teams_chat_message", teams_hash)
+            st.session_state.form = form
         teams_chat_message = st.text_area(
             "Teams報告文",
-            form.get("teams_chat_message") or generated_texts["teams_chat_message"],
+            form.get("teams_chat_message") or generated_teams_message,
             height=100,
             key="teams_chat_message_display",
         )
@@ -5069,11 +5210,19 @@ def _render_master_candidate_box() -> None:
 
 def render_tab_master():
     st.subheader("⚙️ マスタ管理")
+    st.markdown(
+        """
+<div style="border-left:4px solid #475569;padding:8px 12px;margin:6px 0 12px 0;background:#F8FAFC;">
+  <strong style="color:#475569;">管理画面</strong>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
     st.info(
         "CSVを編集してStreamlitをリロードすると反映されます。\n"
         "CSV更新後に古い判定が残る場合は、下の「CSVキャッシュをクリア」を押してください。"
     )
-    if st.button("CSVキャッシュをクリア", type="primary", use_container_width=True):
+    if st.button("CSVキャッシュをクリア", type="secondary", use_container_width=True):
         st.cache_data.clear()
         st.success("CSVキャッシュをクリアしました。")
         st.rerun()
@@ -5226,7 +5375,10 @@ def main():
     st.caption("通話中の判断補助ツール — 正式スクリプト本文は先方管理のExcelを参照してください")
     init_session()
     process_pending_case_clear(st.session_state)
+    process_pending_case_basic_widget_refresh(st.session_state)
+    sync_global_case_basic_widget_state(st.session_state.form, st.session_state)
     render_global_top_panels(st.session_state.form)
+    render_global_case_basic_panel(st.session_state.form)
     st.markdown("""
 <style>
 div[data-baseweb="tab-list"] {
@@ -5236,19 +5388,19 @@ div[data-baseweb="tab-list"] {
 button[data-baseweb="tab"] {
     font-size: 1.0em;
     font-weight: 400;
-    color: #666;
+    color: #667085;
     padding: 8px 18px;
     border-bottom: 3px solid transparent;
 }
 button[data-baseweb="tab"][aria-selected="true"] {
     font-weight: 700;
-    color: #d6336c;
-    background-color: #fff5f7;
-    border-bottom: 3px solid #d6336c;
+    color: #2563EB;
+    background-color: #EFF6FF;
+    border-bottom: 3px solid #2563EB;
 }
 button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
-    color: #444;
-    background-color: #f5f5f5;
+    color: #475569;
+    background-color: #F8FAFC;
 }
 </style>
 """, unsafe_allow_html=True)

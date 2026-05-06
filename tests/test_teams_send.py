@@ -423,7 +423,7 @@ def test_copy_import_expanded_falls_back_to_legacy_key():
     assert app.copy_import_expanded(state) is True
 
 
-def test_copy_import_success_paths_close_panel_and_rerun():
+def test_copy_import_success_paths_close_only_after_form_reflection_or_clipboard_direct():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     clipboard_index = source.index('if st.button("📋 クリップボードから直接抽出"')
@@ -435,10 +435,13 @@ def test_copy_import_success_paths_close_panel_and_rerun():
 
     assert "close_copy_import_panel(st.session_state)" in clipboard_area
     assert "st.rerun()" in clipboard_area
-    assert "close_copy_import_panel(st.session_state)" in manual_area
-    assert "st.rerun()" in manual_area
+    assert "request_case_basic_widget_refresh(st.session_state)" in clipboard_area
+    assert "close_copy_import_panel(st.session_state)" not in manual_area
+    assert "st.rerun()" not in manual_area
+    assert "抽出しました。内容を確認してからフォームへ反映してください。" in manual_area
     assert "close_copy_import_panel(st.session_state)" in reflect_area
     assert "st.rerun()" in reflect_area
+    assert "request_case_basic_widget_refresh(st.session_state)" in reflect_area
 
 
 def test_copy_import_uses_self_managed_ui_not_expander():
@@ -572,6 +575,8 @@ def test_pending_case_clear_clears_manual_and_now_input_widget_state():
         "call_check_manual": {"manual_manual_item": True},
         "manual_check_manual_manual_item_0_abcd1234": True,
         "now_input_manual_manual_item_0_abcd1234": "old input",
+        "call_line_input_global": "old line",
+        "product_input_global": "old product",
     })
 
     app.process_pending_case_clear(state, {"default_operator_name": ""})
@@ -579,6 +584,8 @@ def test_pending_case_clear_clears_manual_and_now_input_widget_state():
     assert state["call_check_manual"] == {}
     assert not any(str(key).startswith("manual_check_") for key in state)
     assert not any(str(key).startswith("now_input_") for key in state)
+    assert not any(str(key).startswith("call_line_input_") for key in state)
+    assert not any(str(key).startswith("product_input_") for key in state)
 
 
 def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
@@ -594,6 +601,81 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
     assert "render_common_case_memo" in panels_source
     assert "render_decision_tags_panel" in panels_source
     assert top_index < tabs_index
+
+
+def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
+    form = app.empty_form()
+    state = SessionState({
+        "call_line_input_global": "家電保証対応業務（24時間）",
+        "appliance_type_input_global": "家電",
+        "product_input_global": "食器洗い乾燥機",
+        "manufacturer_input_global": "三菱電機",
+        "store_name_input_global": "ライフデザイン・カバヤ",
+    })
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+
+    assert synced["call_line"] == "家電保証対応業務（24時間）"
+    assert synced["product"] == "食器洗い乾燥機"
+    assert state["form"]["manufacturer"] == "三菱電機"
+
+
+def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
+    form = app.empty_form()
+    form.update({
+        "product": "食器洗い乾燥機",
+        "manufacturer": "三菱電機",
+        "store_name": "ライフデザイン・カバヤ株式会社",
+    })
+    state = SessionState({
+        "product_input_global": "",
+        "manufacturer_input_global": "",
+        "store_name_input_global": "",
+    })
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+
+    assert synced["product"] == "食器洗い乾燥機"
+    assert synced["manufacturer"] == "三菱電機"
+    assert synced["store_name"] == "ライフデザイン・カバヤ株式会社"
+    assert state["product_input_global"] == "食器洗い乾燥機"
+    assert state["manufacturer_input_global"] == "三菱電機"
+    assert state["store_name_input_global"] == "ライフデザイン・カバヤ株式会社"
+
+
+def test_global_case_basic_manual_widget_edit_updates_form():
+    form = app.empty_form()
+    form["product"] = "洗濯機"
+    state = SessionState({
+        "product_input_global": "食器洗い乾燥機",
+        "_case_basic_widget_synced_values": {
+            "product_input_global": "洗濯機",
+        },
+    })
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+
+    assert synced["product"] == "食器洗い乾燥機"
+
+
+def test_pending_case_basic_widget_refresh_clears_stale_widget_keys():
+    state = SessionState({
+        "_pending_case_basic_widget_refresh": True,
+        "call_line_input_global": "old line",
+        "product_input_global": "old product",
+        "manufacturer_input_global": "old manufacturer",
+        "store_name_input_global": "old store",
+        "unrelated": "keep",
+    })
+
+    processed = app.process_pending_case_basic_widget_refresh(state)
+
+    assert processed is True
+    assert "call_line_input_global" not in state
+    assert "product_input_global" not in state
+    assert "manufacturer_input_global" not in state
+    assert "store_name_input_global" not in state
+    assert state["unrelated"] == "keep"
 
 
 def test_regenerated_teams_message_reflects_late_operator_name():
@@ -928,44 +1010,65 @@ def test_rakutel_text_generation_uses_stored_counterparty_type():
     assert "MPG大濱" in text
 
 
-def test_after_call_basic_common_section_exists_before_template():
+def test_global_case_basic_common_section_exists_before_tabs():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
+    main_index = source.index("def main():")
+    top_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
+    basic_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
+    tabs_index = source.index("st.tabs(", main_index)
     after_index = source.index("def render_tab_after_call")
-    basic_index = source.index("render_after_call_basic_panel(form)", after_index)
-    template_index = source.index("##### 📋 テンプレート（業者送付コード）", after_index)
+    after_source = source[after_index:source.index("def render_tab_master", after_index)]
 
+    assert top_index < basic_index < tabs_index
     assert "##### 🧾 案件基本（共通）" in source
-    assert basic_index < template_index
+    assert "render_global_case_basic_panel" in source
+    assert "案件基本（共通）" not in after_source
 
 
-def test_after_call_basic_widget_keys_are_after_specific():
+def test_global_case_basic_widget_keys_are_single_global_set():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    panel_index = source.index("def render_after_call_basic_panel")
-    panel_end = source.index("def _set_manual_check", panel_index)
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
     for key in [
-        "call_line_input_after",
-        "appliance_type_input_after",
-        "product_input_after",
-        "manufacturer_input_after",
-        "store_name_input_after",
+        'call_line_input_{key_suffix}',
+        'appliance_type_input_{key_suffix}',
+        'product_input_{key_suffix}',
+        'manufacturer_input_{key_suffix}',
+        'store_name_input_{key_suffix}',
     ]:
         assert key in panel_source
-    assert "call_line_input_after" not in source[source.index("def render_tab_call"):panel_index]
+    assert 'render_shared_case_basic_editor(form, "global"' in source
+    assert "call_line_input_after" not in source
+    assert "product_input_after" not in source
+    assert "manufacturer_input_after" not in source
 
 
-def test_after_call_basic_panel_updates_shared_form_fields():
+def test_global_case_basic_panel_updates_shared_form_fields():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    panel_index = source.index("def render_after_call_basic_panel")
-    panel_end = source.index("def _set_manual_check", panel_index)
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
     for field in ["call_line", "appliance_type", "product", "manufacturer", "store_name"]:
         assert f'form["{field}"]' in panel_source
     assert "st.session_state.form = form" in panel_source
+
+
+def test_call_tab_does_not_render_duplicate_case_basic_fields():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_index = source.index("def render_tab_call")
+    call_end = source.index("def render_tab_after_call", call_index)
+    call_source = source[call_index:call_end]
+
+    assert "受付補足情報" in call_source
+    assert 'st.selectbox("回線名"' not in call_source
+    assert 'st.selectbox("家電/住設"' not in call_source
+    assert 'st.selectbox(\n            "製品"' not in call_source
+    assert 'st.selectbox(\n            "メーカー"' not in call_source
 
 
 def test_case_basic_template_display_for_life_design_kabaya():
@@ -988,18 +1091,93 @@ def test_after_call_template_caption_replaced():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert "回線名を選択するとテンプレートが表示されます" not in source
+    assert "販売店テンプレート判定：" not in source
     assert "基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。" in source
 
 
-def test_after_call_regeneration_uses_current_shared_form_after_basic_panel():
+def test_case_basic_template_result_rendered_only_in_basic_panel():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    after_index = source.index("def render_tab_after_call")
-    basic_index = source.index("render_after_call_basic_panel(form)", after_index)
-    regenerate_index = source.index("_build_after_call_texts(", basic_index)
-    button_index = source.index("🔄 ラクテル用・Teams用テキストを再生成", regenerate_index)
+    assert source.count("テンプレート判定結果") == 1
+    main_index = source.index("def main():")
+    basic_call_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
+    tabs_index = source.index("st.tabs(", main_index)
+    basic_panel_index = source.index("def render_shared_case_basic_editor")
+    result_index = source.index("テンプレート判定結果")
 
-    assert basic_index < regenerate_index < button_index
+    assert basic_panel_index < result_index
+    assert basic_call_index < tabs_index
+
+
+def test_after_call_regeneration_uses_current_global_form_after_basic_panel():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    main_index = source.index("def main():")
+    basic_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
+    tabs_index = source.index("st.tabs(", main_index)
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert basic_index < tabs_index
+    assert "form = st.session_state.form" in after_source
+    assert "注意内容メモを再生成" in after_source
+    assert "ラクテル用テキストを再生成" in after_source
+    assert "Teams報告文を再生成" in after_source
+
+
+def test_after_call_regeneration_buttons_are_independent():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "ラクテル用・Teams用テキストを再生成" not in after_source
+    attention_button = after_source.index("注意内容メモを再生成")
+    rakutel_button = after_source.index("ラクテル用テキストを再生成")
+    teams_button = after_source.index("Teams報告文を再生成")
+    rakutel_area = after_source[rakutel_button:teams_button]
+    teams_area = after_source[teams_button:]
+
+    assert attention_button < rakutel_button < teams_button
+    assert 'form["teams_chat_message"] = generated_teams_message' not in rakutel_area
+    assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_area
+
+
+def test_after_call_regeneration_dirty_state_helpers():
+    form = app.empty_form()
+    form.update({"call_line": "A", "product": "洗濯機", "rakuteru_no": "RT-1"})
+    state = SessionState()
+    first_hash = app.get_after_call_regeneration_hash(form, "teams_chat_message", vendor="V")
+
+    app.mark_after_call_section_regenerated(state, "teams_chat_message", first_hash)
+    assert app.after_call_section_needs_regeneration(state, "teams_chat_message", first_hash) is False
+
+    form["rakuteru_no"] = "RT-2"
+    second_hash = app.get_after_call_regeneration_hash(form, "teams_chat_message", vendor="V")
+    assert app.after_call_section_needs_regeneration(state, "teams_chat_message", second_hash) is True
+
+
+def test_tab_css_uses_blue_selected_state_not_red():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    css = source[source.index("div[data-baseweb=\"tab-list\"]"):source.index("</style>", source.index("div[data-baseweb=\"tab-list\"]"))]
+
+    assert "#2563EB" in css
+    assert "#EFF6FF" in css
+    assert "#667085" in css
+    assert "#d6336c" not in css
+    assert "#fff5f7" not in css
+
+
+def test_master_csv_cache_clear_is_secondary_not_danger():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    master_index = source.index("def render_tab_master")
+    master_source = source[master_index:]
+    cache_index = master_source.index("CSVキャッシュをクリア")
+    cache_area = master_source[cache_index:cache_index + 220]
+
+    assert 'type="secondary"' in cache_area
+    assert 'type="primary"' not in cache_area
 
 
 # ── ナビゲーション構造テスト ──
