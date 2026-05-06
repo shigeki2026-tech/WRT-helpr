@@ -1222,6 +1222,10 @@ def test_tab_css_uses_blue_selected_state_not_red():
     assert "#667085" in css
     assert "#d6336c" not in css
     assert "#fff5f7" not in css
+    for red_token in ("#ff", "#f43", "#ef4444", "#d6336c"):
+        assert red_token.lower() not in css.lower()
+    assert 'div[data-baseweb="tab-highlight"]' in css
+    assert "background-color: #2563EB !important;" in css
 
 
 def test_master_csv_cache_clear_is_secondary_not_danger():

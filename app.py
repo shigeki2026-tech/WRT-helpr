@@ -971,8 +971,28 @@ VENDOR_INLINE_OPTIONS = [
 ]
 
 
+INLINE_MANUFACTURER_OPEN_LABEL = "メーカー登録候補を開く"
+INLINE_SAVE_AND_REDECIDE_LABEL = "保存して再判定"
+INLINE_SEND_TO_MASTER_LABEL = "マスタ管理で確認して登録"
+
+
 def _clean_master_candidate_value(value) -> str:
     return str(value or "").strip()
+
+
+def _manufacturer_inline_aliases(original: str, normalized: str) -> list[str]:
+    values: list[str] = []
+    for value in (normalized, original):
+        value = _clean_master_candidate_value(value)
+        if value and value not in values and value not in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+            values.append(value)
+    folded = {value.casefold() for value in values}
+    aqua_ja_values = ("アクア", "繧｢繧ｯ繧｢")
+    if "aqua" in folded and not any(value in aqua_ja_values for value in values):
+        values.insert(0, "アクア")
+    if any(value in aqua_ja_values for value in values) and "aqua" not in folded:
+        values.append("AQUA")
+    return values
 
 
 def build_inline_manufacturer_candidate(form: dict) -> dict:
@@ -985,11 +1005,12 @@ def build_inline_manufacturer_candidate(form: dict) -> dict:
     normalized = normalize_manufacturer(original).strip() or original
     if normalized in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
         normalized = original
+    aliases = _manufacturer_inline_aliases(original, normalized)
     return {
         "manufacturer_original": original,
         "normalized_manufacturer": normalized,
         "group_name": "国内家電メーカー",
-        "manufacturers": normalized,
+        "manufacturers": ";".join(aliases),
         "notes": "インライン登録候補",
     }
 
@@ -4434,6 +4455,183 @@ def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
         _send_inline_candidate_to_master({"vendor_rule": row, "source_fields": source_fields}, "inline_vendor_send_master")
 
 
+def _send_inline_candidate_to_master(candidate: dict, key: str) -> None:
+    if st.button(INLINE_SEND_TO_MASTER_LABEL, key=key, type="secondary"):
+        st.session_state["master_registration_candidate"] = candidate
+        st.success("マスタ管理タブへ候補を引き継ぎました。")
+
+
+def render_inline_manufacturer_registration(form: dict) -> None:
+    candidate = build_inline_manufacturer_candidate(form)
+    if not candidate:
+        return
+    st.warning(f"メーカー未登録：{candidate['manufacturer_original']}")
+    st.caption(f"現在のメーカー判定：{form.get('manufacturer') or '未入力'} / 原文：{candidate['manufacturer_original']}")
+    if st.button(INLINE_MANUFACTURER_OPEN_LABEL, key="inline_mfr_open", type="secondary"):
+        st.session_state["inline_mfr_registration_open"] = True
+    if not st.session_state.get("inline_mfr_registration_open"):
+        return
+    with st.expander(INLINE_MANUFACTURER_OPEN_LABEL, expanded=True):
+        manufacturer_original = st.text_input(
+            "メーカー原文",
+            value=candidate["manufacturer_original"],
+            key="inline_mfr_original_v2",
+            disabled=True,
+        )
+        normalized = st.text_input(
+            "正規化メーカー名",
+            value=candidate["normalized_manufacturer"],
+            key="inline_mfr_normalized_v2",
+        )
+        group_name = st.selectbox(
+            "メーカーグループ",
+            MANUFACTURER_INLINE_GROUP_OPTIONS,
+            index=MANUFACTURER_INLINE_GROUP_OPTIONS.index(candidate["group_name"]),
+            key="inline_mfr_group_v2",
+        )
+        row = {
+            "group_name": group_name,
+            "manufacturers": ";".join(_manufacturer_inline_aliases(manufacturer_original, normalized.strip())),
+            "notes": candidate["notes"],
+            "manufacturer_original": manufacturer_original,
+            "normalized_manufacturer": normalized.strip(),
+        }
+        st.dataframe(pd.DataFrame([row]), use_container_width=True)
+        disabled = not normalized.strip() or normalized.strip() in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
+        save_col, master_col = st.columns(2)
+        with save_col:
+            if st.button(INLINE_SAVE_AND_REDECIDE_LABEL, key="inline_mfr_save_v2", type="primary", disabled=disabled):
+                result = append_master_manufacturer_group(row)
+                _show_master_append_result(result)
+                if result.get("ok"):
+                    st.cache_data.clear()
+                    form["manufacturer"] = normalized.strip()
+                    form["manufacturer_original"] = manufacturer_original
+                    st.session_state.form = form
+                    st.session_state["inline_mfr_registration_open"] = False
+                    bump_case_basic_revision(st.session_state)
+                    st.rerun()
+        with master_col:
+            _send_inline_candidate_to_master(
+                {"manufacturer_group": row, "source_fields": {"manufacturer_original": manufacturer_original}},
+                "inline_mfr_send_master_v2",
+            )
+
+
+def render_inline_product_alias_registration(form: dict) -> None:
+    candidate = build_inline_product_alias_candidate(form)
+    if not candidate:
+        return
+    st.warning(f"製品未登録：{candidate['keyword']}")
+    with st.expander("製品登録候補を開く", expanded=False):
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "keyword": st.text_input("keyword", value=candidate["keyword"], key="inline_alias_keyword_v2"),
+            "normalized_product": st.text_input("normalized_product", value=candidate["normalized_product"], key="inline_alias_normalized_v2"),
+            "product_group": st.text_input("product_group", value=candidate["product_group"], key="inline_alias_group_v2"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_alias_notes_v2"),
+        }
+        _preview_master_row(row, _ALIAS_COLS)
+        duplicate = bool(row["keyword"]) and master_csv_has_duplicate("master_product_alias.csv", row, ["keyword"])
+        if duplicate:
+            st.warning("同じ keyword が既にあります。")
+        disabled = not row["keyword"].strip() or not row["normalized_product"].strip() or duplicate
+        save_col, master_col = st.columns(2)
+        with save_col:
+            if st.button(INLINE_SAVE_AND_REDECIDE_LABEL, key="inline_alias_save_v2", type="primary", disabled=disabled):
+                result = append_master_product_alias(row)
+                _show_master_append_result(result)
+                if result.get("ok"):
+                    st.cache_data.clear()
+                    form["product"] = row["normalized_product"].strip()
+                    st.session_state.form = form
+                    bump_case_basic_revision(st.session_state)
+                    st.rerun()
+        with master_col:
+            _send_inline_candidate_to_master(
+                {"product_alias": row, "source_fields": {"product_original": candidate["keyword"]}},
+                "inline_alias_send_master_v2",
+            )
+
+
+def render_inline_store_rule_registration(form: dict, template_selection: dict) -> None:
+    candidate = build_inline_store_rule_candidate(form, template_selection)
+    if not candidate:
+        return
+    st.caption(f"販売店テンプレート未登録：{form.get('store_name')}")
+    with st.expander("販売店テンプレート候補を開く", expanded=False):
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "store_keyword": st.text_input("store_keyword", value=candidate["store_keyword"], key="inline_store_keyword_v2"),
+            "normalized_store": st.text_input("normalized_store", value=candidate["normalized_store"], key="inline_store_normalized_v2"),
+            "template_code": st.text_input("template_code", value=candidate["template_code"], key="inline_store_template_code_v2"),
+            "template_label": st.text_input("template_label", value=candidate["template_label"], key="inline_store_template_label_v2"),
+            "template_group": st.text_input("template_group", value=candidate["template_group"], key="inline_store_template_group_v2"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_store_notes_v2"),
+        }
+        _preview_master_row(row, _STORE_RULE_COLS)
+        save_col, master_col = st.columns(2)
+        with save_col:
+            if st.button(INLINE_SAVE_AND_REDECIDE_LABEL, key="inline_store_save_v2", type="primary", disabled=not row["store_keyword"].strip()):
+                result = append_master_store_rule(row)
+                _show_master_append_result(result)
+                if result.get("ok"):
+                    st.cache_data.clear()
+                    bump_case_basic_revision(st.session_state)
+                    st.rerun()
+        with master_col:
+            _send_inline_candidate_to_master(
+                {"store_rule": row, "source_fields": {"store_name": form.get("store_name", "")}},
+                "inline_store_send_master_v2",
+            )
+
+
+def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
+    candidate = build_inline_vendor_rule_candidate(form, decision)
+    if not candidate:
+        return
+    st.warning("修理拠点未確定")
+    with st.expander("修理拠点ルール候補を開く", expanded=False):
+        vendor_default = candidate["vendor_name"] if candidate["vendor_name"] in VENDOR_INLINE_OPTIONS else VENDOR_INLINE_OPTIONS[-1]
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "call_line": st.text_input("call_line", value=candidate["call_line"], key="inline_vendor_call_line_v2"),
+            "prefecture": st.text_input("prefecture", value=candidate["prefecture"], key="inline_vendor_prefecture_v2"),
+            "area_group": st.text_input("area_group", value=candidate["area_group"], key="inline_vendor_area_group_v2"),
+            "manufacturer_keyword": st.text_input("manufacturer_keyword", value=candidate["manufacturer_keyword"], key="inline_vendor_manufacturer_v2"),
+            "product_keyword": st.text_input("product_keyword", value=candidate["product_keyword"], key="inline_vendor_product_v2"),
+            "store_keyword": st.text_input("store_keyword", value=candidate["store_keyword"], key="inline_vendor_store_v2"),
+            "repair_type": st.text_input("repair_type", value=candidate["repair_type"], key="inline_vendor_repair_type_v2"),
+            "is_over_10years": candidate["is_over_10years"],
+            "vendor_name": st.selectbox("vendor_name", VENDOR_INLINE_OPTIONS, index=VENDOR_INLINE_OPTIONS.index(vendor_default), key="inline_vendor_name_v2"),
+            "reason": st.text_input("reason", value=candidate["reason"], key="inline_vendor_reason_v2"),
+            "needs_escalation": st.selectbox("needs_escalation", ["0", "1"], index=1, key="inline_vendor_needs_escalation_v2"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_vendor_notes_v2"),
+            "contact_type": st.text_input("contact_type", value=candidate["contact_type"], key="inline_vendor_contact_type_v2"),
+        }
+        _preview_master_row(row, _VENDOR_COLS)
+        confirmed = st.checkbox("内容を確認して保存する", key="inline_vendor_confirm_v2")
+        disabled = not confirmed or not row["repair_type"].strip() or not row["vendor_name"].strip()
+        save_col, master_col = st.columns(2)
+        with save_col:
+            if st.button(INLINE_SAVE_AND_REDECIDE_LABEL, key="inline_vendor_save_v2", type="primary", disabled=disabled):
+                result = append_master_vendor_rule(row)
+                _show_master_append_result(result)
+                if result.get("ok"):
+                    st.cache_data.clear()
+                    bump_case_basic_revision(st.session_state)
+                    st.rerun()
+        with master_col:
+            source_fields = {
+                field: form.get(field, "")
+                for field in ("call_line", "prefecture", "product", "manufacturer", "store_name")
+            }
+            _send_inline_candidate_to_master({"vendor_rule": row, "source_fields": source_fields}, "inline_vendor_send_master_v2")
+
+
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
     if show_template_result:
         st.markdown("##### 🧾 案件基本（共通）")
@@ -4481,6 +4679,8 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             if current_manufacturer in manufacturer_opts else 0,
             key=case_basic_widget_key("manufacturer", revision),
         )
+        if form.get("manufacturer") in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN) and form.get("manufacturer_original"):
+            st.caption(f"原文：{form.get('manufacturer_original')}")
     with col_c:
         form["store_name"] = st.text_input(
             "販売店",
@@ -5817,21 +6017,27 @@ def main():
     st.markdown("""
 <style>
 div[data-baseweb="tab-list"] {
-    border-bottom: 2px solid #e0e0e0;
+    border-bottom: 1px solid #D0D5DD !important;
     gap: 4px;
 }
 button[data-baseweb="tab"] {
     font-size: 1.0em;
-    font-weight: 400;
-    color: #667085;
+    font-weight: 500 !important;
+    color: #667085 !important;
     padding: 8px 18px;
     border-bottom: 3px solid transparent;
 }
 button[data-baseweb="tab"][aria-selected="true"] {
-    font-weight: 700;
-    color: #2563EB;
-    background-color: #EFF6FF;
+    font-weight: 700 !important;
+    color: #2563EB !important;
+    background-color: #EFF6FF !important;
     border-bottom: 3px solid #2563EB;
+}
+button[data-baseweb="tab"][aria-selected="true"] * {
+    color: #2563EB !important;
+}
+div[data-baseweb="tab-highlight"] {
+    background-color: #2563EB !important;
 }
 button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: #475569;

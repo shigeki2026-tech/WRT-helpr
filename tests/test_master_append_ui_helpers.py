@@ -148,6 +148,43 @@ def test_inline_manufacturer_candidate_for_other_with_original():
     assert "customer_name" not in str(candidate)
 
 
+def test_inline_manufacturer_candidate_includes_aqua_alias():
+    form = app.empty_form()
+    form.update({"manufacturer": app.MANUFACTURER_OTHER, "manufacturer_original": "繧｢繧ｯ繧｢"})
+
+    candidate = app.build_inline_manufacturer_candidate(form)
+
+    assert candidate["manufacturers"] == "繧｢繧ｯ繧｢;AQUA"
+
+
+def test_inline_manufacturer_candidate_includes_readable_aqua_alias():
+    form = app.empty_form()
+    form.update({"manufacturer": app.MANUFACTURER_OTHER, "manufacturer_original": "アクア"})
+
+    candidate = app.build_inline_manufacturer_candidate(form)
+
+    assert candidate["manufacturers"] == "アクア;AQUA"
+
+
+def test_inline_manufacturer_registration_ui_has_open_and_save_flow():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.rindex("def render_inline_manufacturer_registration")
+    end = source.index("def render_inline_product_alias_registration", start)
+    function_source = source[start:end]
+
+    assert "INLINE_MANUFACTURER_OPEN_LABEL" in function_source
+    assert "INLINE_SAVE_AND_REDECIDE_LABEL" in function_source
+    helper_start = source.rindex("def _send_inline_candidate_to_master")
+    helper_end = source.index("def render_inline_manufacturer_registration", helper_start)
+    helper_source = source[helper_start:helper_end]
+    assert "INLINE_SEND_TO_MASTER_LABEL" in helper_source
+    assert "メーカー未登録" in function_source
+    assert "原文：" in function_source
+    assert 'form["manufacturer"] = normalized.strip()' in function_source
+    assert "st.cache_data.clear()" in function_source
+    assert "bump_case_basic_revision(st.session_state)" in function_source
+
+
 def test_manufacturer_group_append_adds_aqua_and_aqua_alias_without_duplicate():
     data_dir = _make_data_dir()
     path = _write_master_csv(
