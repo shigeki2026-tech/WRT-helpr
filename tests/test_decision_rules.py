@@ -1549,6 +1549,63 @@ def test_life_design_kabaya_dishwasher_visit_vendor_is_unite():
     assert d["vendor_result"]["needs_escalation"] is False
 
 
+def test_east_japan_fridge_aqua_visit_vendor_is_wrt():
+    d = app.run_decision(make_form(
+        product="冷蔵庫",
+        manufacturer="アクア",
+        prefecture="埼玉県",
+        store_name="アート引越センター（浦和支店）",
+    ))
+
+    assert d["area_group"] == "NTT東日本"
+    assert d["repair_type"] == "出張修理"
+    assert d["vendor"] == "WRT修理センター"
+    assert d["vendor_result"]["matched"] is True
+    assert d["vendor_result"]["reason"] == "東日本×対象製品"
+    assert d["vendor_result"]["needs_escalation"] is False
+    assert app.resolve_teams_request_action(d["working_form"], d["vendor"]) == "依頼書PDF格納済み"
+
+
+def test_east_japan_visit_vendor_list_no2_products_are_wrt():
+    cases = [
+        ("東京都", "冷蔵庫", "任意メーカー"),
+        ("神奈川県", "洗濯機", "任意メーカー"),
+        ("埼玉県", "電子レンジ", "任意メーカー"),
+        ("千葉県", "マッサージチェア", "任意メーカー"),
+    ]
+    for prefecture, product, manufacturer in cases:
+        d = app.run_decision(make_form(
+            product=product,
+            manufacturer=manufacturer,
+            prefecture=prefecture,
+            appliance_type="家電",
+        ))
+        assert d["area_group"] == "NTT東日本"
+        assert d["repair_type"] == "出張修理"
+        assert d["vendor"] == "WRT修理センター", (prefecture, product, d)
+        assert d["vendor_result"]["matched"] is True
+        assert d["vendor_result"]["reason"] in ("東日本×対象製品", "東京×洗濯機", "神奈川×洗濯機")
+
+
+def test_visit_vendor_special_rules_still_win_over_east_japan_no2():
+    kyushu = app.run_decision(make_form(product="冷蔵庫", manufacturer="アクア", prefecture="福岡県"))
+    okinawa = app.run_decision(make_form(product="冷蔵庫", manufacturer="アクア", prefecture="沖縄県"))
+    bic = app.run_decision(make_form(call_line="ビックカメラ", product="冷蔵庫", prefecture="東京都"))
+    kabaya = app.run_decision(make_form(
+        product="冷蔵庫",
+        manufacturer="アクア",
+        prefecture="岡山県",
+        store_name="ライフデザイン・カバヤ株式会社 岡山中央展示場",
+        appliance_type="家電",
+    ))
+
+    assert "CER" in kyushu["vendor"]
+    assert kyushu["vendor_result"]["needs_escalation"] is True
+    assert okinawa["vendor"] == "宗建リノベーション"
+    assert bic["vendor"] == "ソフマップ修理センター"
+    assert kabaya["vendor"] == "ユナイトサービス㈱"
+
+
 def test_tc_is_over_10years_rentals_tokyo():
     d = app.run_decision(make_form(
         call_line="住設業務",
@@ -2414,6 +2471,10 @@ _ALL_TESTS = [
     test_tc_call_line_options_from_csv,
     test_tc_call_line_options_loaded,
     test_tc_bic_camera_call_line_vendor,
+    test_life_design_kabaya_dishwasher_visit_vendor_is_unite,
+    test_east_japan_fridge_aqua_visit_vendor_is_wrt,
+    test_east_japan_visit_vendor_list_no2_products_are_wrt,
+    test_visit_vendor_special_rules_still_win_over_east_japan_no2,
     test_tc_is_over_10years_rentals_tokyo,
     test_tc_is_under_10years_rentals_tokyo,
     test_tc_dp_plan_detection_helper,
