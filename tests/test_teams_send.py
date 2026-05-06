@@ -232,6 +232,42 @@ def test_teams_message_without_dp_omits_dp_line():
     assert "ユナイトサービス㈱へFAX済み" in message
 
 
+def test_life_design_kabaya_unite_teams_action_is_fax():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_0170",
+        "store_name": "ライフデザイン・カバヤ株式会社 岡山中央展示場",
+        "product": "食器洗い乾燥機",
+    })
+
+    message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
+
+    assert "ユナイトサービス㈱へFAX済み" in message
+
+
+def test_life_design_kabaya_attention_notes_stay_out_of_teams_message():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_0171",
+        "store_name": "ライフデザイン・カバヤ株式会社 岡山中央展示場",
+        "product": "食器洗い乾燥機",
+    })
+
+    notes = app.build_store_attention_notes(form)
+    texts = app._build_after_call_texts(
+        form,
+        {"title": "保証中"},
+        "出張修理",
+        "ユナイトサービス㈱",
+        "加入者",
+        "",
+    )
+
+    assert "施工側起因" in "\n".join(notes)
+    assert "施工側起因" in texts["attention_memo"]
+    assert "施工側起因" not in texts["teams_chat_message"]
+
+
 def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
     form = app.empty_form()
     form.update({
@@ -646,12 +682,12 @@ def test_rakutel_text_outbound_subscriber_arrow():
 def test_call_direction_ui_is_near_rakutel_section():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    settings_index = source.index("ラクテル用テキスト設定")
-    direction_index = source.index('"通話方向"', settings_index)
-    counterparty_index = source.index('"相手区分"', settings_index)
+    rakutel_heading_index = source.index('##### 📝 ラクテル用テキスト")')
+    direction_index = source.index('"通話方向"', rakutel_heading_index)
+    counterparty_index = source.index('"相手区分"', rakutel_heading_index)
     old_label = 'st.selectbox(\n            "発信者区分"'
 
-    assert settings_index < direction_index < counterparty_index
+    assert rakutel_heading_index < direction_index < counterparty_index
     assert old_label not in source
 
 
@@ -892,6 +928,80 @@ def test_rakutel_text_generation_uses_stored_counterparty_type():
     assert "MPG大濱" in text
 
 
+def test_after_call_basic_common_section_exists_before_template():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    after_index = source.index("def render_tab_after_call")
+    basic_index = source.index("render_after_call_basic_panel(form)", after_index)
+    template_index = source.index("##### 📋 テンプレート（業者送付コード）", after_index)
+
+    assert "##### 🧾 案件基本（共通）" in source
+    assert basic_index < template_index
+
+
+def test_after_call_basic_widget_keys_are_after_specific():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    panel_index = source.index("def render_after_call_basic_panel")
+    panel_end = source.index("def _set_manual_check", panel_index)
+    panel_source = source[panel_index:panel_end]
+
+    for key in [
+        "call_line_input_after",
+        "appliance_type_input_after",
+        "product_input_after",
+        "manufacturer_input_after",
+        "store_name_input_after",
+    ]:
+        assert key in panel_source
+    assert "call_line_input_after" not in source[source.index("def render_tab_call"):panel_index]
+
+
+def test_after_call_basic_panel_updates_shared_form_fields():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_index = source.index("def render_after_call_basic_panel")
+    panel_end = source.index("def _set_manual_check", panel_index)
+    panel_source = source[panel_index:panel_end]
+
+    for field in ["call_line", "appliance_type", "product", "manufacturer", "store_name"]:
+        assert f'form["{field}"]' in panel_source
+    assert "st.session_state.form = form" in panel_source
+
+
+def test_case_basic_template_display_for_life_design_kabaya():
+    form = app.empty_form()
+    form.update({
+        "store_name": "ライフデザイン・カバヤ株式会社 岡山中央展示場",
+        "call_line": "家電保証対応業務（24時間）",
+        "appliance_type": "住設",
+        "product": "食器洗い乾燥機",
+        "manufacturer": "三菱電機",
+    })
+
+    display = app.build_case_basic_template_display(form, "出張修理")
+
+    assert "ライフデザイン・カバヤ" in display
+    assert "上位5社テンプレート対象" in display
+
+
+def test_after_call_template_caption_replaced():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "回線名を選択するとテンプレートが表示されます" not in source
+    assert "基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。" in source
+
+
+def test_after_call_regeneration_uses_current_shared_form_after_basic_panel():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    after_index = source.index("def render_tab_after_call")
+    basic_index = source.index("render_after_call_basic_panel(form)", after_index)
+    regenerate_index = source.index("_build_after_call_texts(", basic_index)
+    button_index = source.index("🔄 ラクテル用・Teams用テキストを再生成", regenerate_index)
+
+    assert basic_index < regenerate_index < button_index
+
+
 # ── ナビゲーション構造テスト ──
 
 def test_nav_uses_tabs_not_radio():
@@ -943,3 +1053,24 @@ def test_rakuteru_no_not_in_template_col1():
     # The widget must only appear after the Teams heading
     rakuteru_widget_index = source.index('key="rakuteru_no_input"')
     assert rakuteru_widget_index > teams_heading_index
+
+
+# ── タブ CSS テスト ──
+
+def test_tab_css_uses_baseweb_not_pill():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    # data-baseweb セレクタが使われている
+    assert 'data-baseweb="tab' in source
+    # pill/radio 風の丸いボタンスタイルではない
+    assert "border-radius: 20px" not in source
+    assert 'key="main_nav_tab"' not in source
+
+
+def test_tab_css_selected_tab_is_emphasized():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    # 選択中タブに font-weight:700 相当の強調がある
+    assert "font-weight: 700" in source
+    # 選択中タブに border-bottom が設定されている
+    assert "border-bottom: 3px solid" in source

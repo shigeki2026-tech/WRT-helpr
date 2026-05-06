@@ -1397,11 +1397,14 @@ def test_tc_template_store_rules_loaded_and_match_required_stores():
 
     ai = app.match_store_template_rule(make_form(store_name="株式会社アイ工務店 大阪支店"), df)
     keihan = app.match_store_template_rule(make_form(store_name="京阪電鉄"), df)
+    kabaya = app.match_store_template_rule(make_form(store_name="ライフデザイン・カバヤ株式会社 岡山中央展示場"), df)
 
     check("store rule アイ工務店 matched", ai["matched"], True)
     check("store rule アイ工務店 group", ai["template_group"], "上位5社")
     check("store rule 京阪電鉄 matched", keihan["matched"], True)
     check("store rule 京阪電鉄 group", keihan["template_group"], "上位5社")
+    check("store rule ライフデザイン・カバヤ matched", kabaya["matched"], True)
+    check("store rule ライフデザイン・カバヤ group", kabaya["template_group"], "上位5社")
 
 
 def test_tc_template_store_group_priority_over_normal_template():
@@ -1525,6 +1528,25 @@ def test_tc_call_line_options_loaded():
 def test_tc_bic_camera_call_line_vendor():
     d = app.run_decision(make_form(call_line="ビックカメラ", product="洗濯機"))
     assert d["vendor"] == "ソフマップ修理センター"
+
+
+def test_life_design_kabaya_dishwasher_visit_vendor_is_unite():
+    d = app.run_decision(make_form(
+        store_name="ライフデザイン・カバヤ株式会社 岡山中央展示場",
+        prefecture="岡山県",
+        product="食器洗い乾燥機",
+        manufacturer="三菱電機",
+        model_number="EW-45RD1SM",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ【10年保証】",
+    ))
+
+    assert d["repair_type"] == "出張修理"
+    assert d["vendor"] == "ユナイトサービス㈱"
+    assert d["vendor"] != "担当エスカ（要確認）"
+    assert d["vendor_result"]["matched"] is True
+    assert d["vendor_result"]["reason"] == "ライフデザイン・カバヤ通常出張"
+    assert d["vendor_result"]["needs_escalation"] is False
 
 
 def test_tc_is_over_10years_rentals_tokyo():
@@ -2194,6 +2216,69 @@ def test_tc_acceptance_tag_empty_price_shows_placeholder():
 def test_tc_acceptance_tag_compact_flag_is_set():
     tag = _make_acceptance_tag()
     assert tag.get("compact") is True
+
+
+def test_tc_acceptance_tag_compact_primary_is_large_bold():
+    """compact=True でも primary 行は 1.1em 以上 + font-weight:800 で強調される"""
+    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    # compact and i == 0 のブランチに大きい font-size が設定されているか確認
+    compact_block_start = source.index("if compact and i == 0:")
+    compact_block_end = source.index("elif compact:", compact_block_start)
+    compact_primary_css = source[compact_block_start:compact_block_end]
+    assert "font-weight:800" in compact_primary_css
+    # font-size が 1.1em 以上であることを簡易確認（"1." で始まる em 値が含まれる）
+    import re
+    sizes = re.findall(r"font-size:([\d.]+)em", compact_primary_css)
+    assert sizes, "compact primary に font-size が設定されていない"
+    assert float(sizes[0]) >= 1.1, f"compact primary の font-size が小さすぎる: {sizes[0]}em"
+
+
+# ── 今聞くことの根拠表示テスト ──
+
+def test_now_action_source_not_rendered_in_ui():
+    """render_now_action_item は source を UI に表示しない"""
+    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    func_start = source.index("def render_now_action_item(")
+    # 次の def まで切り取る
+    func_end = source.index("\ndef ", func_start + 1)
+    func_source = source[func_start:func_end]
+    assert '根拠：' not in func_source
+    assert 'st.caption(f"根拠：' not in func_source
+
+
+def test_now_action_source_field_exists_internally():
+    """now_action_plan アイテムの source フィールドは内部データとして保持されてよい（文字列型）"""
+    import app
+    form = app.empty_form()
+    form["product"] = "洗濯機"
+    form["warranty_plan"] = "A3_E2_一般家電延長保証【5年】"
+    now_actions = app.build_now_action_plan(
+        form, "out_of_warranty", False
+    )
+    for item in now_actions.get("pending", []) + now_actions.get("done", []):
+        if "source" in item:
+            assert isinstance(item["source"], str)
+
+
+# ── 色定数テスト ──
+
+def test_tag_color_constants_defined():
+    import app
+    assert hasattr(app, "TAG_COLOR_OK")
+    assert hasattr(app, "TAG_COLOR_WARNING")
+    assert hasattr(app, "TAG_COLOR_ACTION")
+    assert hasattr(app, "TAG_COLOR_DP")
+    assert hasattr(app, "TAG_COLOR_ERROR")
+    assert hasattr(app, "TAG_COLOR_NEUTRAL")
+
+
+def test_tag_color_constants_used_in_build_decision_tag_items():
+    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    func_start = source.index("def build_decision_tag_items(")
+    func_end = source.index("\ndef ", func_start + 1)
+    func_source = source[func_start:func_end]
+    # 少なくとも TAG_COLOR_ 系定数が使われていること
+    assert "TAG_COLOR_" in func_source
 
 
 # ============================================================

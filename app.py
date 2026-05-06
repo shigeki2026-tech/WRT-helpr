@@ -1113,6 +1113,17 @@ def format_store_template_rule_display(store_rule: dict) -> str:
     return store_rule.get("notes") or "通常テンプレート"
 
 
+def build_store_attention_notes(form: dict) -> list[str]:
+    store = (form.get("store_name") or "").strip()
+    if "ライフデザイン・カバヤ" not in store:
+        return []
+    return [
+        "施工側起因の可能性が高い場合は販売店対応",
+        "住設以外、建具、内装、その他は販売店案内",
+        "保証対象外箇所は販売店対応または有償案内の可能性あり",
+    ]
+
+
 def _format_extracted_time(now: datetime | None = None) -> str:
     now = now or datetime.now()
     return (
@@ -1163,6 +1174,9 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
         f"拠点候補: {vendor}"
         f"{dp_note}"
     )
+    store_attention_notes = build_store_attention_notes(form)
+    if store_attention_notes:
+        memo += "\n\n【販売店別注意】\n" + "\n".join(f"- {note}" for note in store_attention_notes)
     if notes_filled:
         memo += f"\n\n【備考】\n{notes_filled}"
     return memo
@@ -3084,13 +3098,13 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "title": "拠点対応",
             "primary": vendor or "未確定",
             "secondary": vendor_status,
-            "color": "#7d6608" if vendor_card.get("needs_escalation") else "#1e8449",
+            "color": TAG_COLOR_WARNING if vendor_card.get("needs_escalation") else TAG_COLOR_OK,
         },
         {
             "title": "スクリプト",
             "primary": script_reference.get("script_type", ""),
             "secondary": script_reference.get("display", ""),
-            "color": "#6c3483" if summary.get("is_double_protect") else "#1a5276",
+            "color": TAG_COLOR_DP if summary.get("is_double_protect") else TAG_COLOR_ACTION,
             "url": script_reference.get("url", ""),
             "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
                          if script_reference.get("matched") else "URL未登録（手動で参照）",
@@ -3745,6 +3759,16 @@ def render_step_list(title: str, steps: list[str]):
         st.markdown(f"**{idx}.** {step}")
 
 
+# ── 判定タグ色定数 ────────────────────────────────────────────────
+TAG_COLOR_NEUTRAL = "#566573"   # 受付可否（未確認・中立）
+TAG_COLOR_OK      = "#1E8449"   # 受付OK・拠点確定
+TAG_COLOR_WARNING = "#7D6608"   # 要確認・エスカ
+TAG_COLOR_ACTION  = "#1A5276"   # 修理方針・スクリプト（通常）
+TAG_COLOR_DP      = "#6C3483"   # ダブルプロテクト案件
+TAG_COLOR_ERROR   = "#922B21"   # 受付不可・エラー
+# ─────────────────────────────────────────────────────────────────
+
+
 def _ui_v3_escape(value) -> str:
     return (str(value or "")
             .replace("&", "&amp;")
@@ -3759,9 +3783,10 @@ def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
     body_parts = []
     for i, (label, value) in enumerate(lines):
         if compact and i == 0:
+            # primary 行は compact でも大きく太字で強調
             body_parts.append(
-                f'<div style="font-size:0.98em;font-weight:700;line-height:1.45;'
-                f'margin-bottom:4px;word-break:break-all;">'
+                f'<div style="font-size:1.16em;font-weight:800;line-height:1.35;'
+                f'margin-bottom:5px;word-break:break-all;">'
                 f'{_ui_v3_escape(value)}</div>'
             )
         elif compact:
@@ -3899,6 +3924,79 @@ def render_case_clear_controls(scope: str, use_container_width: bool = False) ->
             st.rerun()
 
 
+def build_case_basic_template_display(form: dict, repair_type: str = "") -> str:
+    df_tpl = load_template_codes()
+    repair_type = repair_type or determine_repair_type(form)
+    selected = select_template_for_form(
+        form,
+        repair_type,
+        form.get("warranty_plan", ""),
+        df_tpl,
+    )
+    return format_store_template_rule_display(selected.get("store_rule", {}))
+
+
+def render_after_call_basic_panel(form: dict) -> dict:
+    st.markdown("##### 🧾 案件基本（共通）")
+    st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
+
+    call_line_opts = get_call_line_options()
+    if form.get("call_line") and form.get("call_line") not in call_line_opts:
+        call_line_opts = [form.get("call_line")] + call_line_opts
+    appliance_type_opts = ["", "家電", "住設"]
+
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        form["call_line"] = st.selectbox(
+            "回線名",
+            call_line_opts,
+            index=call_line_opts.index(form.get("call_line", ""))
+            if form.get("call_line", "") in call_line_opts else 0,
+            key="call_line_input_after",
+        )
+        form["product"] = st.text_input(
+            "製品",
+            value=form.get("product", ""),
+            key="product_input_after",
+        )
+    with col_b:
+        form["appliance_type"] = st.selectbox(
+            "家電/住設",
+            appliance_type_opts,
+            index=appliance_type_opts.index(form.get("appliance_type", ""))
+            if form.get("appliance_type", "") in appliance_type_opts else 0,
+            key="appliance_type_input_after",
+        )
+        manufacturer_opts = get_manufacturer_options()
+        current_manufacturer = form.get("manufacturer", "")
+        if current_manufacturer and current_manufacturer not in manufacturer_opts:
+            form["manufacturer_original"] = form.get("manufacturer_original") or current_manufacturer
+            current_manufacturer = normalize_manufacturer_for_select(current_manufacturer)
+        form["manufacturer"] = st.selectbox(
+            "メーカー",
+            manufacturer_opts,
+            index=manufacturer_opts.index(current_manufacturer)
+            if current_manufacturer in manufacturer_opts else 0,
+            key="manufacturer_input_after",
+        )
+    with col_c:
+        form["store_name"] = st.text_input(
+            "販売店",
+            value=form.get("store_name", ""),
+            key="store_name_input_after",
+        )
+        preview_decision = run_decision(form)
+        template_display = build_case_basic_template_display(
+            form,
+            preview_decision.get("repair_type", ""),
+        )
+        st.markdown("**テンプレート判定結果**")
+        st.info(template_display)
+
+    st.session_state.form = form
+    return form
+
+
 def _set_manual_check(item_id: str, value: bool) -> None:
     manual = dict(st.session_state.get("call_check_manual", {}))
     manual[item_id] = bool(value)
@@ -3914,8 +4012,6 @@ def manual_check_widget_key(item: dict, index: int = 0, prefix: str = "manual_ch
 def render_now_action_item(item: dict, form: dict, index: int = 0) -> None:
     item_id = item["id"]
     st.markdown(f"**{item['label']}**")
-    if item.get("source"):
-        st.caption(f"根拠：{item['source']}")
     input_type = item.get("input")
     fields = item.get("fields") or ()
     input_key = f"now_input_{item_id}_{index}_{stable_hash_text(item.get('label', ''))}"
@@ -4580,6 +4676,7 @@ def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
     render_case_clear_controls("after")
+    form = render_after_call_basic_panel(form)
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
@@ -4676,9 +4773,9 @@ def render_tab_after_call():
                     form["template_code"] = ""
                     form["template_label"] = ""
             else:
-                st.caption("回線名を選択するとテンプレートが表示されます")
+                st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
         else:
-            st.caption("回線名を選択するとテンプレートが表示されます")
+            st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
 
         st.divider()
 
@@ -4733,7 +4830,6 @@ def render_tab_after_call():
         )
         st.session_state.form = form
 
-        # ── ラクテル用テキスト設定 ──
         caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
 
         # ── 注意内容メモ（備考欄反映）──
@@ -5133,18 +5229,26 @@ def main():
     render_global_top_panels(st.session_state.form)
     st.markdown("""
 <style>
-div[data-testid="stTabs"] button[role="tab"] {
-    font-weight: 600;
-    font-size: 0.95em;
+div[data-baseweb="tab-list"] {
+    border-bottom: 2px solid #e0e0e0;
+    gap: 4px;
 }
-div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-    background: rgba(31, 119, 180, 0.07);
-    border-bottom: 3px solid #1f77b4;
-    color: #1f77b4;
-}
-div[data-testid="stTabs"] button[role="tab"][aria-selected="false"] {
+button[data-baseweb="tab"] {
+    font-size: 1.0em;
     font-weight: 400;
-    opacity: 0.72;
+    color: #666;
+    padding: 8px 18px;
+    border-bottom: 3px solid transparent;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    font-weight: 700;
+    color: #d6336c;
+    background-color: #fff5f7;
+    border-bottom: 3px solid #d6336c;
+}
+button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
+    color: #444;
+    background-color: #f5f5f5;
 }
 </style>
 """, unsafe_allow_html=True)
