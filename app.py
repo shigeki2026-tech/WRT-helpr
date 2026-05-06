@@ -646,7 +646,9 @@ def load_script_guidance_csv() -> pd.DataFrame:
 MASTER_APPEND_TARGETS = {
     "master_product_alias.csv": _ALIAS_COLS,
     "master_repair_type_rules.csv": _REPAIR_TYPE_COLS,
+    "master_vendor_rules.csv": _VENDOR_COLS,
     "master_store_rules.csv": _STORE_RULE_COLS,
+    "master_manufacturer_groups.csv": _MFR_GROUP_COLS,
 }
 MASTER_CANDIDATE_SOURCE_FIELDS = [
     "product_original", "product", "series",
@@ -790,6 +792,75 @@ def append_master_store_rule(row: dict, data_dir: str | None = None) -> dict:
     )
 
 
+def append_master_vendor_rule(row: dict, data_dir: str | None = None) -> dict:
+    return _append_master_csv_row(
+        "master_vendor_rules.csv",
+        row,
+        required_cols=["repair_type", "vendor_name"],
+        duplicate_cols=["call_line", "prefecture", "area_group", "manufacturer_keyword", "product_keyword", "store_keyword", "repair_type", "is_over_10years"],
+        data_dir=data_dir,
+    )
+
+
+def _split_master_manufacturers(value: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[;；]", str(value or "")) if item.strip()]
+
+
+def append_master_manufacturer_group(row: dict, data_dir: str | None = None) -> dict:
+    group_name = str(row.get("group_name", "") or "").strip()
+    manufacturers = _split_master_manufacturers(row.get("manufacturers") or row.get("manufacturer") or "")
+    notes = str(row.get("notes", "") or "").strip()
+    if not group_name:
+        return {"ok": False, "reason": "missing_required", "missing": ["group_name"], "row": row}
+    blocked = {MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN, ""}
+    manufacturers = [m for m in manufacturers if m not in blocked]
+    if not manufacturers:
+        return {"ok": False, "reason": "missing_required", "missing": ["manufacturers"], "row": row}
+
+    header, rows = _read_master_csv_rows("master_manufacturer_groups.csv", _MFR_GROUP_COLS, data_dir)
+    target = None
+    for existing in rows:
+        if _normalize_duplicate_value(existing.get("group_name")) == _normalize_duplicate_value(group_name):
+            target = existing
+            break
+
+    existing_names = set()
+    if target:
+        existing_names = {_normalize_duplicate_value(m) for m in _split_master_manufacturers(target.get("manufacturers", ""))}
+    additions = [m for m in manufacturers if _normalize_duplicate_value(m) not in existing_names]
+    if not additions:
+        return {"ok": False, "reason": "duplicate", "row": row, "duplicate_cols": ["group_name", "manufacturers"]}
+
+    path = _safe_master_csv_path("master_manufacturer_groups.csv", data_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    backup_path = _master_backup_path("master_manufacturer_groups.csv", data_dir)
+    if os.path.exists(path):
+        shutil.copy2(path, backup_path)
+    else:
+        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerow(_MFR_GROUP_COLS)
+
+    if target:
+        merged = _split_master_manufacturers(target.get("manufacturers", "")) + additions
+        target["manufacturers"] = ";".join(merged)
+        if notes and not (target.get("notes") or "").strip():
+            target["notes"] = notes
+    else:
+        rows.append({"group_name": group_name, "manufacturers": ";".join(additions), "notes": notes})
+
+    output_columns = [col for col in header if col] or _MFR_GROUP_COLS
+    for col in _MFR_GROUP_COLS:
+        if col not in output_columns:
+            output_columns.append(col)
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _clear_streamlit_cache()
+    return {"ok": True, "reason": "updated", "row": {"group_name": group_name, "manufacturers": ";".join(additions), "notes": notes}, "backup_path": backup_path, "path": path}
+
+
 def master_csv_has_duplicate(filename: str, row: dict, duplicate_cols: list[str], data_dir: str | None = None) -> bool:
     columns = MASTER_APPEND_TARGETS[filename]
     _, rows = _read_master_csv_rows(filename, columns, data_dir)
@@ -877,6 +948,124 @@ def build_master_registration_candidate(form: dict, decision: dict | None = None
             "template_group": "",
             "notes": "抽出結果から作成した候補" if store_keyword else "",
         },
+    }
+
+
+MANUFACTURER_INLINE_GROUP_OPTIONS = [
+    "国内家電メーカー",
+    "国内エアコンメーカー",
+    "国内給湯器メーカー",
+    "海外PC",
+    "国内PC",
+    "時計メーカー",
+    "その他",
+]
+
+VENDOR_INLINE_OPTIONS = [
+    "ユナイトサービス㈱",
+    "WRT修理センター",
+    "CER候補（担当確認）",
+    "宗建リノベーション",
+    "ソフマップ修理センター",
+    "担当エスカ（要確認）",
+]
+
+
+def _clean_master_candidate_value(value) -> str:
+    return str(value or "").strip()
+
+
+def build_inline_manufacturer_candidate(form: dict) -> dict:
+    current = _clean_master_candidate_value(form.get("manufacturer"))
+    original = _clean_master_candidate_value(form.get("manufacturer_original"))
+    if current not in ("", MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+        return {}
+    if not original or original in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+        return {}
+    normalized = normalize_manufacturer(original).strip() or original
+    if normalized in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+        normalized = original
+    return {
+        "manufacturer_original": original,
+        "normalized_manufacturer": normalized,
+        "group_name": "国内家電メーカー",
+        "manufacturers": normalized,
+        "notes": "インライン登録候補",
+    }
+
+
+def build_inline_product_alias_candidate(form: dict) -> dict:
+    current = _clean_master_candidate_value(form.get("product"))
+    source = (
+        _clean_master_candidate_value(form.get("product_original"))
+        or _clean_master_candidate_value(form.get("series"))
+    )
+    if current not in ("", PRODUCT_OTHER):
+        return {}
+    if not source or source == PRODUCT_OTHER:
+        return {}
+    values = _suggest_product_master_values(source, "")
+    return {
+        "priority": "10",
+        "enabled": "1",
+        "keyword": values["keyword"],
+        "normalized_product": values["normalized_product"] or source,
+        "product_group": values["product_group"],
+        "notes": values["notes"],
+    }
+
+
+def build_inline_vendor_rule_candidate(form: dict, decision: dict) -> dict:
+    vendor = _clean_master_candidate_value(decision.get("vendor"))
+    vendor_result = decision.get("vendor_result", {}) or {}
+    repair_type = _clean_master_candidate_value(decision.get("repair_type"))
+    product = _clean_master_candidate_value(form.get("product") or decision.get("normalized_product"))
+    prefecture = _clean_master_candidate_value(form.get("prefecture"))
+    store_name = _clean_master_candidate_value(form.get("store_name"))
+    call_line = _clean_master_candidate_value(form.get("call_line"))
+    if "担当エスカ" not in vendor and not vendor_result.get("needs_escalation"):
+        return {}
+    if not (repair_type and product and prefecture and (store_name or call_line)):
+        return {}
+    return {
+        "priority": "10",
+        "enabled": "1",
+        "call_line": call_line,
+        "prefecture": prefecture,
+        "area_group": _clean_master_candidate_value(decision.get("area_group")),
+        "manufacturer_keyword": "" if form.get("manufacturer") in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN) else _clean_master_candidate_value(form.get("manufacturer")),
+        "product_keyword": product,
+        "store_keyword": _short_store_keyword(store_name) if store_name else "",
+        "repair_type": repair_type,
+        "is_over_10years": "1" if form.get("is_over_10years") else "",
+        "vendor_name": "担当エスカ（要確認）",
+        "reason": "インライン登録候補",
+        "needs_escalation": "1",
+        "notes": "",
+        "contact_type": "",
+    }
+
+
+def build_inline_store_rule_candidate(form: dict, template_selection: dict | None = None) -> dict:
+    store_name = _clean_master_candidate_value(form.get("store_name"))
+    if not store_name:
+        return {}
+    selection = template_selection or {}
+    store_rule = selection.get("store_rule") or {}
+    if store_rule.get("matched") or selection.get("source") != "fallback":
+        return {}
+    store_keyword = _short_store_keyword(store_name)
+    if not store_keyword:
+        return {}
+    return {
+        "priority": "10",
+        "enabled": "1",
+        "store_keyword": store_keyword,
+        "normalized_store": store_keyword,
+        "template_code": selection.get("template_code", ""),
+        "template_label": selection.get("label", ""),
+        "template_group": "",
+        "notes": "インライン登録候補",
     }
 
 
@@ -4100,6 +4289,151 @@ def remember_case_basic_widget_synced_values(form: dict, session_state) -> None:
     }
 
 
+def _send_inline_candidate_to_master(candidate: dict, key: str) -> None:
+    if st.button("マスタ管理で確認して登録", key=key, type="secondary"):
+        st.session_state["master_registration_candidate"] = candidate
+        st.success("マスタ管理タブへ候補を引き継ぎました。")
+
+
+def render_inline_manufacturer_registration(form: dict) -> None:
+    candidate = build_inline_manufacturer_candidate(form)
+    if not candidate:
+        return
+    st.warning(f"メーカー未登録：{candidate['manufacturer_original']}")
+    with st.expander("このメーカーをマスタ登録", expanded=False):
+        manufacturer_original = st.text_input(
+            "メーカー原文",
+            value=candidate["manufacturer_original"],
+            key="inline_mfr_original",
+            disabled=True,
+        )
+        normalized = st.text_input(
+            "正規化メーカー名",
+            value=candidate["normalized_manufacturer"],
+            key="inline_mfr_normalized",
+        )
+        group_name = st.selectbox(
+            "メーカーグループ",
+            MANUFACTURER_INLINE_GROUP_OPTIONS,
+            index=MANUFACTURER_INLINE_GROUP_OPTIONS.index(candidate["group_name"]),
+            key="inline_mfr_group",
+        )
+        row = {
+            "group_name": group_name,
+            "manufacturers": normalized.strip(),
+            "notes": candidate["notes"],
+            "manufacturer_original": manufacturer_original,
+            "normalized_manufacturer": normalized.strip(),
+        }
+        st.dataframe(pd.DataFrame([row]), use_container_width=True)
+        disabled = not normalized.strip() or normalized.strip() in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
+        if st.button("メーカーを保存", key="inline_mfr_save", type="primary", disabled=disabled):
+            result = append_master_manufacturer_group(row)
+            _show_master_append_result(result)
+            if result.get("ok"):
+                st.cache_data.clear()
+                bump_case_basic_revision(st.session_state)
+                st.rerun()
+        _send_inline_candidate_to_master({"manufacturer_group": row, "source_fields": {"manufacturer_original": manufacturer_original}}, "inline_mfr_send_master")
+
+
+def render_inline_product_alias_registration(form: dict) -> None:
+    candidate = build_inline_product_alias_candidate(form)
+    if not candidate:
+        return
+    st.warning(f"製品未登録：{candidate['keyword']}")
+    with st.expander("この製品をマスタ登録", expanded=False):
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "keyword": st.text_input("keyword", value=candidate["keyword"], key="inline_alias_keyword"),
+            "normalized_product": st.text_input("normalized_product", value=candidate["normalized_product"], key="inline_alias_normalized"),
+            "product_group": st.text_input("product_group", value=candidate["product_group"], key="inline_alias_group"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_alias_notes"),
+        }
+        _preview_master_row(row, _ALIAS_COLS)
+        duplicate = bool(row["keyword"]) and master_csv_has_duplicate("master_product_alias.csv", row, ["keyword"])
+        if duplicate:
+            st.warning("同じ keyword が既にあります。")
+        disabled = not row["keyword"].strip() or not row["normalized_product"].strip() or duplicate
+        if st.button("製品エイリアスを保存", key="inline_alias_save", type="primary", disabled=disabled):
+            result = append_master_product_alias(row)
+            _show_master_append_result(result)
+            if result.get("ok"):
+                st.cache_data.clear()
+                bump_case_basic_revision(st.session_state)
+                st.rerun()
+        _send_inline_candidate_to_master({"product_alias": row, "source_fields": {"product_original": candidate["keyword"]}}, "inline_alias_send_master")
+
+
+def render_inline_store_rule_registration(form: dict, template_selection: dict) -> None:
+    candidate = build_inline_store_rule_candidate(form, template_selection)
+    if not candidate:
+        return
+    st.caption(f"販売店テンプレート未登録：{form.get('store_name')}")
+    with st.expander("販売店テンプレート候補を作成", expanded=False):
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "store_keyword": st.text_input("store_keyword", value=candidate["store_keyword"], key="inline_store_keyword"),
+            "normalized_store": st.text_input("normalized_store", value=candidate["normalized_store"], key="inline_store_normalized"),
+            "template_code": st.text_input("template_code", value=candidate["template_code"], key="inline_store_template_code"),
+            "template_label": st.text_input("template_label", value=candidate["template_label"], key="inline_store_template_label"),
+            "template_group": st.text_input("template_group", value=candidate["template_group"], key="inline_store_template_group"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_store_notes"),
+        }
+        _preview_master_row(row, _STORE_RULE_COLS)
+        if st.button("販売店テンプレート候補を保存", key="inline_store_save", type="primary", disabled=not row["store_keyword"].strip()):
+            result = append_master_store_rule(row)
+            _show_master_append_result(result)
+            if result.get("ok"):
+                st.cache_data.clear()
+                bump_case_basic_revision(st.session_state)
+                st.rerun()
+        _send_inline_candidate_to_master({"store_rule": row, "source_fields": {"store_name": form.get("store_name", "")}}, "inline_store_send_master")
+
+
+def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
+    candidate = build_inline_vendor_rule_candidate(form, decision)
+    if not candidate:
+        return
+    st.warning("修理拠点未確定")
+    with st.expander("この条件で修理拠点ルール候補を作成", expanded=False):
+        vendor_default = candidate["vendor_name"] if candidate["vendor_name"] in VENDOR_INLINE_OPTIONS else VENDOR_INLINE_OPTIONS[-1]
+        row = {
+            "priority": "10",
+            "enabled": "1",
+            "call_line": st.text_input("call_line", value=candidate["call_line"], key="inline_vendor_call_line"),
+            "prefecture": st.text_input("prefecture", value=candidate["prefecture"], key="inline_vendor_prefecture"),
+            "area_group": st.text_input("area_group", value=candidate["area_group"], key="inline_vendor_area_group"),
+            "manufacturer_keyword": st.text_input("manufacturer_keyword", value=candidate["manufacturer_keyword"], key="inline_vendor_manufacturer"),
+            "product_keyword": st.text_input("product_keyword", value=candidate["product_keyword"], key="inline_vendor_product"),
+            "store_keyword": st.text_input("store_keyword", value=candidate["store_keyword"], key="inline_vendor_store"),
+            "repair_type": st.text_input("repair_type", value=candidate["repair_type"], key="inline_vendor_repair_type"),
+            "is_over_10years": candidate["is_over_10years"],
+            "vendor_name": st.selectbox("vendor_name", VENDOR_INLINE_OPTIONS, index=VENDOR_INLINE_OPTIONS.index(vendor_default), key="inline_vendor_name"),
+            "reason": st.text_input("reason", value=candidate["reason"], key="inline_vendor_reason"),
+            "needs_escalation": st.selectbox("needs_escalation", ["0", "1"], index=1, key="inline_vendor_needs_escalation"),
+            "notes": st.text_input("notes", value=candidate["notes"], key="inline_vendor_notes"),
+            "contact_type": st.text_input("contact_type", value=candidate["contact_type"], key="inline_vendor_contact_type"),
+        }
+        _preview_master_row(row, _VENDOR_COLS)
+        confirmed = st.checkbox("内容を確認して保存する", key="inline_vendor_confirm")
+        disabled = not confirmed or not row["repair_type"].strip() or not row["vendor_name"].strip()
+        if st.button("修理拠点ルール候補を保存", key="inline_vendor_save", type="primary", disabled=disabled):
+            result = append_master_vendor_rule(row)
+            _show_master_append_result(result)
+            if result.get("ok"):
+                st.cache_data.clear()
+                bump_case_basic_revision(st.session_state)
+                st.rerun()
+        source_fields = {
+            field: form.get(field, "")
+            for field in ("call_line", "prefecture", "product", "manufacturer", "store_name")
+        }
+        _send_inline_candidate_to_master({"vendor_rule": row, "source_fields": source_fields}, "inline_vendor_send_master")
+
+
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
     if show_template_result:
         st.markdown("##### 🧾 案件基本（共通）")
@@ -4161,7 +4495,17 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             )
             st.markdown("**テンプレート判定結果**")
             st.info(template_display)
+            df_tpl = load_template_codes()
+            template_selection = select_template_for_form(
+                form,
+                preview_decision.get("repair_type", ""),
+                form.get("warranty_plan", ""),
+                df_tpl,
+            )
+            render_inline_store_rule_registration(form, template_selection)
 
+    render_inline_manufacturer_registration(form)
+    render_inline_product_alias_registration(form)
     st.session_state.form = form
     remember_case_basic_widget_synced_values(form, st.session_state)
     return form
@@ -4688,6 +5032,8 @@ def render_tab_call():
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
+            render_inline_vendor_rule_registration(st.session_state.form, decision)
+
             category_defs = [
                 ("🔴 通話中に必ず確認", "call_required", "#c0392b"),
                 ("🟡 終話後でよい", "after_call", "#7d6608"),
@@ -5231,6 +5577,53 @@ def _render_store_rule_append_ui() -> None:
         st.rerun()
 
 
+def _render_vendor_rule_append_ui() -> None:
+    vendor_default = _candidate_field("vendor_rule", "vendor_name", "担当エスカ（要確認）")
+    if vendor_default not in VENDOR_INLINE_OPTIONS:
+        vendor_default = "担当エスカ（要確認）"
+    row = {
+        "priority": "10",
+        "enabled": "1",
+        "call_line": st.text_input("回線名 call_line", value=_candidate_field("vendor_rule", "call_line"), key="master_vendor_call_line"),
+        "prefecture": st.text_input("都道府県 prefecture", value=_candidate_field("vendor_rule", "prefecture"), key="master_vendor_prefecture"),
+        "area_group": st.text_input("エリアグループ area_group", value=_candidate_field("vendor_rule", "area_group"), key="master_vendor_area_group"),
+        "manufacturer_keyword": st.text_input("メーカー manufacturer_keyword", value=_candidate_field("vendor_rule", "manufacturer_keyword"), key="master_vendor_manufacturer"),
+        "product_keyword": st.text_input("製品 product_keyword", value=_candidate_field("vendor_rule", "product_keyword"), key="master_vendor_product"),
+        "store_keyword": st.text_input("販売店 store_keyword", value=_candidate_field("vendor_rule", "store_keyword"), key="master_vendor_store"),
+        "repair_type": st.text_input("修理形態 repair_type", value=_candidate_field("vendor_rule", "repair_type"), key="master_vendor_repair_type"),
+        "is_over_10years": st.text_input("10年以上 is_over_10years", value=_candidate_field("vendor_rule", "is_over_10years"), key="master_vendor_over10"),
+        "vendor_name": st.selectbox("修理拠点 vendor_name", VENDOR_INLINE_OPTIONS, index=VENDOR_INLINE_OPTIONS.index(vendor_default), key="master_vendor_name"),
+        "reason": st.text_input("理由 reason", value=_candidate_field("vendor_rule", "reason"), key="master_vendor_reason"),
+        "needs_escalation": st.selectbox("要確認 needs_escalation", ["0", "1"], index=1 if _candidate_field("vendor_rule", "needs_escalation", "1") == "1" else 0, key="master_vendor_needs"),
+        "notes": st.text_input("備考 notes", value=_candidate_field("vendor_rule", "notes"), key="master_vendor_notes"),
+        "contact_type": st.text_input("連絡種別 contact_type", value=_candidate_field("vendor_rule", "contact_type"), key="master_vendor_contact"),
+    }
+    _preview_master_row(row, _VENDOR_COLS)
+    confirmed = st.checkbox("保存前確認", key="master_vendor_confirm")
+    disabled = not confirmed or not row["repair_type"].strip() or not row["vendor_name"].strip()
+    if st.button("修理拠点ルールを追加", key="master_vendor_add", type="primary", disabled=disabled):
+        _show_master_append_result(append_master_vendor_rule(row))
+        st.rerun()
+
+
+def _render_manufacturer_group_append_ui() -> None:
+    candidate = st.session_state.get("master_registration_candidate") or {}
+    mfr_candidate = candidate.get("manufacturer_group") or {}
+    group_default = mfr_candidate.get("group_name") or "国内家電メーカー"
+    if group_default not in MANUFACTURER_INLINE_GROUP_OPTIONS:
+        group_default = "その他"
+    row = {
+        "group_name": st.selectbox("メーカーグループ group_name", MANUFACTURER_INLINE_GROUP_OPTIONS, index=MANUFACTURER_INLINE_GROUP_OPTIONS.index(group_default), key="master_mfr_group_name"),
+        "manufacturers": st.text_input("メーカー manufacturers", value=str(mfr_candidate.get("manufacturers") or mfr_candidate.get("normalized_manufacturer") or ""), key="master_mfr_manufacturers"),
+        "notes": st.text_input("備考 notes", value=str(mfr_candidate.get("notes") or "インライン登録候補"), key="master_mfr_notes"),
+    }
+    _preview_master_row(row, _MFR_GROUP_COLS)
+    disabled = not row["group_name"].strip() or not row["manufacturers"].strip() or row["manufacturers"].strip() in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
+    if st.button("メーカーグループへ追加", key="master_mfr_add", type="primary", disabled=disabled):
+        _show_master_append_result(append_master_manufacturer_group(row))
+        st.rerun()
+
+
 def _render_master_candidate_box() -> None:
     candidate = st.session_state.get("master_registration_candidate") or {}
     if not candidate:
@@ -5310,6 +5703,8 @@ def render_tab_master():
 
     with master_tabs[3]:
         st.markdown("##### 📄 master_vendor_rules.csv")
+        with st.expander("CSVへ修理拠点ルールを追加", expanded=bool(_candidate_field("vendor_rule", "repair_type"))):
+            _render_vendor_rule_append_ui()
         df = load_vendor_rules()
         if df.empty:
             st.warning("CSVが見つかりません: data/master_vendor_rules.csv")
@@ -5355,6 +5750,8 @@ def render_tab_master():
 
     with master_tabs[7]:
         st.markdown("##### 📄 master_manufacturer_groups.csv")
+        with st.expander("CSVへメーカーグループを追加", expanded=bool((st.session_state.get("master_registration_candidate") or {}).get("manufacturer_group"))):
+            _render_manufacturer_group_append_ui()
         df_mg = load_manufacturer_groups_csv()
         if df_mg.empty:
             st.warning("CSVが見つかりません: data/master_manufacturer_groups.csv")

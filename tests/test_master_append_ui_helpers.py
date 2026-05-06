@@ -4,6 +4,8 @@ import csv
 import os
 import sys
 import unittest.mock as mock
+import uuid
+from pathlib import Path
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -39,9 +41,14 @@ def _read_rows(path):
         return list(csv.DictReader(f))
 
 
-def test_product_alias_append_adds_one_row_and_backup(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
+def _make_data_dir():
+    data_dir = Path(__file__).resolve().parents[1] / ".codex_unit_tmp" / uuid.uuid4().hex / "data"
+    data_dir.mkdir(parents=True)
+    return data_dir
+
+
+def test_product_alias_append_adds_one_row_and_backup():
+    data_dir = _make_data_dir()
     path = _write_master_csv(data_dir, "master_product_alias.csv", app._ALIAS_COLS)
 
     result = app.append_master_product_alias(
@@ -63,9 +70,8 @@ def test_product_alias_append_adds_one_row_and_backup(tmp_path):
     assert os.path.exists(result["backup_path"])
 
 
-def test_product_alias_duplicate_keyword_is_detected(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
+def test_product_alias_duplicate_keyword_is_detected():
+    data_dir = _make_data_dir()
     path = _write_master_csv(
         data_dir,
         "master_product_alias.csv",
@@ -83,9 +89,8 @@ def test_product_alias_duplicate_keyword_is_detected(tmp_path):
     assert len(_read_rows(path)) == 1
 
 
-def test_repair_type_rule_append_adds_one_row(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
+def test_repair_type_rule_append_adds_one_row():
+    data_dir = _make_data_dir()
     path = _write_master_csv(data_dir, "master_repair_type_rules.csv", app._REPAIR_TYPE_COLS)
 
     result = app.append_master_repair_type_rule(
@@ -108,9 +113,8 @@ def test_repair_type_rule_append_adds_one_row(tmp_path):
     assert os.path.exists(result["backup_path"])
 
 
-def test_store_rule_append_adds_one_row(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
+def test_store_rule_append_adds_one_row():
+    data_dir = _make_data_dir()
     path = _write_master_csv(data_dir, "master_store_rules.csv", app._STORE_RULE_COLS)
 
     result = app.append_master_store_rule(
@@ -130,6 +134,137 @@ def test_store_rule_append_adds_one_row(tmp_path):
     assert len(rows) == 1
     assert rows[0]["store_keyword"] == "マサニ電気"
     assert os.path.exists(result["backup_path"])
+
+
+def test_inline_manufacturer_candidate_for_other_with_original():
+    form = app.empty_form()
+    form.update({"manufacturer": app.MANUFACTURER_OTHER, "manufacturer_original": "アクア"})
+
+    candidate = app.build_inline_manufacturer_candidate(form)
+
+    assert candidate["manufacturer_original"] == "アクア"
+    assert candidate["normalized_manufacturer"] == "アクア"
+    assert candidate["group_name"] == "国内家電メーカー"
+    assert "customer_name" not in str(candidate)
+
+
+def test_manufacturer_group_append_adds_aqua_and_aqua_alias_without_duplicate():
+    data_dir = _make_data_dir()
+    path = _write_master_csv(
+        data_dir,
+        "master_manufacturer_groups.csv",
+        app._MFR_GROUP_COLS,
+        [{"group_name": "国内家電メーカー", "manufacturers": "パナソニック", "notes": ""}],
+    )
+
+    result = app.append_master_manufacturer_group(
+        {"group_name": "国内家電メーカー", "manufacturers": "アクア;AQUA", "notes": "test"},
+        data_dir=str(data_dir),
+    )
+    duplicate = app.append_master_manufacturer_group(
+        {"group_name": "国内家電メーカー", "manufacturers": "AQUA", "notes": "test"},
+        data_dir=str(data_dir),
+    )
+
+    rows = _read_rows(path)
+    assert result["ok"] is True
+    assert os.path.exists(result["backup_path"])
+    assert "アクア" in rows[0]["manufacturers"]
+    assert "AQUA" in rows[0]["manufacturers"]
+    assert duplicate["ok"] is False
+    assert duplicate["reason"] == "duplicate"
+    assert rows[0]["manufacturers"].count("AQUA") == 1
+
+
+def test_product_alias_candidate_for_unknown_product():
+    form = app.empty_form()
+    form.update({"product": app.PRODUCT_OTHER, "product_original": "冷蔵庫"})
+
+    candidate = app.build_inline_product_alias_candidate(form)
+
+    assert candidate["keyword"] == "冷蔵庫"
+    assert candidate["normalized_product"] == "冷蔵庫"
+    assert "customer_name" not in str(candidate)
+
+
+def test_vendor_rule_candidate_for_unconfirmed_vendor():
+    form = app.empty_form()
+    form.update({
+        "call_line": "住設業務",
+        "prefecture": "東京都",
+        "product": "冷蔵庫",
+        "manufacturer": "アクア",
+        "store_name": "テスト販売店",
+    })
+    decision = {
+        "vendor": "担当エスカ（要確認）",
+        "vendor_result": {"needs_escalation": True},
+        "repair_type": "出張修理",
+        "area_group": "関東",
+    }
+
+    candidate = app.build_inline_vendor_rule_candidate(form, decision)
+
+    assert candidate["call_line"] == "住設業務"
+    assert candidate["prefecture"] == "東京都"
+    assert candidate["product_keyword"] == "冷蔵庫"
+    assert candidate["vendor_name"] == "担当エスカ（要確認）"
+    assert candidate["needs_escalation"] == "1"
+
+
+def test_vendor_rule_append_creates_backup():
+    data_dir = _make_data_dir()
+    path = _write_master_csv(data_dir, "master_vendor_rules.csv", app._VENDOR_COLS)
+
+    result = app.append_master_vendor_rule(
+        {
+            "call_line": "住設業務",
+            "prefecture": "東京都",
+            "product_keyword": "冷蔵庫",
+            "store_keyword": "テスト販売店",
+            "repair_type": "出張修理",
+            "vendor_name": "ユナイトサービス㈱",
+            "reason": "test",
+            "needs_escalation": "0",
+        },
+        data_dir=str(data_dir),
+    )
+
+    rows = _read_rows(path)
+    assert result["ok"] is True
+    assert os.path.exists(result["backup_path"])
+    assert rows[0]["vendor_name"] == "ユナイトサービス㈱"
+
+
+def test_store_rule_candidate_for_fallback_template():
+    form = app.empty_form()
+    form["store_name"] = "アート引越センター"
+    template_selection = {
+        "source": "fallback",
+        "label": "通常テンプレート",
+        "template_code": "TPL-1",
+        "store_rule": {"matched": False},
+    }
+
+    candidate = app.build_inline_store_rule_candidate(form, template_selection)
+
+    assert candidate["store_keyword"] == "アート引越センター"
+    assert candidate["template_code"] == "TPL-1"
+    assert candidate["template_label"] == "通常テンプレート"
+
+
+def test_master_append_clears_streamlit_cache(monkeypatch):
+    data_dir = _make_data_dir()
+    _write_master_csv(data_dir, "master_product_alias.csv", app._ALIAS_COLS)
+    clear_mock = mock.MagicMock()
+    monkeypatch.setattr(app, "_clear_streamlit_cache", clear_mock)
+
+    app.append_master_product_alias(
+        {"keyword": "冷蔵庫", "normalized_product": "冷蔵庫"},
+        data_dir=str(data_dir),
+    )
+
+    clear_mock.assert_called_once()
 
 
 def test_master_registration_candidate_excludes_personal_fields():
