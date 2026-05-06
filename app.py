@@ -86,6 +86,7 @@ FIELD_LABELS = {
     "caller_type": "発信者区分",
     "extracted_time": "入電時刻",
     "symptom": "症状",
+    "symptom_detail": "具体的な症状",
     "maker_warranty_period": "メーカー保証期間",
     "install_type": "設置形態",
     "extra_condition": "補足条件",
@@ -251,10 +252,10 @@ def _is_supplemental_question(text: str) -> bool:
 CHECK_ITEM_DEFINITIONS = {
     "症状の詳細": {
         "id": "symptom_detail",
-        "fields": ("symptom",),
+        "fields": ("symptom_detail",),
         "input": "textarea",
-        "label": "症状の詳細",
-        "input_label": "症状",
+        "label": "具体的な症状",
+        "input_label": "具体的な症状",
     },
     "発生時期": {
         "id": "occurrence_time",
@@ -1486,6 +1487,9 @@ def build_vendor_send_template_context(
         "estimated_fee": _estimated_fee_for_template(cost_estimate or form.get("cost_estimate", "")),
         "operator_name": form.get("operator_name", ""),
         "rakuteru_no": form.get("rakuteru_no", ""),
+        "symptom_detail": form.get("symptom_detail", ""),
+        "occurrence_time": form.get("occurrence_time", ""),
+        "occurrence_frequency": form.get("occurrence_frequency", ""),
     }
 
 
@@ -1551,7 +1555,7 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
         f"保証期間判定: {warranty_result.get('title','─')}\n"
         f"保証種別: {double_protect_plan_label(form.get('warranty_plan', ''))}\n"
         f"修理形態: {repair_type}\n"
-        f"症状: {form.get('symptom','─')}\n"
+        f"症状: {form.get('symptom_detail') or form.get('symptom','─')}\n"
         f"拠点候補: {vendor}"
         f"{dp_note}"
     )
@@ -5279,7 +5283,7 @@ def render_tab_call():
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-            form["symptom"]       = st.text_area("症状",          form.get("symptom",""), height=60)
+            form["symptom_detail"] = st.text_area("具体的な症状", form.get("symptom_detail",""), height=60)
             form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
             form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
             render_warranty_date_input(

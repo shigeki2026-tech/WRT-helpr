@@ -1792,7 +1792,7 @@ def test_now_action_plan_shows_call_required_questions():
     )
 
     labels = [item["label"] for item in plan["call_required"]]
-    assert "症状の詳細" in labels
+    assert "具体的な症状" in labels
     assert "発生時期" in labels
     assert "発生頻度" in labels
 
@@ -1802,18 +1802,18 @@ def test_now_action_plan_removes_symptom_after_input():
         product="エアコン",
         manufacturer="シャープ",
         appliance_type="家電",
-        symptom="冷えない",
         warranty_start_date="2026/01/01",
         warranty_end_date="2027/01/01",
     )
+    form["symptom_detail"] = "冷えない"
     d = app.run_decision(form)
     plan = app.build_now_action_plan(
         form, d["repair_type"], d["needs_data_erase"],
         d["diagnostics"], d["warranty_result"], d["cost_result"],
     )
 
-    assert "症状の詳細" not in [item["label"] for item in plan["call_required"]]
-    assert "症状の詳細" in [item["label"] for item in plan["completed"]]
+    assert "具体的な症状" not in [item["label"] for item in plan["call_required"]]
+    assert "具体的な症状" in [item["label"] for item in plan["completed"]]
 
 
 def test_now_action_plan_removes_occurrence_time_after_input():
@@ -2038,7 +2038,7 @@ def test_script_guidance_hearing_items_feed_now_action_candidates():
         {}, guidance["hearing_items"],
     )
 
-    symptom_items = [item for item in plan["call_required"] if item["label"] == "症状の詳細"]
+    symptom_items = [item for item in plan["call_required"] if item["label"] == "具体的な症状"]
     assert symptom_items
     assert symptom_items[0]["source"] == "スクリプト補助"
 
