@@ -605,12 +605,14 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
 
 def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
     form = app.empty_form()
+    revision = 0
     state = SessionState({
-        "call_line_input_global": "家電保証対応業務（24時間）",
-        "appliance_type_input_global": "家電",
-        "product_input_global": "食器洗い乾燥機",
-        "manufacturer_input_global": "三菱電機",
-        "store_name_input_global": "ライフデザイン・カバヤ",
+        "case_basic_revision": revision,
+        app.case_basic_widget_key("call_line", revision): "家電保証対応業務（24時間）",
+        app.case_basic_widget_key("appliance_type", revision): "家電",
+        app.case_basic_widget_key("product", revision): "食器洗い乾燥機",
+        app.case_basic_widget_key("manufacturer", revision): "三菱電機",
+        app.case_basic_widget_key("store_name", revision): "ライフデザイン・カバヤ",
     })
 
     synced = app.sync_global_case_basic_widget_state(form, state)
@@ -620,6 +622,53 @@ def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
     assert state["form"]["manufacturer"] == "三菱電機"
 
 
+def test_case_basic_revision_initializes_and_bumps_on_refresh_and_clear():
+    state = SessionState()
+
+    assert app.get_case_basic_revision(state) == 0
+
+    app.request_case_basic_widget_refresh(state)
+    assert state["case_basic_revision"] == 1
+    assert state["_pending_case_basic_widget_refresh"] is True
+
+    app.reset_case_session_state(state, {"default_operator_name": ""})
+    assert state["case_basic_revision"] == 2
+
+
+def test_case_basic_widget_keys_include_revision():
+    assert app.case_basic_widget_key("call_line", 7) == "case_basic_call_line_7"
+    assert app.case_basic_widget_key("appliance_type", 7) == "case_basic_appliance_type_7"
+    assert app.case_basic_widget_key("product", 7) == "case_basic_product_7"
+    assert app.case_basic_widget_key("manufacturer", 7) == "case_basic_manufacturer_7"
+    assert app.case_basic_widget_key("store_name", 7) == "case_basic_store_name_7"
+
+
+def test_case_basic_refresh_success_paths_bump_revision():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    refresh_index = source.index("def request_case_basic_widget_refresh")
+    refresh_source = source[refresh_index:source.index("def process_pending_case_basic_widget_refresh", refresh_index)]
+    clipboard_index = source.index('if st.button("📋 クリップボードから直接抽出"')
+    manual_index = source.index('if st.button("🔍 抽出する"', clipboard_index)
+    reflect_index = source.index('if st.button("📥 フォームへ反映"', manual_index)
+    clipboard_area = source[clipboard_index:manual_index]
+    reflect_area = source[reflect_index:reflect_index + 500]
+
+    assert "bump_case_basic_revision(session_state)" in refresh_source
+    assert "request_case_basic_widget_refresh(st.session_state)" in clipboard_area
+    assert "request_case_basic_widget_refresh(st.session_state)" in reflect_area
+
+
+def test_case_basic_widget_initial_values_use_current_form_values():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
+    panel_source = source[panel_index:panel_end]
+
+    assert 'value=form.get("product", "")' in panel_source
+    assert 'current_manufacturer = form.get("manufacturer", "")' in panel_source
+    assert 'value=form.get("store_name", "")' in panel_source
+
+
 def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     form = app.empty_form()
     form.update({
@@ -627,10 +676,12 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
         "manufacturer": "三菱電機",
         "store_name": "ライフデザイン・カバヤ株式会社",
     })
+    revision = 0
     state = SessionState({
-        "product_input_global": "",
-        "manufacturer_input_global": "",
-        "store_name_input_global": "",
+        "case_basic_revision": revision,
+        app.case_basic_widget_key("product", revision): "",
+        app.case_basic_widget_key("manufacturer", revision): "",
+        app.case_basic_widget_key("store_name", revision): "",
     })
 
     synced = app.sync_global_case_basic_widget_state(form, state)
@@ -638,18 +689,21 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     assert synced["product"] == "食器洗い乾燥機"
     assert synced["manufacturer"] == "三菱電機"
     assert synced["store_name"] == "ライフデザイン・カバヤ株式会社"
-    assert state["product_input_global"] == "食器洗い乾燥機"
-    assert state["manufacturer_input_global"] == "三菱電機"
-    assert state["store_name_input_global"] == "ライフデザイン・カバヤ株式会社"
+    assert state[app.case_basic_widget_key("product", revision)] == "食器洗い乾燥機"
+    assert state[app.case_basic_widget_key("manufacturer", revision)] == "三菱電機"
+    assert state[app.case_basic_widget_key("store_name", revision)] == "ライフデザイン・カバヤ株式会社"
 
 
 def test_global_case_basic_manual_widget_edit_updates_form():
     form = app.empty_form()
     form["product"] = "洗濯機"
+    revision = 0
+    product_key = app.case_basic_widget_key("product", revision)
     state = SessionState({
-        "product_input_global": "食器洗い乾燥機",
+        "case_basic_revision": revision,
+        product_key: "食器洗い乾燥機",
         "_case_basic_widget_synced_values": {
-            "product_input_global": "洗濯機",
+            product_key: "洗濯機",
         },
     })
 
@@ -661,20 +715,21 @@ def test_global_case_basic_manual_widget_edit_updates_form():
 def test_pending_case_basic_widget_refresh_clears_stale_widget_keys():
     state = SessionState({
         "_pending_case_basic_widget_refresh": True,
-        "call_line_input_global": "old line",
-        "product_input_global": "old product",
-        "manufacturer_input_global": "old manufacturer",
-        "store_name_input_global": "old store",
+        "case_basic_revision": 1,
+        "case_basic_call_line_0": "old line",
+        "case_basic_product_0": "old product",
+        "case_basic_manufacturer_0": "old manufacturer",
+        "case_basic_store_name_0": "old store",
         "unrelated": "keep",
     })
 
     processed = app.process_pending_case_basic_widget_refresh(state)
 
     assert processed is True
-    assert "call_line_input_global" not in state
-    assert "product_input_global" not in state
-    assert "manufacturer_input_global" not in state
-    assert "store_name_input_global" not in state
+    assert "case_basic_call_line_0" not in state
+    assert "case_basic_product_0" not in state
+    assert "case_basic_manufacturer_0" not in state
+    assert "case_basic_store_name_0" not in state
     assert state["unrelated"] == "keep"
 
 
@@ -1034,11 +1089,11 @@ def test_global_case_basic_widget_keys_are_single_global_set():
     panel_source = source[panel_index:panel_end]
 
     for key in [
-        'call_line_input_{key_suffix}',
-        'appliance_type_input_{key_suffix}',
-        'product_input_{key_suffix}',
-        'manufacturer_input_{key_suffix}',
-        'store_name_input_{key_suffix}',
+        'case_basic_widget_key("call_line", revision)',
+        'case_basic_widget_key("appliance_type", revision)',
+        'case_basic_widget_key("product", revision)',
+        'case_basic_widget_key("manufacturer", revision)',
+        'case_basic_widget_key("store_name", revision)',
     ]:
         assert key in panel_source
     assert 'render_shared_case_basic_editor(form, "global"' in source

@@ -1547,6 +1547,11 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
 
 
 CASE_BASIC_WIDGET_PREFIXES = (
+    "case_basic_call_line_",
+    "case_basic_appliance_type_",
+    "case_basic_product_",
+    "case_basic_manufacturer_",
+    "case_basic_store_name_",
     "call_line_input_",
     "appliance_type_input_",
     "product_input_",
@@ -1554,16 +1559,45 @@ CASE_BASIC_WIDGET_PREFIXES = (
     "store_name_input_",
 )
 
-CASE_BASIC_WIDGET_TO_FIELD = {
-    "call_line_input_global": "call_line",
-    "appliance_type_input_global": "appliance_type",
-    "product_input_global": "product",
-    "manufacturer_input_global": "manufacturer",
-    "store_name_input_global": "store_name",
+CASE_BASIC_FIELD_TO_WIDGET_STEM = {
+    "call_line": "case_basic_call_line",
+    "appliance_type": "case_basic_appliance_type",
+    "product": "case_basic_product",
+    "manufacturer": "case_basic_manufacturer",
+    "store_name": "case_basic_store_name",
 }
 
 
+def get_case_basic_revision(session_state) -> int:
+    if "case_basic_revision" not in session_state:
+        session_state["case_basic_revision"] = 0
+    return int(session_state.get("case_basic_revision") or 0)
+
+
+def bump_case_basic_revision(session_state) -> int:
+    revision = get_case_basic_revision(session_state) + 1
+    session_state["case_basic_revision"] = revision
+    session_state["_case_basic_widget_synced_values"] = {}
+    return revision
+
+
+def case_basic_widget_key(field: str, revision: int | None = None, session_state=None) -> str:
+    if revision is None:
+        revision = get_case_basic_revision(session_state if session_state is not None else st.session_state)
+    return f"{CASE_BASIC_FIELD_TO_WIDGET_STEM[field]}_{revision}"
+
+
+def case_basic_widget_to_field_map(revision: int | None = None, session_state=None) -> dict:
+    if revision is None:
+        revision = get_case_basic_revision(session_state if session_state is not None else st.session_state)
+    return {
+        case_basic_widget_key(field, revision): field
+        for field in CASE_BASIC_FIELD_TO_WIDGET_STEM
+    }
+
+
 def request_case_basic_widget_refresh(session_state) -> None:
+    bump_case_basic_revision(session_state)
     session_state["_pending_case_basic_widget_refresh"] = True
 
 
@@ -1579,6 +1613,7 @@ def process_pending_case_basic_widget_refresh(session_state) -> bool:
 
 
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
+    bump_case_basic_revision(session_state)
     new_form = apply_default_operator_name(empty_form(), settings)
     session_state["form"] = new_form
     session_state["call_check_manual"] = {}
@@ -4037,7 +4072,7 @@ def build_case_basic_template_display(form: dict, repair_type: str = "") -> str:
 def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
     last_synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
     next_synced = {}
-    for widget_key, field in CASE_BASIC_WIDGET_TO_FIELD.items():
+    for widget_key, field in case_basic_widget_to_field_map(session_state=session_state).items():
         form_value = form.get(field, "")
         if widget_key in session_state:
             widget_value = session_state.get(widget_key, "")
@@ -4061,7 +4096,7 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
 def remember_case_basic_widget_synced_values(form: dict, session_state) -> None:
     session_state["_case_basic_widget_synced_values"] = {
         widget_key: form.get(field, "")
-        for widget_key, field in CASE_BASIC_WIDGET_TO_FIELD.items()
+        for widget_key, field in case_basic_widget_to_field_map(session_state=session_state).items()
     }
 
 
@@ -4077,6 +4112,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         call_line_opts = [form.get("call_line")] + call_line_opts
     appliance_type_opts = ["", "家電", "住設"]
 
+    revision = get_case_basic_revision(st.session_state)
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         form["call_line"] = st.selectbox(
@@ -4084,12 +4120,12 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             call_line_opts,
             index=call_line_opts.index(form.get("call_line", ""))
             if form.get("call_line", "") in call_line_opts else 0,
-            key=f"call_line_input_{key_suffix}",
+            key=case_basic_widget_key("call_line", revision),
         )
         form["product"] = st.text_input(
             "製品",
             value=form.get("product", ""),
-            key=f"product_input_{key_suffix}",
+            key=case_basic_widget_key("product", revision),
         )
     with col_b:
         form["appliance_type"] = st.selectbox(
@@ -4097,7 +4133,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             appliance_type_opts,
             index=appliance_type_opts.index(form.get("appliance_type", ""))
             if form.get("appliance_type", "") in appliance_type_opts else 0,
-            key=f"appliance_type_input_{key_suffix}",
+            key=case_basic_widget_key("appliance_type", revision),
         )
         manufacturer_opts = get_manufacturer_options()
         current_manufacturer = form.get("manufacturer", "")
@@ -4109,13 +4145,13 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             manufacturer_opts,
             index=manufacturer_opts.index(current_manufacturer)
             if current_manufacturer in manufacturer_opts else 0,
-            key=f"manufacturer_input_{key_suffix}",
+            key=case_basic_widget_key("manufacturer", revision),
         )
     with col_c:
         form["store_name"] = st.text_input(
             "販売店",
             value=form.get("store_name", ""),
-            key=f"store_name_input_{key_suffix}",
+            key=case_basic_widget_key("store_name", revision),
         )
         if show_template_result:
             preview_decision = run_decision(form)
@@ -4266,6 +4302,8 @@ def init_session():
     else:
         for key, value in empty_form().items():
             st.session_state.form.setdefault(key, value)
+    if "case_basic_revision" not in st.session_state:
+        st.session_state.case_basic_revision = 0
     st.session_state.form = apply_default_operator_name(st.session_state.form)
     if "extracted" not in st.session_state:
         st.session_state.extracted = {}
