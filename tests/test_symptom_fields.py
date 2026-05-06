@@ -359,3 +359,115 @@ def test_occurrence_frequency_blank_when_not_filled():
     """occurrence_frequency が未入力のとき、発生頻度欄は空欄で生成される。"""
     memo = _build_memo_0009(occurrence_frequency="")
     assert "発生頻度：\n" in memo + "\n"
+
+
+# ============================================================
+# 選択肢定数・select_with_other
+# ============================================================
+
+def test_occurrence_time_options_constant_exists():
+    """OCCURRENCE_TIME_OPTIONS 定数が存在する。"""
+    assert hasattr(app, "OCCURRENCE_TIME_OPTIONS")
+    assert isinstance(app.OCCURRENCE_TIME_OPTIONS, list)
+
+
+def test_occurrence_frequency_options_constant_exists():
+    """OCCURRENCE_FREQUENCY_OPTIONS 定数が存在する。"""
+    assert hasattr(app, "OCCURRENCE_FREQUENCY_OPTIONS")
+    assert isinstance(app.OCCURRENCE_FREQUENCY_OPTIONS, list)
+
+
+def test_occurrence_time_options_include_sono_ta():
+    """発生時期の選択肢に「その他」が含まれる。"""
+    assert "その他" in app.OCCURRENCE_TIME_OPTIONS
+
+
+def test_occurrence_frequency_options_include_sono_ta():
+    """発生頻度の選択肢に「その他」が含まれる。"""
+    assert "その他" in app.OCCURRENCE_FREQUENCY_OPTIONS
+
+
+def test_occurrence_time_options_include_predefined():
+    """発生時期の選択肢に主要な候補が含まれる。"""
+    for expected in ["本日", "昨日", "数日前", "不明"]:
+        assert expected in app.OCCURRENCE_TIME_OPTIONS, f"'{expected}' が OCCURRENCE_TIME_OPTIONS にない"
+
+
+def test_occurrence_frequency_options_include_predefined():
+    """発生頻度の選択肢に主要な候補が含まれる。"""
+    for expected in ["常時", "時々", "初回のみ", "不明"]:
+        assert expected in app.OCCURRENCE_FREQUENCY_OPTIONS, f"'{expected}' が OCCURRENCE_FREQUENCY_OPTIONS にない"
+
+
+def test_occurrence_time_check_item_uses_select_with_other():
+    """CHECK_ITEM_DEFINITIONS の発生時期が select_with_other 型を使う。"""
+    defn = app.CHECK_ITEM_DEFINITIONS.get("発生時期", {})
+    assert defn.get("input") == "select_with_other", \
+        f"expected 'select_with_other', got {defn.get('input')!r}"
+
+
+def test_occurrence_frequency_check_item_uses_select_with_other():
+    """CHECK_ITEM_DEFINITIONS の発生頻度が select_with_other 型を使う。"""
+    defn = app.CHECK_ITEM_DEFINITIONS.get("発生頻度", {})
+    assert defn.get("input") == "select_with_other", \
+        f"expected 'select_with_other', got {defn.get('input')!r}"
+
+
+def test_select_with_other_options_lookup_for_occurrence_time():
+    """_SELECT_WITH_OTHER_OPTIONS に occurrence_time が含まれる。"""
+    opts = app._SELECT_WITH_OTHER_OPTIONS.get("occurrence_time", [])
+    assert opts, "occurrence_time の選択肢が未定義"
+    assert "その他" in opts
+
+
+def test_select_with_other_options_lookup_for_occurrence_frequency():
+    """_SELECT_WITH_OTHER_OPTIONS に occurrence_frequency が含まれる。"""
+    opts = app._SELECT_WITH_OTHER_OPTIONS.get("occurrence_frequency", [])
+    assert opts, "occurrence_frequency の選択肢が未定義"
+    assert "その他" in opts
+
+
+# ============================================================
+# 注意内容メモ反映予定プレビュー（build_vendor_send_template_context 経由）
+# ============================================================
+
+def test_preview_all_three_appear_in_template_context():
+    """3項目がテンプレートコンテキストに含まれ、プレビューとして利用できる。"""
+    form = app.empty_form()
+    form["symptom_detail"] = "電源が付かない"
+    form["occurrence_time"] = "昨日から"
+    form["occurrence_frequency"] = "常時"
+    ctx = app.build_vendor_send_template_context(form)
+    assert ctx["symptom_detail"] == "電源が付かない"
+    assert ctx["occurrence_time"] == "昨日から"
+    assert ctx["occurrence_frequency"] == "常時"
+
+
+def test_preview_empty_when_no_input():
+    """未入力のとき、コンテキスト値は空文字。"""
+    form = app.empty_form()
+    ctx = app.build_vendor_send_template_context(form)
+    assert ctx["symptom_detail"] == ""
+    assert ctx["occurrence_time"] == ""
+    assert ctx["occurrence_frequency"] == ""
+
+
+# ============================================================
+# 注意内容メモ再生成でラクテル/Teams を上書きしない（改善6）
+# ============================================================
+
+def test_attention_memo_regen_does_not_touch_rakutel_or_teams():
+    """注意内容メモ再生成でラクテル用テキストとTeams報告文を上書きしない。"""
+    form = app.empty_form()
+    form.update({
+        "template_code": "0009",
+        "rakutel_text": "既存ラクテル",
+        "teams_chat_message": "既存Teams",
+        "symptom_detail": "故障",
+        "occurrence_time": "昨日",
+        "occurrence_frequency": "常時",
+    })
+    app._build_after_call_memo(form, {"title": "保証期間内"}, "出張修理", "WRT修理センター",
+                               cost_estimate="5,000円～7,000円前後")
+    assert form["rakutel_text"] == "既存ラクテル"
+    assert form["teams_chat_message"] == "既存Teams"

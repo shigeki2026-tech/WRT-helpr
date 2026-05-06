@@ -249,6 +249,14 @@ def _is_supplemental_question(text: str) -> bool:
     ))
 
 
+OCCURRENCE_TIME_OPTIONS = ["本日", "昨日", "数日前", "1週間前", "購入直後", "不明", "その他"]
+OCCURRENCE_FREQUENCY_OPTIONS = ["常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明", "その他"]
+
+_SELECT_WITH_OTHER_OPTIONS: dict[str, list[str]] = {
+    "occurrence_time": OCCURRENCE_TIME_OPTIONS,
+    "occurrence_frequency": OCCURRENCE_FREQUENCY_OPTIONS,
+}
+
 CHECK_ITEM_DEFINITIONS = {
     "症状の詳細": {
         "id": "symptom_detail",
@@ -260,13 +268,13 @@ CHECK_ITEM_DEFINITIONS = {
     "発生時期": {
         "id": "occurrence_time",
         "fields": ("occurrence_time",),
-        "input": "text",
+        "input": "select_with_other",
         "label": "発生時期",
     },
     "発生頻度": {
         "id": "occurrence_frequency",
         "fields": ("occurrence_frequency",),
-        "input": "text",
+        "input": "select_with_other",
         "label": "発生頻度",
     },
     "設置場所": {
@@ -4997,6 +5005,34 @@ def render_now_action_item(item: dict, form: dict, index: int = 0) -> None:
             value=form.get(fields[0], ""),
             key=input_key,
         )
+    elif input_type == "select_with_other" and fields:
+        field_name = fields[0]
+        options = _SELECT_WITH_OTHER_OPTIONS.get(item_id, [])
+        predefined = [o for o in options if o != "その他"]
+        current = (form.get(field_name) or "").strip()
+        display_options = [""] + options
+        if current in predefined:
+            sel_idx = display_options.index(current)
+        elif current:
+            sel_idx = display_options.index("その他") if "その他" in display_options else 0
+        else:
+            sel_idx = 0
+        selected = st.selectbox(
+            item.get("input_label") or field_label(field_name),
+            display_options,
+            index=sel_idx,
+            key=input_key,
+            format_func=lambda x: "（未選択）" if x == "" else x,
+        )
+        if selected == "その他":
+            free_key = f"{input_key}_free"
+            free_initial = current if current and current not in options else ""
+            typed = st.text_input("詳細を入力", value=free_initial, key=free_key)
+            form[field_name] = typed
+        elif selected:
+            form[field_name] = selected
+        else:
+            form[field_name] = ""
     elif input_type == "select_other_repair_requested" and fields:
         current = (form.get(fields[0]) or "未確認").strip() or "未確認"
         options = ["未確認", "なし", "あり"]
@@ -5283,9 +5319,12 @@ def render_tab_call():
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-            form["symptom_detail"]      = st.text_area("具体的な症状", form.get("symptom_detail",""), height=60)
-            form["occurrence_time"]      = st.text_input("発生時期",   form.get("occurrence_time",""))
-            form["occurrence_frequency"] = st.text_input("発生頻度",   form.get("occurrence_frequency",""))
+            st.caption(
+                "具体的な症状 / 発生時期 / 発生頻度は「今聞くこと」で入力してください\n"
+                f"（現在値）症状：{form.get('symptom_detail','') or '未入力'}"
+                f"　時期：{form.get('occurrence_time','') or '未入力'}"
+                f"　頻度：{form.get('occurrence_frequency','') or '未入力'}"
+            )
             form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
             form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
             render_warranty_date_input(
@@ -5396,6 +5435,14 @@ def render_tab_call():
             with st.expander("✅ 完了済み", expanded=False):
                 for item in now_action_plan["completed"]:
                     st.markdown(f"- {item['label']}")
+
+        _form_ref = st.session_state.form
+        st.caption(
+            "📋 注意内容メモ反映予定：\n"
+            f"具体的な症状：{_form_ref.get('symptom_detail', '')}\n"
+            f"発生時期：{_form_ref.get('occurrence_time', '')}\n"
+            f"発生頻度：{_form_ref.get('occurrence_frequency', '')}"
+        )
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
@@ -5782,6 +5829,7 @@ def render_tab_after_call():
             st.session_state["memo_after"] = form["attention_memo"]
             mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
+        st.caption("再生成すると、現在の注意内容メモは上書きされます。")
 
         memo_display = st.text_area(
             "注意内容メモ",
