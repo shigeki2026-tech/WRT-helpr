@@ -558,3 +558,79 @@ def test_support_info_does_not_duplicate_symptom_input_widgets():
     assert 'form["symptom_detail"] = st.' not in support_source
     assert 'form["occurrence_time"] = st.' not in support_source
     assert 'form["occurrence_frequency"] = st.' not in support_source
+
+
+def test_call_hearing_block_exists():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+
+    assert "📋 聴取内容（注意内容メモ反映）" in source
+    assert "def render_call_hearing_inputs" in source
+
+
+def test_call_hearing_block_owns_stable_widget_keys():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.index("def render_call_hearing_inputs")
+    end = source.index("def render_now_action_item", start)
+    hearing_source = source[start:end]
+
+    assert 'key="call_hearing_symptom_detail"' in hearing_source
+    assert 'choice_key="call_hearing_occurrence_time_choice"' in hearing_source
+    assert 'other_key="call_hearing_occurrence_time_other"' in hearing_source
+    assert 'choice_key="call_hearing_occurrence_frequency_choice"' in hearing_source
+    assert 'other_key="call_hearing_occurrence_frequency_other"' in hearing_source
+
+
+def test_call_hearing_block_renders_before_now_action():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
+
+    assert hearing_index < now_action_index
+
+
+def test_now_action_does_not_render_hearing_input_widgets():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.index("def render_now_action_item")
+    end = source.index("def render_warranty_date_input", start)
+    now_source = source[start:end]
+
+    assert "HEARING_INPUT_FIELD_IDS" in now_source
+    assert "HEARING_INPUT_PROMPTS" in now_source
+    assert 'key="call_hearing_symptom_detail"' not in now_source
+    assert 'call_hearing_occurrence_time_choice' not in now_source
+    assert 'call_hearing_occurrence_frequency_choice' not in now_source
+
+
+def test_now_action_has_missing_guidance_only_for_hearing_fields():
+    form = app.empty_form()
+    symptom_item = app.build_check_item("症状の詳細", form)
+
+    assert symptom_item["id"] in app.HEARING_INPUT_FIELD_IDS
+    assert app.HEARING_INPUT_PROMPTS[symptom_item["id"]] == "具体的な症状を入力してください"
+
+
+def test_call_hearing_widgets_do_not_depend_on_completed_state():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.index("def render_call_hearing_inputs")
+    end = source.index("def render_now_action_item", start)
+    hearing_source = source[start:end]
+
+    assert "now_action_plan" not in hearing_source
+    assert "completed" not in hearing_source
+    assert "item_id" not in hearing_source
+
+
+def test_case_clear_removes_call_hearing_widget_state():
+    state = {
+        "form": app.empty_form(),
+        "call_hearing_symptom_detail": "故障",
+        "call_hearing_occurrence_time_choice": "その他",
+        "call_hearing_occurrence_time_other": "昨日の夜",
+        "call_hearing_occurrence_frequency_choice": "常時",
+        "call_hearing_occurrence_frequency_other": "",
+    }
+
+    app.reset_case_session_state(state)
+
+    assert not any(str(key).startswith("call_hearing_") for key in state)

@@ -453,6 +453,12 @@ HEARING_SUMMARY_FIELDS = [
     ("install_location", "設置場所"),
     ("address", "訪問先住所"),
 ]
+HEARING_INPUT_FIELD_IDS = {"symptom_detail", "occurrence_time", "occurrence_frequency"}
+HEARING_INPUT_PROMPTS = {
+    "symptom_detail": "具体的な症状を入力してください",
+    "occurrence_time": "発生時期を選択してください",
+    "occurrence_frequency": "発生頻度を選択してください",
+}
 
 
 def _display_value_for_fields(form: dict, fields: tuple[str, ...]) -> str:
@@ -2085,6 +2091,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         if str(key).startswith((
             "manual_check_",
             "now_input_",
+            "call_hearing_",
             *CASE_BASIC_WIDGET_PREFIXES,
         )):
             del session_state[key]
@@ -5030,12 +5037,75 @@ def manual_check_widget_key(item: dict, index: int = 0, prefix: str = "manual_ch
     return f"{prefix}_{item_id}_{index}_{stable_hash_text(label)}"
 
 
+def _select_with_other_value(form: dict, field_name: str, options: list[str],
+                             *, choice_key: str, other_key: str, label: str) -> str:
+    current = (form.get(field_name) or "").strip()
+    other_label = "その他"
+    predefined = [o for o in options if o != other_label]
+    display_options = [""] + options
+    if current in predefined:
+        selected_index = display_options.index(current)
+    elif current:
+        selected_index = display_options.index(other_label) if other_label in display_options else 0
+    else:
+        selected_index = 0
+    selected = st.selectbox(
+        label,
+        display_options,
+        index=selected_index,
+        key=choice_key,
+        format_func=lambda value: "（未選択）" if value == "" else value,
+    )
+    if selected == other_label:
+        free_initial = current if current and current not in options else ""
+        return st.text_input("詳細を入力", value=free_initial, key=other_key).strip()
+    if selected:
+        return selected
+    return ""
+
+
+def render_call_hearing_inputs(form: dict) -> None:
+    st.markdown("### 📋 聴取内容（注意内容メモ反映）")
+    form["symptom_detail"] = st.text_area(
+        "具体的な症状",
+        value=form.get("symptom_detail", ""),
+        height=80,
+        key="call_hearing_symptom_detail",
+    )
+    form["occurrence_time"] = _select_with_other_value(
+        form,
+        "occurrence_time",
+        _SELECT_WITH_OTHER_OPTIONS.get("occurrence_time", []),
+        choice_key="call_hearing_occurrence_time_choice",
+        other_key="call_hearing_occurrence_time_other",
+        label="発生時期",
+    )
+    form["occurrence_frequency"] = _select_with_other_value(
+        form,
+        "occurrence_frequency",
+        _SELECT_WITH_OTHER_OPTIONS.get("occurrence_frequency", []),
+        choice_key="call_hearing_occurrence_frequency_choice",
+        other_key="call_hearing_occurrence_frequency_other",
+        label="発生頻度",
+    )
+    attention_preview_lines = build_attention_memo_preview_lines(form)
+    if attention_preview_lines:
+        st.info(
+            "注意内容メモ反映予定：\n"
+            + "\n".join(attention_preview_lines)
+        )
+    st.session_state.form = form
+
+
 def render_now_action_item(item: dict, form: dict, index: int = 0) -> None:
     item_id = item["id"]
     st.markdown(f"**{item['label']}**")
     input_type = item.get("input")
     fields = item.get("fields") or ()
     input_key = f"now_input_{item_id}_{index}_{stable_hash_text(item.get('label', ''))}"
+    if item_id in HEARING_INPUT_FIELD_IDS:
+        st.info(HEARING_INPUT_PROMPTS.get(item_id, f"{item['label']}を入力してください"))
+        return
     if input_type == "textarea" and fields:
         form[fields[0]] = st.text_area(
             item.get("input_label") or field_label(fields[0]),
@@ -5474,6 +5544,8 @@ def render_tab_call():
                 if script_guidance.get("notes"):
                     st.markdown("**注意：**")
                     st.info(script_guidance["notes"])
+
+        render_call_hearing_inputs(st.session_state.form)
 
         st.markdown("### ✅ 今聞くこと")
         if now_action_plan["call_required"]:
