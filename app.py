@@ -491,10 +491,9 @@ def build_hearing_summary_lines(form: dict) -> list[str]:
 
 def build_attention_memo_preview_lines(form: dict) -> list[str]:
     return [
-        line for line in build_hearing_summary_lines(form)
-        if line.startswith(("具体的な症状：", "発生時期：", "発生頻度："))
+        f"{label}：{str(form.get(field) or '').strip()}"
+        for field, label in HEARING_SUMMARY_FIELDS[:3]
     ]
-
 
 def build_other_repair_requested_warning(form: dict) -> dict:
     if (form.get("other_repair_requested") or "").strip() != "あり":
@@ -5088,24 +5087,21 @@ def render_call_hearing_inputs(form: dict) -> None:
         other_key="call_hearing_occurrence_frequency_other",
         label="発生頻度",
     )
-    attention_preview_lines = build_attention_memo_preview_lines(form)
-    if attention_preview_lines:
-        st.info(
-            "注意内容メモ反映予定：\n"
-            + "\n".join(attention_preview_lines)
-        )
+    st.info(
+        "📋 注意内容メモ反映予定\n"
+        + "\n".join(build_attention_memo_preview_lines(form))
+    )
     st.session_state.form = form
 
 
 def render_now_action_item(item: dict, form: dict, index: int = 0) -> None:
     item_id = item["id"]
+    if item_id in HEARING_INPUT_FIELD_IDS:
+        return
     st.markdown(f"**{item['label']}**")
     input_type = item.get("input")
     fields = item.get("fields") or ()
     input_key = f"now_input_{item_id}_{index}_{stable_hash_text(item.get('label', ''))}"
-    if item_id in HEARING_INPUT_FIELD_IDS:
-        st.info(HEARING_INPUT_PROMPTS.get(item_id, f"{item['label']}を入力してください"))
-        return
     if input_type == "textarea" and fields:
         form[fields[0]] = st.text_area(
             item.get("input_label") or field_label(fields[0]),
@@ -5542,23 +5538,26 @@ def render_tab_call():
         render_call_hearing_inputs(st.session_state.form)
 
         st.markdown("### ✅ 今聞くこと")
-        if now_action_plan["call_required"]:
-            for idx, item in enumerate(now_action_plan["call_required"]):
+        call_required_items = now_action_plan["call_required"]
+        hearing_missing_items = [
+            item for item in call_required_items
+            if item.get("id") in HEARING_INPUT_FIELD_IDS
+        ]
+        regular_required_items = [
+            item for item in call_required_items
+            if item.get("id") not in HEARING_INPUT_FIELD_IDS
+        ]
+        if hearing_missing_items:
+            st.markdown("**未入力：** " + " / ".join(item["label"] for item in hearing_missing_items))
+        if regular_required_items:
+            for idx, item in enumerate(regular_required_items):
                 render_now_action_item(item, st.session_state.form, idx)
-        else:
+        if not hearing_missing_items and not regular_required_items:
             st.success("通話中の必須確認はありません")
         if now_action_plan["completed"]:
             with st.expander("✅ 完了済み", expanded=False):
                 for item in now_action_plan["completed"]:
                     st.markdown(f"- {format_completed_check_item(item, st.session_state.form)}")
-
-        _form_ref = st.session_state.form
-        attention_preview_lines = build_attention_memo_preview_lines(_form_ref)
-        if attention_preview_lines:
-            st.info(
-                "📋 注意内容メモ反映予定\n"
-                + "\n".join(attention_preview_lines)
-            )
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
