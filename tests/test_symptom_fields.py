@@ -558,6 +558,8 @@ def test_support_info_does_not_duplicate_symptom_input_widgets():
     assert 'form["symptom_detail"] = st.' not in support_source
     assert 'form["occurrence_time"] = st.' not in support_source
     assert 'form["occurrence_frequency"] = st.' not in support_source
+    assert "今聞くこと」で入力してください" not in support_source
+    assert "今聞くことで入力してください" not in support_source
 
 
 def test_call_hearing_block_exists():
@@ -587,6 +589,21 @@ def test_call_hearing_block_renders_before_now_action():
     now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
 
     assert hearing_index < now_action_index
+
+
+def test_call_hearing_block_renders_after_script_support_area():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    script_support_index = source.index("script_guidance = build_script_guidance_panel_info", call_tab_start)
+    hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+
+    assert script_support_index < hearing_index
+
+
+def test_old_support_info_guidance_text_removed():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+
+    assert "具体的な症状 / 発生時期 / 発生頻度は「今聞くこと」で入力してください" not in source
 
 
 def test_now_action_does_not_render_hearing_input_widgets():

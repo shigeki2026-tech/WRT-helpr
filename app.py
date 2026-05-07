@@ -5433,12 +5433,6 @@ def render_tab_call():
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
-            st.caption(
-                "具体的な症状 / 発生時期 / 発生頻度は「今聞くこと」で入力してください\n"
-                f"（現在値）症状：{form.get('symptom_detail','') or '未入力'}"
-                f"　時期：{form.get('occurrence_time','') or '未入力'}"
-                f"　頻度：{form.get('occurrence_frequency','') or '未入力'}"
-            )
             hearing_summary_lines = build_hearing_summary_lines(form)
             st.markdown("##### 聴取内容まとめ")
             if hearing_summary_lines:
