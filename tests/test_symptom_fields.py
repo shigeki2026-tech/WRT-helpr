@@ -471,3 +471,90 @@ def test_attention_memo_regen_does_not_touch_rakutel_or_teams():
                                cost_estimate="5,000円～7,000円前後")
     assert form["rakutel_text"] == "既存ラクテル"
     assert form["teams_chat_message"] == "既存Teams"
+
+
+def test_completed_display_includes_symptom_detail_value():
+    form = app.empty_form()
+    form["symptom_detail"] = "電源が付かない"
+    item = app.build_check_item("症状の詳細", form)
+
+    assert app.format_completed_check_item(item, form) == "具体的な症状：電源が付かない"
+
+
+def test_completed_display_includes_occurrence_time_value():
+    form = app.empty_form()
+    form["occurrence_time"] = "昨日"
+    item = app.build_check_item("発生時期", form)
+
+    assert app.format_completed_check_item(item, form) == "発生時期：昨日"
+
+
+def test_completed_display_includes_occurrence_frequency_value():
+    form = app.empty_form()
+    form["occurrence_frequency"] = "常時"
+    item = app.build_check_item("発生頻度", form)
+
+    assert app.format_completed_check_item(item, form) == "発生頻度：常時"
+
+
+def test_completed_manual_check_without_value_shows_confirmed():
+    form = app.empty_form()
+    item = app.build_check_item("発生時期", form, {"occurrence_time": True})
+
+    assert app.format_completed_check_item(item, form) == "発生時期：確認済み"
+
+
+def test_hearing_summary_lines_include_call_inputs():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "電源が付かない",
+        "occurrence_time": "昨日",
+        "occurrence_frequency": "常時",
+        "install_location": "キッチン",
+        "address": "埼玉県朝霞市幸町２－１８－２７",
+    })
+
+    assert app.build_hearing_summary_lines(form) == [
+        "具体的な症状：電源が付かない",
+        "発生時期：昨日",
+        "発生頻度：常時",
+        "設置場所：キッチン",
+        "訪問先住所：埼玉県朝霞市幸町２－１８－２７",
+    ]
+
+
+def test_attention_memo_preview_lines_include_three_values():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "電源が付かない",
+        "occurrence_time": "昨日",
+        "occurrence_frequency": "常時",
+        "install_location": "キッチン",
+    })
+
+    assert app.build_attention_memo_preview_lines(form) == [
+        "具体的な症状：電源が付かない",
+        "発生時期：昨日",
+        "発生頻度：常時",
+    ]
+
+
+def test_support_info_expander_is_open_and_has_hearing_summary():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+
+    assert 'with st.expander("補助情報を開く", expanded=True)' in source
+    assert "聴取内容まとめ" in source
+
+
+def test_support_info_does_not_duplicate_symptom_input_widgets():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.index('with st.expander("補助情報を開く", expanded=True)')
+    end = source.index("st.session_state.form = form", start)
+    support_source = source[start:end]
+
+    assert 'key="now_input_symptom_detail' not in support_source
+    assert 'key="now_input_occurrence_time' not in support_source
+    assert 'key="now_input_occurrence_frequency' not in support_source
+    assert 'form["symptom_detail"] = st.' not in support_source
+    assert 'form["occurrence_time"] = st.' not in support_source
+    assert 'form["occurrence_frequency"] = st.' not in support_source

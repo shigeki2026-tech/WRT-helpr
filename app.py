@@ -446,6 +446,50 @@ def build_now_action_plan(form: dict, repair_type: str, needs_data_erase: bool,
     }
 
 
+HEARING_SUMMARY_FIELDS = [
+    ("symptom_detail", "具体的な症状"),
+    ("occurrence_time", "発生時期"),
+    ("occurrence_frequency", "発生頻度"),
+    ("install_location", "設置場所"),
+    ("address", "訪問先住所"),
+]
+
+
+def _display_value_for_fields(form: dict, fields: tuple[str, ...]) -> str:
+    values = []
+    for field in fields:
+        value = str(form.get(field) or "").strip()
+        if value:
+            values.append(value)
+    return " / ".join(values)
+
+
+def format_completed_check_item(item: dict, form: dict) -> str:
+    label = item.get("label") or ""
+    value = _display_value_for_fields(form, tuple(item.get("fields") or ()))
+    if value:
+        return f"{label}：{value}"
+    if item.get("done"):
+        return f"{label}：確認済み"
+    return label
+
+
+def build_hearing_summary_lines(form: dict) -> list[str]:
+    lines = []
+    for field, label in HEARING_SUMMARY_FIELDS:
+        value = str(form.get(field) or "").strip()
+        if value:
+            lines.append(f"{label}：{value}")
+    return lines
+
+
+def build_attention_memo_preview_lines(form: dict) -> list[str]:
+    return [
+        line for line in build_hearing_summary_lines(form)
+        if line.startswith(("具体的な症状：", "発生時期：", "発生頻度："))
+    ]
+
+
 def build_other_repair_requested_warning(form: dict) -> dict:
     if (form.get("other_repair_requested") or "").strip() != "あり":
         return {}
@@ -5285,7 +5329,7 @@ def render_tab_call():
         if is_double_protect_plan(form.get("warranty_plan", "")):
             st.warning(f"物損付 / DP案件: {double_protect_plan_label(form.get('warranty_plan', ''))}。物損保証金額はシステム確認。")
 
-        with st.expander("補助情報を開く", expanded=False):
+        with st.expander("補助情報を開く", expanded=True):
             render_field_marker("address", missing_fields_set, invalid_fields_set, pre_diagnostics)
             form["address"]       = st.text_input("お客様住所",   form.get("address",""))
             form["product_original"] = st.text_input(
@@ -5325,6 +5369,12 @@ def render_tab_call():
                 f"　時期：{form.get('occurrence_time','') or '未入力'}"
                 f"　頻度：{form.get('occurrence_frequency','') or '未入力'}"
             )
+            hearing_summary_lines = build_hearing_summary_lines(form)
+            st.markdown("##### 聴取内容まとめ")
+            if hearing_summary_lines:
+                st.markdown("\n".join(hearing_summary_lines))
+            else:
+                st.caption("未入力")
             form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
             form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
             render_warranty_date_input(
@@ -5434,15 +5484,15 @@ def render_tab_call():
         if now_action_plan["completed"]:
             with st.expander("✅ 完了済み", expanded=False):
                 for item in now_action_plan["completed"]:
-                    st.markdown(f"- {item['label']}")
+                    st.markdown(f"- {format_completed_check_item(item, st.session_state.form)}")
 
         _form_ref = st.session_state.form
-        st.caption(
-            "📋 注意内容メモ反映予定：\n"
-            f"具体的な症状：{_form_ref.get('symptom_detail', '')}\n"
-            f"発生時期：{_form_ref.get('occurrence_time', '')}\n"
-            f"発生頻度：{_form_ref.get('occurrence_frequency', '')}"
-        )
+        attention_preview_lines = build_attention_memo_preview_lines(_form_ref)
+        if attention_preview_lines:
+            st.info(
+                "📋 注意内容メモ反映予定\n"
+                + "\n".join(attention_preview_lines)
+            )
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
