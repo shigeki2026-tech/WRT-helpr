@@ -523,6 +523,30 @@ def test_hearing_summary_lines_include_call_inputs():
     ]
 
 
+def test_hearing_summary_lines_keep_required_blank_rows():
+    form = app.empty_form()
+    form["address"] = "兵庫県宝塚市逆瀬川2丁目9-8"
+
+    assert app.build_hearing_summary_lines(form) == [
+        "具体的な症状：",
+        "発生時期：",
+        "発生頻度：",
+        "設置場所：",
+        "訪問先住所：兵庫県宝塚市逆瀬川2丁目9-8",
+    ]
+
+
+def test_support_info_hearing_summary_renders_one_item_per_markdown_line():
+    source = Path(app.__file__).read_text(encoding="utf-8")
+    start = source.index("hearing_summary_lines = build_hearing_summary_lines(form)")
+    end = source.index('form["maker_warranty_period"]', start)
+    support_source = source[start:end]
+
+    assert "for line in hearing_summary_lines:" in support_source
+    assert "st.markdown(line)" in support_source
+    assert '"\\n".join(hearing_summary_lines)' not in support_source
+
+
 def test_attention_memo_preview_lines_include_three_values():
     form = app.empty_form()
     form.update({

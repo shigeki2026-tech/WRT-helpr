@@ -481,12 +481,10 @@ def format_completed_check_item(item: dict, form: dict) -> str:
 
 
 def build_hearing_summary_lines(form: dict) -> list[str]:
-    lines = []
-    for field, label in HEARING_SUMMARY_FIELDS:
-        value = str(form.get(field) or "").strip()
-        if value:
-            lines.append(f"{label}：{value}")
-    return lines
+    return [
+        f"{label}：{str(form.get(field) or '').strip()}"
+        for field, label in HEARING_SUMMARY_FIELDS
+    ]
 
 
 def build_attention_memo_preview_lines(form: dict) -> list[str]:
@@ -5431,10 +5429,8 @@ def render_tab_call():
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
             hearing_summary_lines = build_hearing_summary_lines(form)
             st.markdown("##### 聴取内容まとめ")
-            if hearing_summary_lines:
-                st.markdown("\n".join(hearing_summary_lines))
-            else:
-                st.caption("未入力")
+            for line in hearing_summary_lines:
+                st.markdown(line)
             form["maker_warranty_period"] = st.text_input("メーカー保証期間", form.get("maker_warranty_period",""))
             form["install_type"]  = st.text_input("設置形態",     form.get("install_type",""))
             render_warranty_date_input(
