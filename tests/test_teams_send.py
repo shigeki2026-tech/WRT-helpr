@@ -1255,6 +1255,89 @@ def test_after_call_regeneration_buttons_are_independent():
     assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_area
 
 
+def test_render_copy_button_helper_exists():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    helper_index = source.index("def render_copy_button")
+    helper_source = source[helper_index:source.index("def sort_diagnostic_items", helper_index)]
+
+    assert "st.components.v1.html" in helper_source
+    assert "json.dumps(text or \"\", ensure_ascii=False)" in helper_source
+    assert "navigator.clipboard.writeText(copyText)" in helper_source
+    assert 'document.createElement("textarea")' in helper_source
+    assert "document.execCommand(\"copy\")" in helper_source
+    assert "コピーしました" in helper_source
+    assert "コピー対象がありません" in helper_source
+
+
+def test_after_call_copy_buttons_exist_under_each_text_area():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    memo_area = after_source[
+        after_source.index('memo_display = st.text_area('):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+    rakutel_area = after_source[
+        after_source.index('rakutel_text_display = st.text_area('):
+        after_source.index("##### 💬 Teams 報告文")
+    ]
+    teams_area = after_source[
+        after_source.index('teams_chat_message = st.text_area('):
+        after_source.index("teams_config = load_teams_config()")
+    ]
+
+    assert "st.code(" not in memo_area
+    assert "コピー用：注意内容メモ" not in memo_area
+    assert 'render_copy_button("📋 注意内容メモをコピー", form["attention_memo"], "copy_attention_memo")' in memo_area
+    assert memo_area.index('form["attention_memo"] = memo_display') < memo_area.index("copy_attention_memo")
+
+    assert "st.code(" not in rakutel_area
+    assert "コピー用：ラクテル用テキスト" not in rakutel_area
+    assert 'render_copy_button("📋 ラクテル用テキストをコピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
+    assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
+
+    assert "st.code(" not in teams_area
+    assert "コピー用：Teams報告文" not in teams_area
+    assert 'render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
+    assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
+
+
+def test_teams_copy_button_uses_plain_text_without_drive_url_source():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    teams_index = source.index("##### 💬 Teams 報告文")
+    teams_copy_index = source.index("render_copy_button", teams_index)
+    copy_end_index = source.index("st.session_state.form = form", teams_copy_index)
+    teams_copy_area = source[teams_copy_index:copy_end_index]
+
+    assert 'render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")' in teams_copy_area
+    assert "_get_teams_send_body" not in teams_copy_area
+    assert "teams_plain_text_to_html" not in teams_copy_area
+    assert "<b>" not in teams_copy_area
+    assert "<br>" not in teams_copy_area
+    assert "request_folder" not in teams_copy_area
+    assert "drive.google.com" not in teams_copy_area
+
+
+def test_after_call_copy_buttons_reference_regenerated_session_values():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    attention_regen = after_source.index('st.session_state["memo_after"] = form["attention_memo"]')
+    attention_copy = after_source.index("copy_attention_memo")
+    rakutel_regen = after_source.index('st.session_state["rakutel_text_display"] = form["rakutel_text"]')
+    rakutel_copy = after_source.index("copy_rakutel_text")
+    teams_regen = after_source.index('st.session_state["teams_chat_message_display"] = form["teams_chat_message"]')
+    teams_copy = after_source.index("copy_teams_chat_message")
+
+    assert attention_regen < attention_copy
+    assert rakutel_regen < rakutel_copy
+    assert teams_regen < teams_copy
+
+
 def test_after_call_regeneration_dirty_state_helpers():
     form = app.empty_form()
     form.update({"call_line": "A", "product": "洗濯機", "rakuteru_no": "RT-1"})
