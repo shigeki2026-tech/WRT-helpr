@@ -26,6 +26,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEAMS_CONFIG_PATH = os.path.join(APP_DIR, "config", "teams_config.json")
 LOCAL_USER_SETTINGS_PATH = os.path.join(APP_DIR, "config", "local_user_settings.json")
 TEAMS_SEND_SCRIPT_PATH = os.path.join(APP_DIR, "scripts", "send_teams_message.ps1")
+TEAMS_SEND_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_log.csv")
 DEFAULT_TEAMS_CONFIG = {
     "enabled": False,
     "chat_id": "",
@@ -2041,6 +2042,61 @@ def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dic
     return bool(teams_enabled and confirmed and pdf_storage_confirmed and _get_teams_send_body(form))
 
 
+def _teams_case_already_sent(session_state, form: dict) -> bool:
+    message = (form.get("teams_chat_message") or "").strip()
+    return bool(
+        session_state.get("teams_sent")
+        and message
+        and session_state.get("teams_sent_message") == message
+    )
+
+
+def _mark_teams_message_sent(session_state, form: dict, now: datetime | None = None) -> None:
+    now = now or datetime.now()
+    session_state["teams_sent"] = True
+    session_state["teams_sent_message"] = (form.get("teams_chat_message") or "").strip()
+    session_state["teams_sent_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
+
+
+def validate_teams_send_request(
+    form: dict,
+    teams_enabled: bool,
+    send_confirmed: bool,
+    action_confirmed: bool,
+    pdf_storage_confirmed: bool,
+    vendor: str,
+    contact_type: str = "",
+) -> list[str]:
+    errors = []
+    message = (form.get("teams_chat_message") or "").strip()
+    rakuteru_no = (form.get("rakuteru_no") or "").strip()
+    action = resolve_teams_request_action(form, vendor, contact_type)
+    vendor_text = (vendor or "").strip()
+
+    if not teams_enabled:
+        errors.append("Teams送信設定が未完了です。")
+    if not message:
+        errors.append("Teams報告文が空です。")
+    if not rakuteru_no:
+        errors.append("楽テルNOを入力してください。")
+    if not action:
+        errors.append("Teams報告アクションを入力または確定してください。")
+    if not action_confirmed:
+        errors.append("Teams報告アクションを確定してください。")
+    if not send_confirmed:
+        errors.append("送信内容と送信先を確認してください。")
+    if get_request_pdf_folder_info(vendor_text).get("required") and not pdf_storage_confirmed:
+        errors.append("依頼書PDFを指定フォルダへ格納済みにしてから送信してください。")
+    if "担当エスカ" in vendor_text or "要確認" in vendor_text:
+        if "依頼書PDF格納済み" in message:
+            errors.append("担当エスカ案件のTeams本文が依頼書PDF格納済みになっています。Teams報告文を再生成してください。")
+        if "担当確認依頼済み" not in message and "担当確認" not in message:
+            errors.append("担当エスカ案件のTeams本文は担当確認依頼済みの内容にしてください。")
+    if "drive.google.com" in message.lower():
+        errors.append("Teams本文にDrive URLが含まれています。URLを削除してください。")
+    return errors
+
+
 def load_local_user_settings(path: str | None = None) -> dict:
     settings_path = path or LOCAL_USER_SETTINGS_PATH
     if not os.path.exists(settings_path):
@@ -2204,6 +2260,10 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "rakutel_text_display",
         "teams_chat_message_display",
         "teams_send_confirmed",
+        "teams_action_confirmed",
+        "teams_sent",
+        "teams_sent_message",
+        "teams_sent_at",
         "request_pdf_storage_confirmed",
         "tpl_label_select_after",
         "teams_action_input",
@@ -2321,17 +2381,50 @@ def send_teams_message_via_powershell(message: str) -> dict:
                 pass
 
 
-def append_teams_send_log(result: dict, message: str, chat_name: str) -> list:
+def append_teams_send_log(result: dict, message: str, chat_name: str,
+                          form: dict | None = None, vendor: str = "",
+                          teams_action: str = "") -> list:
     if "teams_send_log" not in st.session_state:
         st.session_state.teams_send_log = []
+    form = form or {}
+    timestamp = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
     entry = {
-        "sent_at": datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
+        "sent_at": timestamp,
         "ok": bool(result.get("ok")),
         "chat_name": chat_name,
         "message_preview": (message or "").replace("\n", " ")[:100],
         "error_message": "" if result.get("ok") else result.get("message", ""),
     }
     st.session_state.teams_send_log.insert(0, entry)
+    try:
+        if not form:
+            return st.session_state.teams_send_log
+        os.makedirs(os.path.dirname(TEAMS_SEND_LOG_PATH), exist_ok=True)
+        file_exists = os.path.exists(TEAMS_SEND_LOG_PATH)
+        with open(TEAMS_SEND_LOG_PATH, "a", encoding="utf-8-sig", newline="") as f:
+            fieldnames = [
+                "timestamp",
+                "rakuteru_no",
+                "wrt_no",
+                "vendor",
+                "teams_action",
+                "result",
+                "error_message",
+            ]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                "timestamp": timestamp,
+                "rakuteru_no": (form.get("rakuteru_no") or "").strip(),
+                "wrt_no": (form.get("wrt_no") or "").strip(),
+                "vendor": (vendor or "").strip(),
+                "teams_action": (teams_action or form.get("teams_action") or "").strip(),
+                "result": "success" if result.get("ok") else "failure",
+                "error_message": "" if result.get("ok") else result.get("message", ""),
+            })
+    except Exception as exc:
+        entry["log_error"] = str(exc)
     return st.session_state.teams_send_log
 
 
@@ -6241,21 +6334,61 @@ def render_tab_after_call():
             "送信内容と送信先を確認しました",
             key="teams_send_confirmed",
         )
-        teams_send_body = _get_teams_send_body(form)
-        send_disabled = not _can_send_teams_chat_message(
-            teams_enabled, confirmed, form, pdf_storage_confirmed)
-        if st.button("Teamsチャットへ送信", disabled=send_disabled, type="primary", use_container_width=True):
+        action_confirmed = st.checkbox(
+            "Teams報告アクションを確定しました",
+            key="teams_action_confirmed",
+        )
+        effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+        already_sent = _teams_case_already_sent(st.session_state, form)
+        if already_sent:
+            sent_at = st.session_state.get("teams_sent_at") or "日時不明"
+            st.warning(f"すでに送信済みです（{sent_at}）。再送する場合のみ実行してください。")
+
+        def run_teams_send(allow_resend: bool = False):
+            validation_errors = validate_teams_send_request(
+                form,
+                teams_enabled,
+                confirmed,
+                action_confirmed,
+                pdf_storage_confirmed,
+                vendor,
+                contact_type,
+            )
+            if validation_errors:
+                for error in validation_errors:
+                    st.warning(error)
+                return
+            if already_sent and not allow_resend:
+                st.warning("すでに送信済みです。再送する場合のみ実行してください。")
+                return
+
+            teams_send_body = _get_teams_send_body(form)
             result = send_teams_message_via_powershell(teams_send_body)
-            append_teams_send_log(result, teams_send_body, chat_name)
+            append_teams_send_log(
+                result,
+                teams_chat_message,
+                chat_name,
+                form=form,
+                vendor=vendor,
+                teams_action=effective_teams_action,
+            )
             if result.get("ok"):
-                st.success("Teamsチャットへ送信しました")
+                _mark_teams_message_sent(st.session_state, form)
+                st.success("Teams送信成功")
             else:
-                st.error("Teams送信に失敗しました")
+                st.error("Teams送信失敗")
+                st.error(result.get("message", "エラー内容を取得できませんでした"))
             with st.expander("PowerShell実行結果", expanded=not result.get("ok")):
                 st.text("stdout")
                 st.code(result.get("stdout", "") or "（なし）", language=None)
                 st.text("stderr")
                 st.code(result.get("stderr", "") or "（なし）", language=None)
+
+        if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
+            run_teams_send(allow_resend=False)
+        if already_sent:
+            if st.button("再送する", disabled=not teams_enabled, use_container_width=True):
+                run_teams_send(allow_resend=True)
 
         recent_logs = st.session_state.get("teams_send_log", [])[:3]
         if recent_logs:

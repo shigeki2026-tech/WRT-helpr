@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -80,10 +81,13 @@ def test_empty_message_does_not_call_subprocess(monkeypatch):
 def test_teams_send_body_uses_teams_chat_message_not_rakutel_text():
     form = {
         "rakutel_text": "do not send this detailed text",
+        "attention_memo": "do not send this memo either",
         "teams_chat_message": "send this short Teams message",
     }
 
     assert app._get_teams_send_body(form) == "send this short Teams message"
+    assert "do not send this detailed text" not in app._get_teams_send_body(form)
+    assert "do not send this memo either" not in app._get_teams_send_body(form)
 
 
 def test_empty_teams_chat_message_is_not_sendable():
@@ -377,6 +381,33 @@ def test_teams_send_html_bolds_first_line_and_escapes_special_chars():
     assert "ご確認お願いします。大&quot;濱" in html
 
 
+def test_teams_send_html_keeps_display_message_plain_and_excludes_drive_url():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "\n".join([
+            "2026_05_0174",
+            "家電回線",
+            "ドライヤー",
+            "WRT修理センターへ依頼書PDF格納済み",
+            "ご確認お願いします。大濱",
+        ]),
+    }
+
+    display_message = form["teams_chat_message"]
+    html = app._get_teams_send_body(form)
+
+    assert "<b>" not in display_message
+    assert "<br>" not in display_message
+    assert html == "\n".join([
+        "<b>2026_05_0174</b><br>",
+        "家電回線<br>",
+        "ドライヤー<br>",
+        "WRT修理センターへ依頼書PDF格納済み<br>",
+        "ご確認お願いします。大濱",
+    ])
+    assert "drive.google.com" not in html
+
+
 def test_teams_send_html_without_rakuteru_does_not_bold_first_line():
     form = {
         "rakuteru_no": "",
@@ -387,6 +418,123 @@ def test_teams_send_html_without_rakuteru_does_not_bold_first_line():
 
     assert html == "家電保証対応業務（24時間）<br>\nドライヤー"
     assert "<b>" not in html
+
+
+def test_teams_send_validation_requires_rakuteru_no_and_action_confirmation():
+    form = {
+        "rakuteru_no": "",
+        "teams_chat_message": "家電回線\nドライヤー\nWRT修理センターへ依頼書PDF格納済み",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=False,
+        pdf_storage_confirmed=True,
+        vendor="WRT修理センター",
+    )
+
+    assert any("楽テルNO" in error for error in errors)
+    assert any("Teams報告アクション" in error for error in errors)
+
+
+def test_teams_send_validation_blocks_wrt_cer_when_pdf_storage_is_unchecked():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\n家電回線\nドライヤー\nWRT修理センターへ依頼書PDF格納済み",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=False,
+        vendor="WRT修理センター",
+    )
+
+    assert any("依頼書PDF" in error for error in errors)
+
+
+def test_teams_send_validation_allows_wrt_cer_when_pdf_storage_is_checked():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\n家電回線\nドライヤー\nWRT修理センターへ依頼書PDF格納済み",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="WRT修理センター",
+    )
+
+    assert errors == []
+
+
+def test_teams_send_validation_blocks_drive_url_in_body():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\nhttps://drive.google.com/drive/folders/example",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="WRT修理センター",
+    )
+
+    assert any("Drive URL" in error for error in errors)
+
+
+def test_escalation_teams_message_uses_confirmation_request_not_pdf_storage():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_0174",
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "ドライヤー",
+    })
+
+    message = app._build_teams_chat_message(form, "担当エスカ（要確認）")
+
+    assert "担当確認依頼済み" in message
+    assert "依頼書PDF格納済み" not in message
+
+
+def test_teams_send_validation_blocks_escalation_pdf_storage_text():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\n家電回線\n担当エスカ（要確認）へ依頼書PDF格納済み",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="担当エスカ（要確認）",
+    )
+
+    assert any("依頼書PDF格納済み" in error for error in errors)
+
+
+def test_mark_teams_sent_sets_duplicate_send_state():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+
+    app._mark_teams_message_sent(state, form, datetime(2026, 5, 8, 12, 34, 56))
+
+    assert state["teams_sent"] is True
+    assert state["teams_sent_message"] == form["teams_chat_message"]
+    assert state["teams_sent_at"] == "2026/05/08 12:34:56"
+    assert app._teams_case_already_sent(state, form) is True
 
 
 def test_local_user_settings_loads_default_operator_name(tmp_path):
