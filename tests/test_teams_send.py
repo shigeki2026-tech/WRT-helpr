@@ -96,7 +96,7 @@ def test_empty_teams_chat_message_is_not_sendable():
     assert app._can_send_teams_chat_message(True, True, form) is False
 
 
-def test_teams_and_rakutel_use_call_line_display_name_for_old_alias():
+def test_teams_uses_call_line_display_name_and_rakutel_uses_line_name_for_old_alias():
     form = app.empty_form()
     form.update({
         "call_line": "家電保証対応業務（24時間）",
@@ -104,8 +104,12 @@ def test_teams_and_rakutel_use_call_line_display_name_for_old_alias():
         "rakuteru_no": "2026_05_0162",
     })
 
-    assert "家電業務" in app._build_teams_chat_message(form, "WRT修理センター")
-    assert "家電業務" in app._build_rakutel_text(form, "加入者")
+    teams_message = app._build_teams_chat_message(form, "WRT修理センター")
+    rakutel_text = app._build_rakutel_text(form, "加入者")
+
+    assert "家電" in teams_message
+    assert "【家電回線に入電】" in rakutel_text
+    assert "【家電業務に入電】" not in rakutel_text
 
 
 def test_attention_memo_0009_uses_vendor_send_template_with_estimated_fee():
@@ -264,7 +268,7 @@ def test_teams_message_uses_expected_multiline_format():
 
     assert message == "\n".join([
         "2026_05_0162",
-        "家電業務",
+        "家電",
         "ドライヤー",
         "WRT修理センターへ依頼書PDF格納済み",
         "DP案件・保証金額確認要",
@@ -334,7 +338,7 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
     message = app._build_teams_chat_message(form, "担当エスカ（要確認）")
     lines = message.splitlines()
 
-    assert lines[0] == "家電業務"
+    assert lines[0] == "家電"
     assert not message.startswith("<b>")
     assert "<b>" not in lines[0]
 
@@ -835,7 +839,8 @@ def test_regenerated_rakutel_text_reflects_late_operator_name():
     )
 
     assert "MPG大濱" in texts["rakutel_text"]
-    assert "【家電業務に入電】" in texts["rakutel_text"]
+    assert "【家電回線に入電】" in texts["rakutel_text"]
+    assert "【家電業務に入電】" not in texts["rakutel_text"]
     assert "【修理受付】" in texts["rakutel_text"]
     assert "2026/5/4 09:30　販売店" in texts["rakutel_text"]
 
@@ -852,7 +857,7 @@ def test_rakutel_text_inbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電業務に入電】" in text
+    assert "【家電回線に入電】" in text
     assert "加入者→MPG大濱" in text
 
 
@@ -868,7 +873,7 @@ def test_rakutel_text_outbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電業務から架電】" in text
+    assert "【家電回線に架電】" in text
     assert "MPG大濱→加入者" in text
 
 
@@ -1336,6 +1341,27 @@ def test_after_call_copy_buttons_reference_regenerated_session_values():
     assert attention_regen < attention_copy
     assert rakutel_regen < rakutel_copy
     assert teams_regen < teams_copy
+
+
+def test_push_bat_does_not_use_git_add_dot_and_pushes_origin_main():
+    source = (ROOT / "Push.bat").read_text(encoding="utf-8")
+    lines = [line.strip() for line in source.splitlines()]
+
+    assert "git add ." not in lines
+    assert "git status --short" in source
+    assert "git diff --cached --quiet" in source
+    assert "No staged changes." in source
+    assert "git push origin main" in source
+
+
+def test_gitignore_excludes_codex_temp_folders():
+    source = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert ".codex_pytest_tmp/" in source
+    assert ".codex_run_tmp/" in source
+    assert ".codex_unit_tmp/" in source
+    assert "__pycache__/" in source
+    assert ".pytest_cache/" in source
 
 
 def test_after_call_regeneration_dirty_state_helpers():

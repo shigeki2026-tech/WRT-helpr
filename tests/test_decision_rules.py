@@ -1514,23 +1514,26 @@ def test_tc_call_type_is_hidden_in_call_form_but_internal_key_remains():
 def test_tc_call_line_options_from_csv():
     options = app.get_call_line_options()
     assert "ビックカメラ" in options
-    assert "住設業務" in options
+    assert "住設" in options
     assert "GIGA案件" not in options
 
 
 def test_tc_call_line_options_loaded():
     options = app.get_call_line_options()
     assert "ビックカメラ" in options
-    assert "住設業務" in options
+    assert "住設" in options
     assert "京阪不動産" in options
 
 
 def test_call_line_display_name_uses_home_appliance_business_and_alias_is_accepted():
     options = app.get_call_line_options()
 
-    assert "家電業務" in options
+    assert "家電" in options
     assert "家電保証対応業務（24時間）" not in options
-    assert app.normalize_call_line_for_display("家電保証対応業務（24時間）") == "家電業務"
+    assert app.normalize_call_line_for_display("家電保証対応業務（24時間）") == "家電"
+    assert app.normalize_call_line("家電業務") == "家電"
+    assert app.get_call_line_display_name("家電保証対応業務（24時間）") == "家電"
+    assert app.get_rakutel_line_name("家電保証対応業務（24時間）") == "家電"
     assert app.get_line_group("家電保証対応業務（24時間）") == "家電"
 
 
@@ -1546,7 +1549,38 @@ def test_auto_template_selection_accepts_old_call_line_alias():
         }
     ])
 
-    assert app._auto_select_template("家電業務", "出張修理", "自然故障", df_sample) == "【出張修理】自然故障"
+    assert app._auto_select_template("家電", "出張修理", "自然故障", df_sample) == "【出張修理】自然故障"
+
+
+def test_call_line_rakutel_header_uses_rakutel_line_name_not_display_sentence():
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
+    assert app.build_rakutel_call_header("家電業務", "受電") == "【家電回線に入電】"
+    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線に架電】"
+    assert app.build_rakutel_call_header("コーナン商事（家電）", "受電") == "【コーナン（家電）回線に入電】"
+
+
+def test_mach_yukako_aliases_normalize_to_correct_display_name():
+    assert app.normalize_call_line("マッハのユカコ") == "マッハユカコ"
+    assert app.normalize_call_line("マッハ・YUCACO") == "マッハユカコ"
+    assert app.normalize_call_line("YUCACO") == "マッハユカコ"
+    assert app.get_rakutel_line_name("YUCACO") == "マッハユカコ"
+
+
+def test_call_line_home_appliance_does_not_confuse_appliance_type():
+    form = make_form(
+        call_line="家電保証対応業務（24時間）",
+        appliance_type="家電",
+        product="洗濯機",
+        prefecture="東京都",
+    )
+
+    decision = app.run_decision(form)
+
+    assert app.normalize_call_line(form["call_line"]) == "家電"
+    assert form["appliance_type"] == "家電"
+    assert decision["working_form"]["call_line"] == "家電"
+    assert decision["working_form"]["appliance_type"] == "家電"
 
 
 def test_tc_bic_camera_call_line_vendor():

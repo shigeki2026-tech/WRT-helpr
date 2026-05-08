@@ -650,7 +650,7 @@ _STORE_RULE_COLS = [
 ]
 _CALL_LINE_COLS = [
     "priority", "enabled", "call_line", "line_group", "notes",
-    "call_line_code", "display_name", "aliases",
+    "call_line_code", "display_name", "rakutel_line_name", "aliases",
 ]
 _VENDOR_SEND_TEMPLATE_COLS = [
     "priority", "enabled", "template_code", "template_label", "repair_type",
@@ -986,9 +986,11 @@ def _upsert_master_csv_row(
 def upsert_master_call_line(row: dict, data_dir: str | None = None) -> dict:
     display_name = str(row.get("display_name") or row.get("call_line") or "").strip()
     call_line_code = str(row.get("call_line_code") or display_name or "").strip()
+    rakutel_line_name = str(row.get("rakutel_line_name") or display_name).strip()
     merged = dict(row)
     merged["call_line"] = str(row.get("call_line") or display_name).strip()
     merged["display_name"] = display_name
+    merged["rakutel_line_name"] = rakutel_line_name
     merged["call_line_code"] = call_line_code
     return _upsert_master_csv_row(
         "master_call_lines.csv",
@@ -1733,10 +1735,7 @@ def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
 
 
 def _rakutel_call_heading(form: dict) -> str:
-    line_label = normalize_call_line_for_display(form.get("call_line", "")) or _line_label_for_call_line(form.get("call_line", ""))
-    if _rakutel_call_direction(form) == "架電":
-        return f"【{line_label}から架電】"
-    return f"【{line_label}に入電】"
+    return build_rakutel_call_header(form.get("call_line", ""), _rakutel_call_direction(form))
 
 
 def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") -> str:
@@ -2535,7 +2534,7 @@ def _split_master_aliases(value: str) -> list[str]:
 
 def _call_line_row_names(row) -> list[str]:
     names = []
-    for col in ("display_name", "call_line"):
+    for col in ("display_name", "rakutel_line_name", "call_line"):
         value = str(row.get(col) or "").strip()
         if value:
             names.append(value)
@@ -2547,18 +2546,59 @@ def _call_line_display_name(row) -> str:
     return str(row.get("display_name") or row.get("call_line") or "").strip()
 
 
-def normalize_call_line_for_display(call_line: str) -> str:
+def _call_line_rakutel_name(row) -> str:
+    return str(row.get("rakutel_line_name") or row.get("display_name") or row.get("call_line") or "").strip()
+
+
+def _find_call_line_row(call_line: str) -> dict:
     value = (call_line or "").strip()
     if not value:
-        return ""
+        return {}
     df = load_call_lines()
     if df.empty:
-        return value
+        return {}
     folded = value.casefold()
     for _, row in df.iterrows():
         if any(name.casefold() == folded for name in _call_line_row_names(row)):
-            return _call_line_display_name(row) or value
+            return row.to_dict()
+    return {}
+
+
+def normalize_call_line(call_line: str) -> str:
+    return get_call_line_display_name(call_line)
+
+
+def get_call_line_display_name(call_line: str) -> str:
+    value = (call_line or "").strip()
+    if not value:
+        return ""
+    row = _find_call_line_row(value)
+    if row:
+        return _call_line_display_name(row) or value
     return value
+
+
+def normalize_call_line_for_display(call_line: str) -> str:
+    return get_call_line_display_name(call_line)
+
+
+def get_rakutel_line_name(call_line: str) -> str:
+    value = (call_line or "").strip()
+    if not value:
+        return ""
+    row = _find_call_line_row(value)
+    if row:
+        return _call_line_rakutel_name(row) or get_call_line_display_name(value)
+    return value
+
+
+def build_rakutel_call_header(call_line: str, call_direction: str = "受電") -> str:
+    rakutel_line_name = get_rakutel_line_name(call_line)
+    if not rakutel_line_name:
+        rakutel_line_name = _line_label_for_call_line(call_line).removesuffix("回線")
+    direction = call_direction if call_direction in ("受電", "架電") else "受電"
+    verb = "架電" if direction == "架電" else "入電"
+    return f"【{rakutel_line_name}回線に{verb}】"
 
 
 def call_line_master_values_match(master_value: str, call_line: str) -> bool:
@@ -6349,6 +6389,7 @@ def _render_call_line_master_edit_ui() -> None:
         "notes": st.text_input("notes", value=str(selected_row.get("notes", "") or ""), key="call_line_master_notes"),
         "call_line_code": st.text_input("call_line_code", value=str(selected_row.get("call_line_code", "") or ""), key="call_line_master_code"),
         "display_name": st.text_input("display_name", value=str(selected_row.get("display_name", "") or _call_line_display_name(selected_row)), key="call_line_master_display"),
+        "rakutel_line_name": st.text_input("rakutel_line_name", value=str(selected_row.get("rakutel_line_name", "") or _call_line_rakutel_name(selected_row)), key="call_line_master_rakutel"),
         "aliases": st.text_input("aliases（; 区切り）", value=str(selected_row.get("aliases", "") or ""), key="call_line_master_aliases"),
     }
     _preview_master_row(row, _CALL_LINE_COLS)

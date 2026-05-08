@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .env
 .pytest_cache/
+.codex_pytest_tmp/
+.codex_run_tmp/
 .codex_tmp/
 .codex_unit_tmp/
 .codex_test_deps/

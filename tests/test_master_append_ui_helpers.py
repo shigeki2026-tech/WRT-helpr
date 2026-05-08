@@ -364,6 +364,7 @@ def test_call_line_master_upsert_updates_row_and_creates_backup(monkeypatch):
             "notes": "",
             "call_line_code": "home_appliance",
             "display_name": "家電保証対応業務（24時間）",
+            "rakutel_line_name": "家電保証対応業務（24時間）",
             "aliases": "",
         }],
     )
@@ -378,7 +379,8 @@ def test_call_line_master_upsert_updates_row_and_creates_backup(monkeypatch):
             "line_group": "家電",
             "notes": "旧表示名から変更",
             "call_line_code": "home_appliance",
-            "display_name": "家電業務",
+            "display_name": "家電",
+            "rakutel_line_name": "家電",
             "aliases": "家電保証対応業務（24時間）;家電保証対応業務",
         },
         data_dir=str(data_dir),
@@ -386,7 +388,8 @@ def test_call_line_master_upsert_updates_row_and_creates_backup(monkeypatch):
 
     rows = _read_rows(path)
     assert result["ok"] is True
-    assert rows[0]["display_name"] == "家電業務"
+    assert rows[0]["display_name"] == "家電"
+    assert rows[0]["rakutel_line_name"] == "家電"
     assert "家電保証対応業務（24時間）" in rows[0]["aliases"]
     assert os.path.exists(result["backup_path"])
     clear_mock.assert_called_once()
@@ -421,6 +424,7 @@ def test_master_ui_has_call_line_and_vendor_template_editors():
     source = Path(app.__file__).read_text(encoding="utf-8")
 
     assert "回線名マスタ編集" in source
+    assert "rakutel_line_name" in source
     assert "テンプレート編集" in source
     assert "業者送付コードテンプレートを編集" in source
 
