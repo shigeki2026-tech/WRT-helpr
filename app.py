@@ -337,7 +337,7 @@ def _is_supplemental_question(text: str) -> bool:
 
 HEARING_UNSELECTED = "未選択"
 OCCURRENCE_TIME_OPTIONS = [HEARING_UNSELECTED, "本日", "昨日", "数日前", "1週間前", "購入直後", "不明"]
-OCCURRENCE_FREQUENCY_OPTIONS = [HEARING_UNSELECTED, "常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明"]
+OCCURRENCE_FREQUENCY_OPTIONS = [HEARING_UNSELECTED, "継続中", "常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明"]
 
 _SELECT_WITH_OTHER_OPTIONS: dict[str, list[str]] = {
     "occurrence_time": OCCURRENCE_TIME_OPTIONS,
@@ -578,6 +578,22 @@ def resolve_occurrence_time(form: dict) -> str:
 
 def resolve_occurrence_frequency(form: dict) -> str:
     return get_hearing_value(form, "occurrence_frequency")
+
+
+def sync_hearing_widget_state_to_form(form: dict, session_state=None) -> dict:
+    state = session_state if session_state is not None else st.session_state
+    if "call_hearing_symptom_detail" in state:
+        form["symptom_detail"] = str(state.get("call_hearing_symptom_detail") or "")
+    for field_name in ("occurrence_time", "occurrence_frequency"):
+        choice_key = f"call_hearing_{field_name}_choice"
+        text_key = f"call_hearing_{field_name}_text"
+        if choice_key in state:
+            form[f"{field_name}_choice"] = str(state.get(choice_key) or "")
+        if text_key in state:
+            form[f"{field_name}_text"] = str(state.get(text_key) or "")
+        if choice_key in state or text_key in state:
+            form[field_name] = get_hearing_value(form, field_name)
+    return form
 
 
 def _display_value_for_fields(form: dict, fields: tuple[str, ...]) -> str:
@@ -5211,10 +5227,13 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
         key=text_key,
         placeholder=placeholder,
     )
+    form[f"{field_name}_choice"] = selected
+    form[f"{field_name}_text"] = typed
     return _resolve_choice_text_value(selected, typed)
 
 
 def render_call_hearing_inputs(form: dict) -> None:
+    sync_hearing_widget_state_to_form(form)
     st.markdown("### 📋 聴取内容（注意内容メモ反映）")
     form["symptom_detail"] = st.text_area(
         "具体的な症状",
@@ -5582,6 +5601,7 @@ def render_tab_call():
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
             form["phone_number"]  = st.text_input("電話番号",     form.get("phone_number",""))
+            sync_hearing_widget_state_to_form(form)
             hearing_summary_lines = build_hearing_summary_lines(form)
             st.markdown("##### 聴取内容まとめ")
             for line in hearing_summary_lines:

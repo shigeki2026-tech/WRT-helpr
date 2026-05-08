@@ -397,8 +397,13 @@ def test_occurrence_time_options_include_predefined():
 
 def test_occurrence_frequency_options_include_predefined():
     """発生頻度の選択肢に主要な候補が含まれる。"""
-    for expected in ["常時", "時々", "初回のみ", "不明"]:
+    for expected in ["継続中", "常時", "時々", "初回のみ", "不明"]:
         assert expected in app.OCCURRENCE_FREQUENCY_OPTIONS, f"'{expected}' が OCCURRENCE_FREQUENCY_OPTIONS にない"
+
+
+def test_occurrence_frequency_keizokuchu_is_after_unselected():
+    """発生頻度の「継続中」は未選択の次に置く。"""
+    assert app.OCCURRENCE_FREQUENCY_OPTIONS[:2] == ["未選択", "継続中"]
 
 
 def test_occurrence_time_check_item_uses_hearing_choice_text():
@@ -484,6 +489,23 @@ def test_occurrence_choice_text_values_remove_now_action_missing_items():
     assert "発生頻度" not in [item["label"] for item in plan["call_required"]]
     assert "発生時期：前回修理後から" in [app.format_completed_check_item(item, form) for item in plan["completed"]]
     assert "発生頻度：使用中だけ" in [app.format_completed_check_item(item, form) for item in plan["completed"]]
+
+
+def test_occurrence_frequency_choice_value_removed_from_required_checklist():
+    form = app.empty_form()
+    form.update({
+        "occurrence_frequency_choice": "再発",
+        "occurrence_frequency_text": "",
+    })
+
+    categories = app.build_question_categories(
+        form,
+        repair_type="持込修理",
+        needs_data_erase=False,
+        guidance_items=["発生頻度"],
+    )
+
+    assert "発生頻度" not in [item["label"] for item in categories["call_required"]]
 
 
 def test_attention_memo_preview_uses_occurrence_free_text_values():
@@ -615,6 +637,73 @@ def test_hearing_summary_lines_include_call_inputs():
         "発生頻度：常時",
         "設置場所：キッチン",
         "訪問先住所：埼玉県朝霞市幸町２－１８－２７",
+    ]
+
+
+def test_hearing_summary_lines_use_occurrence_frequency_choice_value():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "電源が付かない",
+        "occurrence_time_choice": "本日",
+        "occurrence_time_text": "",
+        "occurrence_frequency_choice": "再発",
+        "occurrence_frequency_text": "",
+        "address": "兵庫県宝塚市逆瀬川2丁目9-8",
+    })
+
+    assert "発生頻度：再発" in app.build_hearing_summary_lines(form)
+
+
+def test_hearing_summary_lines_use_occurrence_frequency_keizokuchu_choice_value():
+    form = app.empty_form()
+    form.update({
+        "occurrence_frequency_choice": "継続中",
+        "occurrence_frequency_text": "",
+    })
+
+    assert "発生頻度：継続中" in app.build_hearing_summary_lines(form)
+
+
+def test_hearing_summary_lines_use_occurrence_frequency_free_text_value():
+    form = app.empty_form()
+    form.update({
+        "occurrence_frequency_choice": "再発",
+        "occurrence_frequency_text": "朝だけ",
+    })
+
+    assert "発生頻度：朝だけ" in app.build_hearing_summary_lines(form)
+
+
+def test_attention_preview_and_hearing_summary_share_resolved_frequency_value():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "電源が付かない",
+        "occurrence_time_choice": "本日",
+        "occurrence_time_text": "",
+        "occurrence_frequency_choice": "再発",
+        "occurrence_frequency_text": "",
+    })
+
+    assert "発生頻度：再発" in app.build_attention_memo_preview_lines(form)
+    assert "発生頻度：再発" in app.build_hearing_summary_lines(form)
+
+
+def test_sync_hearing_widget_state_updates_summary_before_inputs_render():
+    form = app.empty_form()
+    state = {
+        "call_hearing_symptom_detail": "電源が付かない",
+        "call_hearing_occurrence_time_choice": "本日",
+        "call_hearing_occurrence_time_text": "",
+        "call_hearing_occurrence_frequency_choice": "再発",
+        "call_hearing_occurrence_frequency_text": "",
+    }
+
+    app.sync_hearing_widget_state_to_form(form, state)
+
+    assert app.build_hearing_summary_lines(form)[:3] == [
+        "具体的な症状：電源が付かない",
+        "発生時期：本日",
+        "発生頻度：再発",
     ]
 
 
