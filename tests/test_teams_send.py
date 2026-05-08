@@ -347,6 +347,21 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
     assert "<b>" not in lines[0]
 
 
+def test_rakutel_header_never_generates_blank_line_name():
+    assert app.build_rakutel_call_header("", "受電") != "【回線に入電】"
+    assert app.build_rakutel_call_header("", "受電") == "【未選択回線に入電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
+    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
+
+
+def test_rakutel_text_does_not_generate_blank_line_header():
+    form = app.empty_form()
+
+    text = app._build_rakutel_text(form, "加入者", "")
+
+    assert "【回線に入電】" not in text
+
+
 def test_teams_chat_message_is_plain_text_before_send():
     form = app.empty_form()
     form.update({
@@ -491,6 +506,34 @@ def test_teams_send_validation_blocks_drive_url_in_body():
     )
 
     assert any("Drive URL" in error for error in errors)
+
+
+def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
+    form = {
+        "rakuteru_no": "",
+        "teams_chat_message": "2026_05_0174\n家電回線\nドライヤー",
+    }
+    config = {"enabled": False, "chat_id": ""}
+
+    reasons = app.build_teams_send_incomplete_reasons(
+        form,
+        config,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=False,
+        vendor="WRT修理センター",
+    )
+
+    assert "config/teams_config.json が未作成、または enabled=false" in reasons
+    assert "chat_id が未設定" in reasons
+    assert "楽テルNO未入力" in reasons
+    assert "PDF格納チェック未完了" in reasons
+    assert app.teams_send_status_label(reasons, already_sent=False) == "送信不可"
+
+
+def test_teams_send_panel_status_sendable_and_sent():
+    assert app.teams_send_status_label([], already_sent=False) == "送信可能"
+    assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
 
 
 def test_escalation_teams_message_uses_confirmation_request_not_pdf_storage():
@@ -1128,6 +1171,50 @@ def test_teams_area_source_does_not_render_drive_link():
     assert "依頼書PDF格納先" not in teams_area
 
 
+def test_teams_auto_send_panel_heading_exists():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "##### 💬 Teams自動送信" in source
+    assert "##### 🚀 Teams送信" in source
+
+
+def test_teams_report_and_send_have_separate_headings():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    report_index = source.index("##### 💬 Teams 報告文")
+    send_index = source.index("##### 🚀 Teams送信")
+
+    assert report_index < send_index
+
+
+def test_teams_send_unavailable_reasons_are_rendered_in_one_place():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert after_source.count('st.markdown("**未完了：**")') == 1
+    assert "build_teams_send_incomplete_reasons" in after_source
+    assert "楽テルNOが未入力です。" not in after_source
+    assert "設定未完了のため送信できません" not in after_source
+
+
+def test_teams_send_disabled_message_is_specific():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "**Teams送信：{'有効' if teams_enabled else '無効'}**" in source
+    assert "config/teams_config.json が未作成、または enabled=false" in source
+    assert "chat_id が未設定" in source
+    assert "送信スクリプトが利用できない" in source
+
+
+def test_teams_send_panel_status_labels_exist():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "送信不可" in source
+    assert "送信可能" in source
+    assert "送信済み" in source
+
+
 def test_dp_rakutel_text_includes_guarantee_amount_confirmation():
     form = app.empty_form()
     form.update({
@@ -1593,15 +1680,16 @@ def test_nav_no_pill_radio_css():
 
 # ── 楽テルNO 移動テスト (Session 4) ──
 
-def test_rakuteru_no_input_in_teams_section():
+def test_rakuteru_no_input_in_teams_send_section():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     teams_heading_index = source.index("##### 💬 Teams 報告文")
+    teams_send_index = source.index("##### 🚀 Teams送信", teams_heading_index)
     # Search for the widget by its unique key, which only exists at the widget definition
-    rakuteru_no_index = source.index('key="rakuteru_no_input"', teams_heading_index)
+    rakuteru_no_index = source.index('key="rakuteru_no_input"', teams_send_index)
     teams_textarea_index = source.index('"Teams報告文"', teams_heading_index)
 
-    assert teams_heading_index < rakuteru_no_index < teams_textarea_index
+    assert teams_heading_index < teams_textarea_index < teams_send_index < rakuteru_no_index
 
 
 def test_rakuteru_no_not_in_template_col1():

@@ -2042,6 +2042,19 @@ def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dic
     return bool(teams_enabled and confirmed and pdf_storage_confirmed and _get_teams_send_body(form))
 
 
+def teams_config_unavailable_reasons(config: dict) -> list[str]:
+    reasons = []
+    if not os.path.exists(TEAMS_CONFIG_PATH) or not config.get("enabled"):
+        reasons.append("config/teams_config.json が未作成、または enabled=false")
+    if not (config.get("chat_id") or "").strip():
+        reasons.append("chat_id が未設定")
+    if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
+        reasons.append("送信スクリプトが利用できない")
+    if config.get("error"):
+        reasons.append(str(config["error"]))
+    return reasons
+
+
 def _teams_case_already_sent(session_state, form: dict) -> bool:
     message = (form.get("teams_chat_message") or "").strip()
     return bool(
@@ -2095,6 +2108,51 @@ def validate_teams_send_request(
     if "drive.google.com" in message.lower():
         errors.append("Teams本文にDrive URLが含まれています。URLを削除してください。")
     return errors
+
+
+def build_teams_send_incomplete_reasons(
+    form: dict,
+    teams_config: dict,
+    send_confirmed: bool,
+    action_confirmed: bool,
+    pdf_storage_confirmed: bool,
+    vendor: str,
+    contact_type: str = "",
+) -> list[str]:
+    reasons = []
+    reasons.extend(teams_config_unavailable_reasons(teams_config))
+
+    message = (form.get("teams_chat_message") or "").strip()
+    vendor_text = (vendor or "").strip()
+    if not message:
+        reasons.append("Teams報告文が空")
+    if not (form.get("rakuteru_no") or "").strip():
+        reasons.append("楽テルNO未入力")
+    if not resolve_teams_request_action(form, vendor, contact_type):
+        reasons.append("Teams報告アクション未入力")
+    if get_request_pdf_folder_info(vendor_text).get("required") and not pdf_storage_confirmed:
+        reasons.append("PDF格納チェック未完了")
+    if not send_confirmed:
+        reasons.append("送信内容確認未完了")
+    if not action_confirmed:
+        reasons.append("Teams報告アクション確定未完了")
+    if "drive.google.com" in message.lower():
+        reasons.append("Teams本文にDrive URLが含まれています")
+    if "担当エスカ" in vendor_text or "要確認" in vendor_text:
+        if "依頼書PDF格納済み" in message:
+            reasons.append("担当エスカ案件のTeams本文が依頼書PDF格納済み")
+        if "担当確認依頼済み" not in message and "担当確認" not in message:
+            reasons.append("担当エスカ案件のTeams本文が担当確認依頼済みではない")
+
+    return list(dict.fromkeys(reasons))
+
+
+def teams_send_status_label(incomplete_reasons: list[str], already_sent: bool) -> str:
+    if already_sent:
+        return "送信済み"
+    if incomplete_reasons:
+        return "送信不可"
+    return "送信可能"
 
 
 def load_local_user_settings(path: str | None = None) -> dict:
@@ -2738,6 +2796,8 @@ def build_rakutel_call_header(call_line: str, call_direction: str = "受電") ->
     rakutel_line_name = get_rakutel_line_name(call_line)
     if not rakutel_line_name:
         rakutel_line_name = _line_label_for_call_line(call_line).removesuffix("回線")
+    if not rakutel_line_name:
+        rakutel_line_name = "未選択"
     direction = call_direction if call_direction in ("受電", "架電") else "受電"
     verb = "架電" if direction == "架電" else "入電"
     return f"【{rakutel_line_name}回線に{verb}】"
@@ -5884,6 +5944,29 @@ def render_tab_call():
                 ])
             )
 
+        stop_conditions = []
+        if other_warning:
+            stop_conditions.append("他窓口へ修理依頼済み=あり")
+        if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):
+            stop_conditions.append("拠点未確定")
+        if warranty_status == "unknown":
+            stop_conditions.append("保証期間未確認")
+        st.markdown("### ⛔ 手配前に止める条件")
+        if stop_conditions:
+            st.markdown("\n".join(f"- {item}" for item in stop_conditions))
+        else:
+            st.caption("現時点で手配前に止める条件はありません")
+
+        st.markdown("### 🕓 終話後でよい")
+        after_call_items = question_categories.get("after_call", [])
+        if after_call_items:
+            st.markdown("\n".join(
+                f"- {item['label'] if isinstance(item, dict) else item}"
+                for item in after_call_items
+            ))
+        else:
+            st.caption("終話後に回せる確認事項はありません")
+
         if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):  # UI v3
             esc = build_vendor_escalation_info(vendor, vendor_result)
             drive_line = ""
@@ -6082,7 +6165,8 @@ def render_tab_after_call():
             else:
                 st.warning("オペレーター名が空のため、既定値も空で保存しました。")
         st.session_state.form = form
-        st.markdown("##### 📋 テンプレート（業者送付コード）")
+        st.markdown("##### 📋 送付テンプレート・拠点")
+        st.markdown("###### 業者送付コード")
         df_tpl = load_template_codes()
         call_line_val = form.get("call_line", "")
         repair_type_val = decision["repair_type"]
@@ -6166,10 +6250,11 @@ def render_tab_after_call():
         if request_folder.get("required"):
             if vendor_card.get("arrangement_method"):
                 st.caption(f"手配方法：{vendor_card['arrangement_method']}")
+            st.markdown("###### Drive格納先リンク")
             st.caption("依頼書PDF格納先：")
             st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
 
-        st.markdown("##### 📋 手配方法・連絡先")
+        st.markdown("###### 手配方法・連絡先")
         st.markdown(
             """| 拠点 | 手配方法 | 連絡先 |
 |------|----------|--------|
@@ -6192,6 +6277,13 @@ def render_tab_after_call():
 
         caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
         contact_type = decision["vendor_result"].get("contact_type", "")
+        if "rakuteru_no_input" in st.session_state:
+            form["rakuteru_no"] = st.session_state.get("rakuteru_no_input", "")
+        if "teams_action_input" in st.session_state:
+            form["teams_action"] = st.session_state.get("teams_action_input", "")
+        st.session_state.form = form
+
+        st.markdown("##### 📝 記録文")
 
         # ── 注意内容メモ（備考欄反映）──
         st.markdown("##### 📝 注意内容メモ")
@@ -6275,28 +6367,10 @@ def render_tab_after_call():
 
         # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
-        rakuteru_val = st.text_input(
-            "楽テルNO",
-            value=form.get("rakuteru_no", ""),
-            key="rakuteru_no_input",
-            placeholder="楽テル登録後に入力",
-        )
-        form["rakuteru_no"] = rakuteru_val
-        st.session_state.form = form
-        form["teams_action"] = st.text_input(
-            "Teams報告アクション（手入力優先）",
-            value=form.get("teams_action", ""),
-            placeholder=resolve_teams_request_action(form, vendor, contact_type),
-            key="teams_action_input",
-        )
-        st.session_state.form = form
-        request_folder = get_request_pdf_folder_info(vendor)
         generated_teams_message = _build_teams_chat_message(form, vendor, contact_type)
         teams_hash = get_after_call_regeneration_hash(
             form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
-        if not (form.get("rakuteru_no") or "").strip():
-            st.warning("楽テルNOが未入力です。")
         if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
             st.warning("基本項目が変更されています。Teams報告文を再生成してください。")
         if st.button("Teams報告文を再生成", key="regenerate_teams_chat_message", use_container_width=True):
@@ -6314,17 +6388,64 @@ def render_tab_after_call():
         render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")
         st.session_state.form = form
 
+        st.markdown("##### 💬 Teams自動送信")
+        st.markdown("##### 🚀 Teams送信")
+        rakuteru_val = st.text_input(
+            "楽テルNO",
+            value=form.get("rakuteru_no", ""),
+            key="rakuteru_no_input",
+            placeholder="楽テル登録後に入力",
+        )
+        form["rakuteru_no"] = rakuteru_val
+        st.session_state.form = form
+        form["teams_action"] = st.text_input(
+            "Teams報告アクション（手入力優先）",
+            value=form.get("teams_action", ""),
+            placeholder=resolve_teams_request_action(form, vendor, contact_type),
+            key="teams_action_input",
+        )
+        st.session_state.form = form
+        request_folder = get_request_pdf_folder_info(vendor)
         teams_config = load_teams_config()
         teams_enabled = bool(teams_config.get("enabled") and teams_config.get("chat_id"))
         chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
-        st.caption(f"送信先：{chat_name}")
-        st.caption(f"Teams送信：{'有効' if teams_enabled else '無効'}")
-        if not teams_config.get("chat_id"):
-            st.warning("設定未完了のため送信できません")
-        if teams_config.get("error"):
-            st.error(teams_config["error"])
 
         pdf_storage_confirmed = True
+        if request_folder.get("required"):
+            pdf_storage_confirmed = bool(st.session_state.get("request_pdf_storage_confirmed", False))
+        confirmed = bool(st.session_state.get("teams_send_confirmed", False))
+        action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
+        effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+        already_sent = _teams_case_already_sent(st.session_state, form)
+        incomplete_reasons = build_teams_send_incomplete_reasons(
+            form,
+            teams_config,
+            confirmed,
+            action_confirmed,
+            pdf_storage_confirmed,
+            vendor,
+            contact_type,
+        )
+        send_status = teams_send_status_label(incomplete_reasons, already_sent)
+        st.markdown(f"**送信先：** {chat_name}")
+        st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
+        if send_status == "送信可能":
+            st.success(f"状態：{send_status}")
+        elif send_status == "送信済み":
+            st.info(f"状態：{send_status}")
+        else:
+            st.warning(f"状態：{send_status}")
+        if incomplete_reasons:
+            st.markdown("**未完了：**")
+            st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
+        else:
+            st.success("未完了項目はありません。送信可能です。")
+        if not teams_enabled:
+            st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
+        if already_sent:
+            sent_at = st.session_state.get("teams_sent_at") or "日時不明"
+            st.warning(f"すでに送信済みです（{sent_at}）。再送する場合のみ実行してください。")
+        st.markdown("**送信前チェック：**")
         if request_folder.get("required"):
             pdf_storage_confirmed = st.checkbox(
                 "依頼書PDFを指定フォルダへ格納しました",
@@ -6338,11 +6459,6 @@ def render_tab_after_call():
             "Teams報告アクションを確定しました",
             key="teams_action_confirmed",
         )
-        effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        already_sent = _teams_case_already_sent(st.session_state, form)
-        if already_sent:
-            sent_at = st.session_state.get("teams_sent_at") or "日時不明"
-            st.warning(f"すでに送信済みです（{sent_at}）。再送する場合のみ実行してください。")
 
         def run_teams_send(allow_resend: bool = False):
             validation_errors = validate_teams_send_request(
@@ -6355,8 +6471,7 @@ def render_tab_after_call():
                 contact_type,
             )
             if validation_errors:
-                for error in validation_errors:
-                    st.warning(error)
+                st.warning("未完了項目があります。Teams自動送信パネルの未完了一覧を確認してください。")
                 return
             if already_sent and not allow_resend:
                 st.warning("すでに送信済みです。再送する場合のみ実行してください。")
@@ -6670,6 +6785,7 @@ def render_tab_master():
 """,
         unsafe_allow_html=True,
     )
+    st.markdown("##### キャッシュ")
     st.info(
         "CSVを編集してStreamlitをリロードすると反映されます。\n"
         "CSV更新後に古い判定が残る場合は、下の「CSVキャッシュをクリア」を押してください。"
@@ -6679,8 +6795,11 @@ def render_tab_master():
         st.success("CSVキャッシュをクリアしました。")
         st.rerun()
 
+    st.markdown("##### 不足マスタ候補")
     _render_master_candidate_box()
 
+    st.markdown("##### CSV編集")
+    st.caption("デバッグ/レガシー用途のCSVは、各タブ内で折りたたみながら整理していきます。")
     master_tabs = st.tabs([
         "製品エイリアス", "修理形態ルール", "概算費用ルール",
         "修理拠点ルール", "テンプレートコード", "販売店テンプレート", "回線名マスタ",
