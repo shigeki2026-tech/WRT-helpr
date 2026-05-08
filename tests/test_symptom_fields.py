@@ -377,14 +377,16 @@ def test_occurrence_frequency_options_constant_exists():
     assert isinstance(app.OCCURRENCE_FREQUENCY_OPTIONS, list)
 
 
-def test_occurrence_time_options_include_sono_ta():
-    """発生時期の選択肢に「その他」が含まれる。"""
-    assert "その他" in app.OCCURRENCE_TIME_OPTIONS
+def test_occurrence_time_options_do_not_include_sono_ta():
+    """発生時期は常時任意入力欄があるため「その他」を使わない。"""
+    assert "その他" not in app.OCCURRENCE_TIME_OPTIONS
+    assert app.OCCURRENCE_TIME_OPTIONS[0] == "未選択"
 
 
-def test_occurrence_frequency_options_include_sono_ta():
-    """発生頻度の選択肢に「その他」が含まれる。"""
-    assert "その他" in app.OCCURRENCE_FREQUENCY_OPTIONS
+def test_occurrence_frequency_options_do_not_include_sono_ta():
+    """発生頻度は常時任意入力欄があるため「その他」を使わない。"""
+    assert "その他" not in app.OCCURRENCE_FREQUENCY_OPTIONS
+    assert app.OCCURRENCE_FREQUENCY_OPTIONS[0] == "未選択"
 
 
 def test_occurrence_time_options_include_predefined():
@@ -399,37 +401,130 @@ def test_occurrence_frequency_options_include_predefined():
         assert expected in app.OCCURRENCE_FREQUENCY_OPTIONS, f"'{expected}' が OCCURRENCE_FREQUENCY_OPTIONS にない"
 
 
-def test_occurrence_time_check_item_uses_select_with_other():
-    """CHECK_ITEM_DEFINITIONS の発生時期が select_with_other 型を使う。"""
+def test_occurrence_time_check_item_uses_hearing_choice_text():
+    """CHECK_ITEM_DEFINITIONS の発生時期が選択肢+任意入力型を使う。"""
     defn = app.CHECK_ITEM_DEFINITIONS.get("発生時期", {})
-    assert defn.get("input") == "select_with_other", \
-        f"expected 'select_with_other', got {defn.get('input')!r}"
+    assert defn.get("input") == "hearing_choice_text", \
+        f"expected 'hearing_choice_text', got {defn.get('input')!r}"
 
 
-def test_occurrence_frequency_check_item_uses_select_with_other():
-    """CHECK_ITEM_DEFINITIONS の発生頻度が select_with_other 型を使う。"""
+def test_occurrence_frequency_check_item_uses_hearing_choice_text():
+    """CHECK_ITEM_DEFINITIONS の発生頻度が選択肢+任意入力型を使う。"""
     defn = app.CHECK_ITEM_DEFINITIONS.get("発生頻度", {})
-    assert defn.get("input") == "select_with_other", \
-        f"expected 'select_with_other', got {defn.get('input')!r}"
+    assert defn.get("input") == "hearing_choice_text", \
+        f"expected 'hearing_choice_text', got {defn.get('input')!r}"
 
 
 def test_select_with_other_options_lookup_for_occurrence_time():
     """_SELECT_WITH_OTHER_OPTIONS に occurrence_time が含まれる。"""
     opts = app._SELECT_WITH_OTHER_OPTIONS.get("occurrence_time", [])
     assert opts, "occurrence_time の選択肢が未定義"
-    assert "その他" in opts
+    assert "未選択" in opts
+    assert "その他" not in opts
 
 
 def test_select_with_other_options_lookup_for_occurrence_frequency():
     """_SELECT_WITH_OTHER_OPTIONS に occurrence_frequency が含まれる。"""
     opts = app._SELECT_WITH_OTHER_OPTIONS.get("occurrence_frequency", [])
     assert opts, "occurrence_frequency の選択肢が未定義"
-    assert "その他" in opts
+    assert "未選択" in opts
+    assert "その他" not in opts
 
 
 # ============================================================
 # 注意内容メモ反映予定プレビュー（build_vendor_send_template_context 経由）
 # ============================================================
+
+def test_occurrence_time_free_text_takes_priority_over_choice():
+    form = {"occurrence_time_choice": "昨日", "occurrence_time_text": "2〜3日前から"}
+
+    assert app.resolve_occurrence_time(form) == "2〜3日前から"
+
+
+def test_occurrence_frequency_free_text_takes_priority_over_choice():
+    form = {"occurrence_frequency_choice": "常時", "occurrence_frequency_text": "朝だけ"}
+
+    assert app.resolve_occurrence_frequency(form) == "朝だけ"
+
+
+def test_occurrence_time_choice_used_when_free_text_is_blank():
+    form = {"occurrence_time_choice": "購入直後", "occurrence_time_text": ""}
+
+    assert app.resolve_occurrence_time(form) == "購入直後"
+
+
+def test_occurrence_frequency_choice_used_when_free_text_is_blank():
+    form = {"occurrence_frequency_choice": "再発", "occurrence_frequency_text": ""}
+
+    assert app.resolve_occurrence_frequency(form) == "再発"
+
+
+def test_occurrence_unselected_and_blank_text_resolve_to_blank():
+    assert app.resolve_occurrence_time({"occurrence_time_choice": "未選択", "occurrence_time_text": ""}) == ""
+    assert app.resolve_occurrence_frequency({"occurrence_frequency_choice": "未選択", "occurrence_frequency_text": ""}) == ""
+
+
+def test_occurrence_choice_text_values_remove_now_action_missing_items():
+    form = app.empty_form()
+    form.update({
+        "occurrence_time_choice": "本日",
+        "occurrence_time_text": "前回修理後から",
+        "occurrence_frequency_choice": "常時",
+        "occurrence_frequency_text": "使用中だけ",
+    })
+
+    plan = app.build_now_action_plan(
+        form,
+        repair_type="持込修理",
+        needs_data_erase=False,
+        guidance_items=["発生時期", "発生頻度"],
+    )
+
+    assert "発生時期" not in [item["label"] for item in plan["call_required"]]
+    assert "発生頻度" not in [item["label"] for item in plan["call_required"]]
+    assert "発生時期：前回修理後から" in [app.format_completed_check_item(item, form) for item in plan["completed"]]
+    assert "発生頻度：使用中だけ" in [app.format_completed_check_item(item, form) for item in plan["completed"]]
+
+
+def test_attention_memo_preview_uses_occurrence_free_text_values():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "電源が付かない",
+        "occurrence_time_choice": "購入直後",
+        "occurrence_time_text": "",
+        "occurrence_frequency_choice": "常時",
+        "occurrence_frequency_text": "継続中",
+    })
+
+    assert app.build_attention_memo_preview_lines(form) == [
+        "具体的な症状：電源が付かない",
+        "発生時期：購入直後",
+        "発生頻度：継続中",
+    ]
+
+
+def test_attention_memo_regeneration_uses_occurrence_free_text_values():
+    form = app.empty_form()
+    form.update({
+        "template_code": "0009",
+        "template_label": "【出張修理】自然故障",
+        "symptom_detail": "電源が付かない",
+        "occurrence_time_choice": "昨日",
+        "occurrence_time_text": "2〜3日前から",
+        "occurrence_frequency_choice": "時々",
+        "occurrence_frequency_text": "朝だけ",
+    })
+
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "WRT修理センター",
+    )
+
+    assert "発生時期：2〜3日前から" in memo
+    assert "発生頻度：朝だけ" in memo
+
 
 def test_preview_all_three_appear_in_template_context():
     """3項目がテンプレートコンテキストに含まれ、プレビューとして利用できる。"""
@@ -601,9 +696,11 @@ def test_call_hearing_block_owns_stable_widget_keys():
 
     assert 'key="call_hearing_symptom_detail"' in hearing_source
     assert 'choice_key="call_hearing_occurrence_time_choice"' in hearing_source
-    assert 'other_key="call_hearing_occurrence_time_other"' in hearing_source
+    assert 'text_key="call_hearing_occurrence_time_text"' in hearing_source
     assert 'choice_key="call_hearing_occurrence_frequency_choice"' in hearing_source
-    assert 'other_key="call_hearing_occurrence_frequency_other"' in hearing_source
+    assert 'text_key="call_hearing_occurrence_frequency_text"' in hearing_source
+    assert 'key="call_hearing_occurrence_time_text"' in hearing_source
+    assert 'key="call_hearing_occurrence_frequency_text"' in hearing_source
 
 
 def test_call_hearing_block_renders_before_now_action():
@@ -714,10 +811,10 @@ def test_case_clear_removes_call_hearing_widget_state():
     state = {
         "form": app.empty_form(),
         "call_hearing_symptom_detail": "故障",
-        "call_hearing_occurrence_time_choice": "その他",
-        "call_hearing_occurrence_time_other": "昨日の夜",
+        "call_hearing_occurrence_time_choice": "本日",
+        "call_hearing_occurrence_time_text": "昨日の夜",
         "call_hearing_occurrence_frequency_choice": "常時",
-        "call_hearing_occurrence_frequency_other": "",
+        "call_hearing_occurrence_frequency_text": "",
     }
 
     app.reset_case_session_state(state)

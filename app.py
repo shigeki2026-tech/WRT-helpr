@@ -335,8 +335,9 @@ def _is_supplemental_question(text: str) -> bool:
     ))
 
 
-OCCURRENCE_TIME_OPTIONS = ["本日", "昨日", "数日前", "1週間前", "購入直後", "不明", "その他"]
-OCCURRENCE_FREQUENCY_OPTIONS = ["常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明", "その他"]
+HEARING_UNSELECTED = "未選択"
+OCCURRENCE_TIME_OPTIONS = [HEARING_UNSELECTED, "本日", "昨日", "数日前", "1週間前", "購入直後", "不明"]
+OCCURRENCE_FREQUENCY_OPTIONS = [HEARING_UNSELECTED, "常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明"]
 
 _SELECT_WITH_OTHER_OPTIONS: dict[str, list[str]] = {
     "occurrence_time": OCCURRENCE_TIME_OPTIONS,
@@ -354,13 +355,13 @@ CHECK_ITEM_DEFINITIONS = {
     "発生時期": {
         "id": "occurrence_time",
         "fields": ("occurrence_time",),
-        "input": "select_with_other",
+        "input": "hearing_choice_text",
         "label": "発生時期",
     },
     "発生頻度": {
         "id": "occurrence_frequency",
         "fields": ("occurrence_frequency",),
-        "input": "select_with_other",
+        "input": "hearing_choice_text",
         "label": "発生頻度",
     },
     "設置場所": {
@@ -416,6 +417,8 @@ def _manual_check_done(manual_check: dict | None, item_id: str) -> bool:
 
 
 def _form_field_done(form: dict, field: str) -> bool:
+    if field in ("occurrence_time", "occurrence_frequency"):
+        return bool(get_hearing_value(form, field))
     value = form.get(field)
     if field == "other_repair_requested":
         return str(value or "").strip() in ("なし", "あり")
@@ -547,10 +550,40 @@ HEARING_INPUT_PROMPTS = {
 }
 
 
+def _resolve_choice_text_value(choice: str = "", text: str = "") -> str:
+    typed = str(text or "").strip()
+    selected = str(choice or "").strip()
+    if typed:
+        return typed
+    if selected and selected != HEARING_UNSELECTED:
+        return selected
+    return ""
+
+
+def get_hearing_value(form: dict, field_name: str) -> str:
+    if field_name == "symptom_detail":
+        return str(form.get("symptom_detail") or "").strip()
+    if field_name in ("occurrence_time", "occurrence_frequency"):
+        choice = form.get(f"{field_name}_choice", "")
+        text = form.get(f"{field_name}_text", "")
+        resolved = _resolve_choice_text_value(choice, text)
+        if resolved:
+            return resolved
+    return str(form.get(field_name) or "").strip()
+
+
+def resolve_occurrence_time(form: dict) -> str:
+    return get_hearing_value(form, "occurrence_time")
+
+
+def resolve_occurrence_frequency(form: dict) -> str:
+    return get_hearing_value(form, "occurrence_frequency")
+
+
 def _display_value_for_fields(form: dict, fields: tuple[str, ...]) -> str:
     values = []
     for field in fields:
-        value = str(form.get(field) or "").strip()
+        value = get_hearing_value(form, field) if field in HEARING_INPUT_FIELD_IDS else str(form.get(field) or "").strip()
         if value:
             values.append(value)
     return " / ".join(values)
@@ -568,14 +601,14 @@ def format_completed_check_item(item: dict, form: dict) -> str:
 
 def build_hearing_summary_lines(form: dict) -> list[str]:
     return [
-        f"{label}：{str(form.get(field) or '').strip()}"
+        f"{label}：{get_hearing_value(form, field) if field in HEARING_INPUT_FIELD_IDS else str(form.get(field) or '').strip()}"
         for field, label in HEARING_SUMMARY_FIELDS
     ]
 
 
 def build_attention_memo_preview_lines(form: dict) -> list[str]:
     return [
-        f"{label}：{str(form.get(field) or '').strip()}"
+        f"{label}：{get_hearing_value(form, field) if field in HEARING_INPUT_FIELD_IDS else str(form.get(field) or '').strip()}"
         for field, label in HEARING_SUMMARY_FIELDS[:3]
     ]
 
@@ -1630,9 +1663,9 @@ def build_vendor_send_template_context(
         "estimated_fee": _estimated_fee_for_template(cost_estimate or form.get("cost_estimate", "")),
         "operator_name": form.get("operator_name", ""),
         "rakuteru_no": form.get("rakuteru_no", ""),
-        "symptom_detail": form.get("symptom_detail", ""),
-        "occurrence_time": form.get("occurrence_time", ""),
-        "occurrence_frequency": form.get("occurrence_frequency", ""),
+        "symptom_detail": get_hearing_value(form, "symptom_detail"),
+        "occurrence_time": resolve_occurrence_time(form),
+        "occurrence_frequency": resolve_occurrence_frequency(form),
     }
 
 
@@ -5160,31 +5193,25 @@ def manual_check_widget_key(item: dict, index: int = 0, prefix: str = "manual_ch
     return f"{prefix}_{item_id}_{index}_{stable_hash_text(label)}"
 
 
-def _select_with_other_value(form: dict, field_name: str, options: list[str],
-                             *, choice_key: str, other_key: str, label: str) -> str:
-    current = (form.get(field_name) or "").strip()
-    other_label = "その他"
-    predefined = [o for o in options if o != other_label]
-    display_options = [""] + options
-    if current in predefined:
-        selected_index = display_options.index(current)
-    elif current:
-        selected_index = display_options.index(other_label) if other_label in display_options else 0
-    else:
-        selected_index = 0
+def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
+                               *, choice_key: str, text_key: str, label: str,
+                               placeholder: str) -> str:
+    current = get_hearing_value(form, field_name)
+    selected_index = options.index(current) if current in options else 0
     selected = st.selectbox(
         label,
-        display_options,
+        options,
         index=selected_index,
         key=choice_key,
-        format_func=lambda value: "（未選択）" if value == "" else value,
     )
-    if selected == other_label:
-        free_initial = current if current and current not in options else ""
-        return st.text_input("詳細を入力", value=free_initial, key=other_key).strip()
-    if selected:
-        return selected
-    return ""
+    text_initial = current if current and current not in options else ""
+    typed = st.text_input(
+        f"{label}（任意入力）",
+        value=text_initial,
+        key=text_key,
+        placeholder=placeholder,
+    )
+    return _resolve_choice_text_value(selected, typed)
 
 
 def render_call_hearing_inputs(form: dict) -> None:
@@ -5195,21 +5222,23 @@ def render_call_hearing_inputs(form: dict) -> None:
         height=80,
         key="call_hearing_symptom_detail",
     )
-    form["occurrence_time"] = _select_with_other_value(
+    form["occurrence_time"] = _choice_text_hearing_value(
         form,
         "occurrence_time",
         _SELECT_WITH_OTHER_OPTIONS.get("occurrence_time", []),
         choice_key="call_hearing_occurrence_time_choice",
-        other_key="call_hearing_occurrence_time_other",
+        text_key="call_hearing_occurrence_time_text",
         label="発生時期",
+        placeholder="例：2〜3日前から",
     )
-    form["occurrence_frequency"] = _select_with_other_value(
+    form["occurrence_frequency"] = _choice_text_hearing_value(
         form,
         "occurrence_frequency",
         _SELECT_WITH_OTHER_OPTIONS.get("occurrence_frequency", []),
         choice_key="call_hearing_occurrence_frequency_choice",
-        other_key="call_hearing_occurrence_frequency_other",
+        text_key="call_hearing_occurrence_frequency_text",
         label="発生頻度",
+        placeholder="例：朝だけ、使用中だけ",
     )
     st.info(
         "📋 注意内容メモ反映予定\n"
