@@ -4917,7 +4917,7 @@ def render_common_case_memo(form: dict, key: str = "case_memo_global", height: i
         height=height,
         key=key,
         label_visibility="collapsed",
-        help="ラクテル用テキストやTeams報告文には自動反映されません。",
+        help="修理依頼書メモやラクテル用テキスト、Teams報告文には自動反映されません。",
     )
     sync_case_memo_global(form, st.session_state)
 
@@ -5490,7 +5490,7 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
 
 def render_call_hearing_inputs(form: dict) -> None:
     sync_hearing_widget_state_to_form(form)
-    st.markdown("### 📋 聴取内容（注意内容メモ反映）")
+    st.markdown("### 📋 聴取内容（修理依頼書メモ反映）")
     form["symptom_detail"] = st.text_area(
         "具体的な症状",
         value=form.get("symptom_detail", ""),
@@ -5516,7 +5516,7 @@ def render_call_hearing_inputs(form: dict) -> None:
         placeholder="例：朝だけ、使用中だけ",
     )
     st.info(
-        "📋 注意内容メモ反映予定\n"
+        "📋 修理依頼書メモ反映予定\n"
         + "\n".join(build_attention_memo_preview_lines(form))
     )
     st.session_state.form = form
@@ -6290,14 +6290,6 @@ def render_tab_after_call():
                     "template_code": template_selection.get("template_code", ""),
                     "label": template_selection.get("label", ""),
                 })
-                if auto_option:
-                    st.markdown(f"自動判定：{auto_option}")
-                    reason = build_template_selection_reason(template_selection)
-                    if reason:
-                        st.caption(f"理由：{reason}")
-                st.caption("選択可能テンプレート：")
-                for option_label in option_rows.keys():
-                    st.caption(f"- {option_label}")
                 tpl_labels = [""] + list(option_rows.keys())
                 current_code = normalize_template_code(form.get("template_code"))
                 current_label = form.get("template_label", "") or template_selection.get("label", "")
@@ -6317,6 +6309,15 @@ def render_tab_after_call():
                     index=idx,
                     key="tpl_label_select_after",
                 )
+                if auto_option:
+                    st.markdown(f"自動判定：{auto_option}")
+                    reason = build_template_selection_reason(template_selection)
+                    if reason:
+                        st.caption(f"理由：{reason}")
+                with st.expander("候補テンプレートの詳細を見る", expanded=False):
+                    st.caption("選択可能テンプレート：")
+                    for option_label in option_rows.keys():
+                        st.caption(f"- {option_label}")
                 if selected_option_val:
                     row = option_rows.get(selected_option_val, {})
                     selected_code = normalize_template_code(row.get("template_code"))
@@ -6325,7 +6326,7 @@ def render_tab_after_call():
                     if selected_code:
                         st.code(selected_code, language=None)
                     if selected_code == "0009":
-                        st.caption("注意内容メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
+                        st.caption("修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
                     if selected_notes:
                         st.info(f"📋 備考: {selected_notes}")
                     if row.get("data_erase_required") == "条件付き":
@@ -6380,15 +6381,6 @@ def render_tab_after_call():
         )
 
     with col2:
-        contact_phone = st.text_input(
-            "日程調整時の連絡先",
-            value=form.get("contact_phone", "") or form.get("phone_number", ""),
-            key="contact_phone_input",
-            placeholder="電話番号（デフォルトはフォームの電話番号）",
-        )
-        form["contact_phone"] = contact_phone
-        st.session_state.form = form
-
         caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
         contact_type = decision["vendor_result"].get("contact_type", "")
         if "rakuteru_no_input" in st.session_state:
@@ -6399,8 +6391,8 @@ def render_tab_after_call():
 
         st.markdown("##### 📝 記録文")
 
-        # ── 注意内容メモ（備考欄反映）──
-        st.markdown("##### 📝 注意内容メモ")
+        # ── 修理依頼書メモ（備考欄反映）──
+        st.markdown("##### 📝 修理依頼書メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
         generated_attention_memo = _build_after_call_memo(
             form, warranty_result, repair_type, vendor, notes_filled, cost_estimate)
@@ -6408,22 +6400,22 @@ def render_tab_after_call():
             form, "attention_memo", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
         if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
-            st.warning("基本項目が変更されています。注意内容メモを再生成してください。")
-        if st.button("注意内容メモを再生成", key="regenerate_attention_memo", use_container_width=True):
+            st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
+        if st.button("修理依頼書メモを再生成", key="regenerate_attention_memo", use_container_width=True):
             form["attention_memo"] = generated_attention_memo
             st.session_state["memo_after"] = form["attention_memo"]
             mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
-        st.caption("再生成すると、現在の注意内容メモは上書きされます。")
+        st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
 
         memo_display = st.text_area(
-            "注意内容メモ",
+            "修理依頼書メモ",
             form.get("attention_memo") or generated_attention_memo,
             height=260,
             key="memo_after",
         )
         form["attention_memo"] = memo_display
-        render_copy_button("📋 注意内容メモをコピー", form["attention_memo"], "copy_attention_memo")
+        render_copy_button("📋 修理依頼書メモをコピー", form["attention_memo"], "copy_attention_memo")
 
         # ── ラクテル用テキスト ──
         st.markdown("##### 📝 ラクテル用テキスト")
@@ -6447,6 +6439,13 @@ def render_tab_after_call():
         form["call_direction"] = call_direction
         form["counterparty_type"] = counterparty_type
         form["caller_type"] = counterparty_type
+        contact_phone = st.text_input(
+            "日程調整時の連絡先",
+            value=form.get("contact_phone", "") or form.get("phone_number", ""),
+            key="contact_phone_input",
+            placeholder="電話番号（デフォルトはフォームの電話番号）",
+        )
+        form["contact_phone"] = contact_phone
         st.session_state.form = form
         caller_type = counterparty_type
         generated_rakutel_text = _build_rakutel_text(form, caller_type, notes_filled)

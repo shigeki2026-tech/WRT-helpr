@@ -773,7 +773,7 @@ def test_support_info_does_not_duplicate_symptom_input_widgets():
 def test_call_hearing_block_exists():
     source = Path(app.__file__).read_text(encoding="utf-8")
 
-    assert "📋 聴取内容（注意内容メモ反映）" in source
+    assert "📋 聴取内容（修理依頼書メモ反映）" in source
     assert "def render_call_hearing_inputs" in source
 
 
@@ -873,7 +873,7 @@ def test_attention_memo_preview_is_in_hearing_block_only():
     summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
     now_action_source = source[now_action_index:summary_index]
 
-    assert "注意内容メモ反映予定" in hearing_source
+    assert "修理依頼書メモ反映予定" in hearing_source
     assert "attention_preview_lines = build_attention_memo_preview_lines" not in now_action_source
 
 

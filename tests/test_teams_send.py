@@ -1537,8 +1537,37 @@ def test_after_call_template_auto_and_candidate_display_exists():
 
     assert "自動判定：" in after_source
     assert "理由：" in after_source
+    assert '"テンプレートを選択"' in after_source
+    assert "selected_option_val = st.selectbox(" in after_source
+    assert "候補テンプレートの詳細を見る" in after_source
     assert "選択可能テンプレート：" in after_source
-    assert "注意内容メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+    assert after_source.index("候補テンプレートの詳細を見る") < after_source.index("選択可能テンプレート：")
+    assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+
+
+def test_after_call_display_uses_repair_request_memo_not_attention_memo():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "注意内容メモ" not in after_source
+    assert "##### 📝 修理依頼書メモ" in after_source
+    assert "修理依頼書メモを再生成" in after_source
+    assert "修理依頼書メモをコピー" in after_source
+
+
+def test_contact_phone_input_is_inside_rakutel_section_only():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    rakutel_heading = after_source.index("##### 📝 ラクテル用テキスト")
+    teams_heading = after_source.index("##### 💬 Teams 報告文")
+    contact_index = after_source.index('"日程調整時の連絡先"')
+
+    assert rakutel_heading < contact_index < teams_heading
+    assert '"電話番号（デフォルトはフォームの電話番号）"' in after_source
 
 
 def test_case_basic_template_result_rendered_only_in_basic_panel():
@@ -1567,7 +1596,7 @@ def test_after_call_regeneration_uses_current_global_form_after_basic_panel():
 
     assert basic_index < tabs_index
     assert "form = st.session_state.form" in after_source
-    assert "注意内容メモを再生成" in after_source
+    assert "修理依頼書メモを再生成" in after_source
     assert "ラクテル用テキストを再生成" in after_source
     assert "Teams報告文を再生成" in after_source
 
@@ -1579,7 +1608,7 @@ def test_after_call_regeneration_buttons_are_independent():
     after_source = source[after_index:master_index]
 
     assert "ラクテル用・Teams用テキストを再生成" not in after_source
-    attention_button = after_source.index("注意内容メモを再生成")
+    attention_button = after_source.index("修理依頼書メモを再生成")
     rakutel_button = after_source.index("ラクテル用テキストを再生成")
     teams_button = after_source.index("Teams報告文を再生成")
     rakutel_area = after_source[rakutel_button:teams_button]
@@ -1624,8 +1653,8 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     ]
 
     assert "st.code(" not in memo_area
-    assert "コピー用：注意内容メモ" not in memo_area
-    assert 'render_copy_button("📋 注意内容メモをコピー", form["attention_memo"], "copy_attention_memo")' in memo_area
+    assert "コピー用：修理依頼書メモ" not in memo_area
+    assert 'render_copy_button("📋 修理依頼書メモをコピー", form["attention_memo"], "copy_attention_memo")' in memo_area
     assert memo_area.index('form["attention_memo"] = memo_display') < memo_area.index("copy_attention_memo")
 
     assert "st.code(" not in rakutel_area
