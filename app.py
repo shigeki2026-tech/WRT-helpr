@@ -720,6 +720,14 @@ MANUFACTURER_UNKNOWN = "不明"
 SHOW_CALL_TYPE_IN_CALL_FORM = False
 
 
+def normalize_template_code(code) -> str:
+    """業者送付テンプレートコードを4桁表記へ正規化する。"""
+    text = str(code or "").strip()
+    if not text:
+        return ""
+    return text.zfill(4) if text.isdigit() else text
+
+
 # ============================================================
 # Generic CSV ローダー（キャッシュなし・内部用）
 # ============================================================
@@ -759,6 +767,8 @@ def _load_csv(filename: str, required_cols: list) -> pd.DataFrame:
     df["priority"] = pd.to_numeric(df["priority"], errors="coerce").fillna(999).astype(int)
     df["enabled"]  = pd.to_numeric(df["enabled"],  errors="coerce").fillna(0).astype(int)
     df = df[df["enabled"] == 1].copy()
+    if "template_code" in df.columns:
+        df["template_code"] = df["template_code"].apply(normalize_template_code)
     df = df.sort_values("priority", kind="stable").reset_index(drop=True)
     df = df.fillna("")
     return df
@@ -1052,9 +1062,11 @@ def upsert_master_call_line(row: dict, data_dir: str | None = None) -> dict:
 
 
 def upsert_vendor_send_template(row: dict, data_dir: str | None = None) -> dict:
+    normalized_row = dict(row)
+    normalized_row["template_code"] = normalize_template_code(normalized_row.get("template_code"))
     return _upsert_master_csv_row(
         "master_vendor_send_templates.csv",
-        row,
+        normalized_row,
         key_cols=["template_code"],
         required_cols=["template_code"],
         data_dir=data_dir,
@@ -1518,7 +1530,7 @@ def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -
                 "matched": True,
                 "store_keyword": keyword,
                 "normalized_store": (row.get("normalized_store") or keyword).strip(),
-                "template_code": (row.get("template_code") or "").strip(),
+                "template_code": normalize_template_code(row.get("template_code")),
                 "template_label": (row.get("template_label") or "").strip(),
                 "template_group": (row.get("template_group") or "").strip(),
                 "notes": (row.get("notes") or "").strip(),
@@ -1528,7 +1540,7 @@ def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -
     if default_row is not None:
         base.update({
             "normalized_store": (default_row.get("normalized_store") or "").strip(),
-            "template_code": (default_row.get("template_code") or "").strip(),
+            "template_code": normalize_template_code(default_row.get("template_code")),
             "template_label": (default_row.get("template_label") or "").strip(),
             "template_group": (default_row.get("template_group") or "").strip(),
             "notes": (default_row.get("notes") or "通常テンプレート").strip(),
@@ -1541,7 +1553,8 @@ def _template_row_by_code_or_label(df_tpl: pd.DataFrame, template_code: str = ""
     if df_tpl.empty:
         return None
     if template_code:
-        matched = df_tpl[df_tpl["template_code"] == template_code]
+        normalized_code = normalize_template_code(template_code)
+        matched = df_tpl[df_tpl["template_code"].apply(normalize_template_code) == normalized_code]
         if not matched.empty:
             return matched.iloc[0]
     if template_label:
@@ -1549,6 +1562,69 @@ def _template_row_by_code_or_label(df_tpl: pd.DataFrame, template_code: str = ""
         if not matched.empty:
             return matched.iloc[0]
     return None
+
+
+def _template_candidate_from_row(row) -> dict:
+    return {
+        "template_code": normalize_template_code(row.get("template_code")),
+        "label": (row.get("label") or "").strip(),
+        "category": (row.get("category") or "").strip(),
+        "data_erase_required": (row.get("data_erase_required") or "").strip(),
+        "cost_guidance_allowed": (row.get("cost_guidance_allowed") or "").strip(),
+        "notes": (row.get("notes") or "").strip(),
+    }
+
+
+def _append_template_candidate(candidates: list, row) -> None:
+    if row is None:
+        return
+    candidate = _template_candidate_from_row(row)
+    key = (candidate["template_code"], candidate["label"])
+    if candidate["label"] and key not in {
+        (item["template_code"], item["label"]) for item in candidates
+    }:
+        candidates.append(candidate)
+
+
+def _template_option_label(candidate: dict) -> str:
+    code = normalize_template_code(candidate.get("template_code"))
+    label = (candidate.get("label") or "").strip()
+    return f"{code} {label}".strip()
+
+
+def build_template_candidates_for_form(form: dict, repair_type: str, warranty_plan: str,
+                                       df_tpl: pd.DataFrame, selected: dict = None) -> list[dict]:
+    """
+    画面のテンプレート選択候補を作る。
+    特殊テンプレートを優先しつつ、通常の出張修理・自然故障 0009 は住設でも残す。
+    """
+    if df_tpl.empty:
+        return []
+
+    candidates = []
+    selected = selected or {}
+    selected_row = _template_row_by_code_or_label(
+        df_tpl,
+        selected.get("template_code", ""),
+        selected.get("label", ""),
+    )
+    _append_template_candidate(candidates, selected_row)
+
+    if repair_type == "出張修理" and not is_double_protect_plan(warranty_plan):
+        row_0009 = _template_row_by_code_or_label(df_tpl, template_code="0009")
+        _append_template_candidate(candidates, row_0009)
+
+    call_line = form.get("call_line", "")
+    if call_line:
+        filtered = df_tpl[df_tpl["category"].apply(lambda value: call_line_master_values_match(value, call_line))]
+        for _, row in filtered.iterrows():
+            _append_template_candidate(candidates, row)
+
+    if not candidates:
+        label = _auto_select_template(call_line, repair_type, warranty_plan, df_tpl)
+        _append_template_candidate(candidates, _template_row_by_code_or_label(df_tpl, template_label=label))
+
+    return candidates
 
 
 def _auto_select_template_by_group(template_group: str, repair_type: str,
@@ -1578,10 +1654,10 @@ def select_template_for_form(form: dict, repair_type: str, warranty_plan: str,
         )
         if row is not None:
             label = (row.get("label") or "").strip()
-            code = (row.get("template_code") or "").strip()
+            code = normalize_template_code(row.get("template_code"))
         else:
             label = store_rule.get("template_label", "")
-            code = store_rule.get("template_code", "")
+            code = normalize_template_code(store_rule.get("template_code"))
         source = "store_direct"
     elif store_rule.get("matched") and store_rule.get("template_group"):
         label = _auto_select_template_by_group(
@@ -1589,7 +1665,7 @@ def select_template_for_form(form: dict, repair_type: str, warranty_plan: str,
         )
         if label:
             row = _template_row_by_code_or_label(df_tpl, template_label=label)
-            code = (row.get("template_code") or "").strip() if row is not None else ""
+            code = normalize_template_code(row.get("template_code")) if row is not None else ""
             source = "store_group"
 
     if not label:
@@ -1597,15 +1673,19 @@ def select_template_for_form(form: dict, repair_type: str, warranty_plan: str,
             form.get("call_line", ""), repair_type, warranty_plan, df_tpl
         )
         row = _template_row_by_code_or_label(df_tpl, template_label=label)
-        code = (row.get("template_code") or "").strip() if row is not None else ""
+        code = normalize_template_code(row.get("template_code")) if row is not None else ""
         source = "fallback"
 
-    return {
+    selected = {
         "label": label,
-        "template_code": code,
+        "template_code": normalize_template_code(code),
         "source": source,
         "store_rule": store_rule,
     }
+    selected["candidates"] = build_template_candidates_for_form(
+        form, repair_type, warranty_plan, df_tpl, selected
+    )
+    return selected
 
 
 def format_store_template_rule_display(store_rule: dict) -> str:
@@ -1698,10 +1778,10 @@ def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warrant
     df = load_vendor_send_templates()
     if df.empty:
         return {}
-    code = (form.get("template_code") or "").strip()
+    code = normalize_template_code(form.get("template_code"))
     label = (form.get("template_label") or "").strip()
     if code:
-        matched = df[df["template_code"] == code]
+        matched = df[df["template_code"].apply(normalize_template_code) == code]
         if not matched.empty:
             return matched.iloc[0].to_dict()
     if label:
@@ -6179,49 +6259,46 @@ def render_tab_after_call():
             st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
         if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
-            filtered = df_tpl[df_tpl["category"].apply(lambda value: call_line_master_values_match(value, call_line_val))] if call_line_val else df_tpl.iloc[0:0]
-            auto_label = template_selection.get("label", "")
-            if not filtered.empty or auto_label:
-                tpl_labels = [""] + filtered["label"].tolist()
-                if auto_label and auto_label not in tpl_labels:
-                    tpl_labels.append(auto_label)
-                current_label = form.get("template_label", "") or auto_label
-                idx = tpl_labels.index(current_label) if current_label in tpl_labels else 0
+            template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
+                form, repair_type_val, warranty_plan_val, df_tpl, template_selection
+            )
+            if template_candidates:
+                option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
+                tpl_labels = [""] + list(option_rows.keys())
+                current_code = normalize_template_code(form.get("template_code"))
+                current_label = form.get("template_label", "") or template_selection.get("label", "")
+                current_option = ""
+                for option_label, candidate in option_rows.items():
+                    if current_code and candidate.get("template_code") == current_code:
+                        current_option = option_label
+                        break
+                    if current_label and candidate.get("label") == current_label:
+                        current_option = option_label
+                        break
+                idx = tpl_labels.index(current_option) if current_option in tpl_labels else 0
 
-                selected_label_val = st.selectbox(
+                selected_option_val = st.selectbox(
                     "テンプレートを選択",
                     tpl_labels,
                     index=idx,
                     key="tpl_label_select_after",
                 )
-                if selected_label_val:
-                    matched = filtered[filtered["label"] == selected_label_val]
-                    if matched.empty:
-                        matched = df_tpl[df_tpl["label"] == selected_label_val]
-                    if not matched.empty:
-                        row = matched.iloc[0]
-                        selected_code = row["template_code"]
-                        selected_notes = (row.get("notes") or "").strip()
+                if selected_option_val:
+                    row = option_rows.get(selected_option_val, {})
+                    selected_code = normalize_template_code(row.get("template_code"))
+                    selected_label_val = row.get("label", "")
+                    selected_notes = (row.get("notes") or "").strip()
+                    if selected_code:
                         st.code(selected_code, language=None)
-                        if selected_notes:
-                            st.info(f"📋 備考: {selected_notes}")
-                        if row.get("data_erase_required") == "条件付き":
-                            st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
-                        if row.get("cost_guidance_allowed") == "不可":
-                            st.error("🚫 金額案内不可案件")
-                        form["template_code"] = selected_code
-                        form["template_label"] = selected_label_val
-                        st.session_state.form = form
-                    elif selected_label_val == template_selection.get("label"):
-                        selected_code = template_selection.get("template_code", "")
-                        selected_notes = template_selection["store_rule"].get("notes", "")
-                        if selected_code:
-                            st.code(selected_code, language=None)
-                        if selected_notes:
-                            st.info(f"📋 備考: {selected_notes}")
-                        form["template_code"] = selected_code
-                        form["template_label"] = selected_label_val
-                        st.session_state.form = form
+                    if selected_notes:
+                        st.info(f"📋 備考: {selected_notes}")
+                    if row.get("data_erase_required") == "条件付き":
+                        st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
+                    if row.get("cost_guidance_allowed") == "不可":
+                        st.error("🚫 金額案内不可案件")
+                    form["template_code"] = selected_code
+                    form["template_label"] = selected_label_val
+                    st.session_state.form = form
                 else:
                     form["template_code"] = ""
                     form["template_label"] = ""

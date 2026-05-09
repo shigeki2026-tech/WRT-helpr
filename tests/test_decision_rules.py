@@ -1390,6 +1390,68 @@ def test_tc_template_code_options_loaded():
         assert expected in report
 
 
+def test_normalize_template_code_preserves_0009_format():
+    assert app.normalize_template_code("9") == "0009"
+    assert app.normalize_template_code("09") == "0009"
+    assert app.normalize_template_code("009") == "0009"
+    assert app.normalize_template_code("0009") == "0009"
+
+
+def test_residential_visit_natural_candidates_keep_0009_with_special_template():
+    df_tpl = app.pd.DataFrame([
+        {
+            "priority": 10,
+            "enabled": 1,
+            "template_code": "0019",
+            "category": "住設業務",
+            "label": "【出張修理】住宅資材センター【メーカー保証期間】",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "",
+        },
+        {
+            "priority": 20,
+            "enabled": 1,
+            "template_code": "009",
+            "category": "家電保証対応業務（24時間）",
+            "label": "【出張修理】自然故障",
+            "data_erase_required": "不要",
+            "cost_guidance_allowed": "可",
+            "notes": "通常テンプレート",
+        },
+    ])
+    form = make_form(
+        call_line="住設",
+        appliance_type="住設",
+        store_name="日本ライフサポート",
+        warranty_plan="fonl_IHクッキングヒーター【10年保証】",
+        product="IHクッキングヒーター",
+        series="IHクッキングヒーター",
+        manufacturer="三菱電機",
+    )
+    form.update({
+        "genre": "(新品)住宅設備機器",
+        "category": "クッキングヒーター",
+        "model_number": "CS-T316VSR",
+        "wrt_no": "W001310000016",
+    })
+
+    selected = app.select_template_for_form(
+        form,
+        "出張修理",
+        "fonl_IHクッキングヒーター【10年保証】",
+        df_tpl,
+        app.pd.DataFrame(columns=app._STORE_RULE_COLS),
+    )
+    candidates = selected["candidates"]
+    labels_by_code = {item["template_code"]: item["label"] for item in candidates}
+
+    assert selected["template_code"] == "0019"
+    assert labels_by_code["0019"] == "【出張修理】住宅資材センター【メーカー保証期間】"
+    assert labels_by_code["0009"] == "【出張修理】自然故障"
+    assert [item["template_code"] for item in candidates] == ["0019", "0009"]
+
+
 def test_tc_template_store_rules_loaded_and_match_required_stores():
     df = app.load_store_rules()
     assert not df.empty

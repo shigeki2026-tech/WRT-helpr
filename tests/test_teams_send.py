@@ -160,6 +160,29 @@ def test_attention_memo_0009_uses_confirming_when_estimated_fee_is_blank():
     assert "※修理キャンセル時の概算費用確認中" in memo
 
 
+def test_attention_memo_009_is_normalized_to_0009_template():
+    form = app.empty_form()
+    form.update({
+        "template_code": "009",
+        "template_label": "【出張修理】自然故障",
+        "symptom_detail": "電源が入らない",
+        "occurrence_time": "昨日から",
+        "occurrence_frequency": "毎回",
+    })
+
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "WRT修理センター",
+        cost_estimate="確認中",
+    )
+
+    assert "具体的な症状：電源が入らない" in memo
+    assert "発生時期：昨日から" in memo
+    assert "発生頻度：毎回" in memo
+
+
 def test_teams_action_wrt_repair_center_uses_pdf_storage():
     form = app.empty_form()
     form.update({"rakuteru_no": "2026_05_0162", "call_line": "家電保証対応業務（24時間）", "product": "ドライヤー"})
