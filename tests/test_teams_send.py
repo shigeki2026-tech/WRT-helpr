@@ -183,6 +183,35 @@ def test_attention_memo_009_is_normalized_to_0009_template():
     assert "発生頻度：毎回" in memo
 
 
+def test_residential_0009_attention_memo_uses_0009_template():
+    form = app.empty_form()
+    form.update({
+        "call_line": "住設",
+        "appliance_type": "住設",
+        "genre": "(新品)住宅設備機器",
+        "template_code": "0009",
+        "template_label": "【出張修理】自然故障",
+        "product": "IHクッキングヒーター",
+        "manufacturer": "三菱電機",
+        "symptom_detail": "加熱しない",
+        "occurrence_time": "数日前から",
+        "occurrence_frequency": "毎回",
+    })
+
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "WRT修理センター",
+        cost_estimate="確認中",
+    )
+
+    assert "具体的な症状：加熱しない" in memo
+    assert "発生時期：数日前から" in memo
+    assert "発生頻度：毎回" in memo
+    assert "テンプレート:" not in memo
+
+
 def test_teams_action_wrt_repair_center_uses_pdf_storage():
     form = app.empty_form()
     form.update({"rakuteru_no": "2026_05_0162", "call_line": "家電保証対応業務（24時間）", "product": "ドライヤー"})
@@ -1500,6 +1529,18 @@ def test_after_call_template_caption_replaced():
     assert "基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。" in source
 
 
+def test_after_call_template_auto_and_candidate_display_exists():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "自動判定：" in after_source
+    assert "理由：" in after_source
+    assert "選択可能テンプレート：" in after_source
+    assert "注意内容メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+
+
 def test_case_basic_template_result_rendered_only_in_basic_panel():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
@@ -1637,6 +1678,7 @@ def test_push_bat_does_not_use_git_add_dot_and_pushes_origin_main():
     lines = [line.strip() for line in source.splitlines()]
 
     assert "git add ." not in lines
+    assert "git add Push.bat" in lines
     assert "git status --short" in source
     assert "git diff --cached --quiet" in source
     assert "No staged changes." in source

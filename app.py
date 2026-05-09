@@ -1592,6 +1592,28 @@ def _template_option_label(candidate: dict) -> str:
     return f"{code} {label}".strip()
 
 
+def build_template_selection_reason(selection: dict) -> str:
+    label = (selection.get("label") or "").strip()
+    source = (selection.get("source") or "").strip()
+    store_rule = selection.get("store_rule") or {}
+    reasons = []
+    if "住宅資材センター" in label:
+        reasons.append("住宅資材センター")
+    if "メーカー保証期間" in label:
+        reasons.append("メーカー保証期間")
+    if "延長保証" in label:
+        reasons.append("延長保証")
+    if "ダブル" in label or "物損" in label:
+        reasons.append("物損付 / DP")
+    if source.startswith("store"):
+        detail = format_store_template_rule_display(store_rule)
+        if detail and detail not in reasons:
+            reasons.append(detail)
+    if not reasons and label:
+        reasons.append("回線・修理形態・保証プラン")
+    return " / ".join(_dedupe_preserve_order(reasons))
+
+
 def build_template_candidates_for_form(form: dict, repair_type: str, warranty_plan: str,
                                        df_tpl: pd.DataFrame, selected: dict = None) -> list[dict]:
     """
@@ -6264,6 +6286,18 @@ def render_tab_after_call():
             )
             if template_candidates:
                 option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
+                auto_option = _template_option_label({
+                    "template_code": template_selection.get("template_code", ""),
+                    "label": template_selection.get("label", ""),
+                })
+                if auto_option:
+                    st.markdown(f"自動判定：{auto_option}")
+                    reason = build_template_selection_reason(template_selection)
+                    if reason:
+                        st.caption(f"理由：{reason}")
+                st.caption("選択可能テンプレート：")
+                for option_label in option_rows.keys():
+                    st.caption(f"- {option_label}")
                 tpl_labels = [""] + list(option_rows.keys())
                 current_code = normalize_template_code(form.get("template_code"))
                 current_label = form.get("template_label", "") or template_selection.get("label", "")
@@ -6290,6 +6324,8 @@ def render_tab_after_call():
                     selected_notes = (row.get("notes") or "").strip()
                     if selected_code:
                         st.code(selected_code, language=None)
+                    if selected_code == "0009":
+                        st.caption("注意内容メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
                     if selected_notes:
                         st.info(f"📋 備考: {selected_notes}")
                     if row.get("data_erase_required") == "条件付き":
