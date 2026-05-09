@@ -2120,7 +2120,8 @@ def build_teams_send_incomplete_reasons(
     contact_type: str = "",
 ) -> list[str]:
     reasons = []
-    reasons.extend(teams_config_unavailable_reasons(teams_config))
+    if teams_config_unavailable_reasons(teams_config):
+        reasons.append("Teams設定が未完了")
 
     message = (form.get("teams_chat_message") or "").strip()
     vendor_text = (vendor or "").strip()
@@ -6367,6 +6368,22 @@ def render_tab_after_call():
 
         # ── Teams報告文 ──
         st.markdown("##### 💬 Teams 報告文")
+        rakuteru_val = st.text_input(
+            "楽テルNO",
+            value=form.get("rakuteru_no", ""),
+            key="rakuteru_no_input",
+            placeholder="楽テル登録後に入力",
+        )
+        form["rakuteru_no"] = rakuteru_val
+        form["teams_action"] = st.text_input(
+            "Teams報告文に入れる対応内容",
+            value=form.get("teams_action", ""),
+            placeholder=resolve_teams_request_action(form, vendor, contact_type),
+            key="teams_action_input",
+            help="自動判定と異なる場合のみ変更",
+        )
+        st.caption("自動判定と異なる場合のみ変更")
+        st.session_state.form = form
         generated_teams_message = _build_teams_chat_message(form, vendor, contact_type)
         teams_hash = get_after_call_regeneration_hash(
             form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
@@ -6388,27 +6405,12 @@ def render_tab_after_call():
         render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")
         st.session_state.form = form
 
-        st.markdown("##### 💬 Teams自動送信")
-        st.markdown("##### 🚀 Teams送信")
-        rakuteru_val = st.text_input(
-            "楽テルNO",
-            value=form.get("rakuteru_no", ""),
-            key="rakuteru_no_input",
-            placeholder="楽テル登録後に入力",
-        )
-        form["rakuteru_no"] = rakuteru_val
-        st.session_state.form = form
-        form["teams_action"] = st.text_input(
-            "Teams報告アクション（手入力優先）",
-            value=form.get("teams_action", ""),
-            placeholder=resolve_teams_request_action(form, vendor, contact_type),
-            key="teams_action_input",
-        )
-        st.session_state.form = form
+        st.markdown("##### 🚀 Teams自動送信")
         request_folder = get_request_pdf_folder_info(vendor)
         teams_config = load_teams_config()
         teams_enabled = bool(teams_config.get("enabled") and teams_config.get("chat_id"))
         chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
+        config_reasons = teams_config_unavailable_reasons(teams_config)
 
         pdf_storage_confirmed = True
         if request_folder.get("required"):
@@ -6429,6 +6431,9 @@ def render_tab_after_call():
         send_status = teams_send_status_label(incomplete_reasons, already_sent)
         st.markdown(f"**送信先：** {chat_name}")
         st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
+        if config_reasons:
+            st.markdown("**理由：**")
+            st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
         if send_status == "送信可能":
             st.success(f"状態：{send_status}")
         elif send_status == "送信済み":
@@ -6439,7 +6444,7 @@ def render_tab_after_call():
             st.markdown("**未完了：**")
             st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
         else:
-            st.success("未完了項目はありません。送信可能です。")
+            st.markdown("**未完了：なし**")
         if not teams_enabled:
             st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
         if already_sent:

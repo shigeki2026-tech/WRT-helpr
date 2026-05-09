@@ -524,8 +524,7 @@ def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
         vendor="WRT修理センター",
     )
 
-    assert "config/teams_config.json が未作成、または enabled=false" in reasons
-    assert "chat_id が未設定" in reasons
+    assert "Teams設定が未完了" in reasons
     assert "楽テルNO未入力" in reasons
     assert "PDF格納チェック未完了" in reasons
     assert app.teams_send_status_label(reasons, already_sent=False) == "送信不可"
@@ -1004,10 +1003,24 @@ def test_regenerated_teams_message_reflects_late_operator_name():
 
     assert "大濱" in texts["teams_chat_message"]
     assert "2026_05_0143" in texts["teams_chat_message"]
-    assert "<b>" not in texts["teams_chat_message"]
-    assert "ユナイトへFAX済み" in texts["teams_chat_message"]
-    assert "ご確認お願いします。大濱" in texts["teams_chat_message"]
-    assert "MPG大濱" not in texts["teams_chat_message"]
+
+
+def test_regenerated_teams_message_reflects_rakuteru_and_manual_action():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "rakuteru_no": "2026_05_0470",
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "食器洗い乾燥機",
+        "teams_action": "FAX済み",
+    })
+
+    message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
+
+    assert message.splitlines()[0] == "2026_05_0470"
+    assert "FAX済み" in message
+    assert "<b>" not in message
+    assert "<br>" not in message
 
 
 def test_regenerated_rakutel_text_reflects_late_operator_name():
@@ -1174,16 +1187,26 @@ def test_teams_area_source_does_not_render_drive_link():
 def test_teams_auto_send_panel_heading_exists():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "##### 💬 Teams自動送信" in source
-    assert "##### 🚀 Teams送信" in source
+    assert "##### 🚀 Teams自動送信" in source
 
 
 def test_teams_report_and_send_have_separate_headings():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     report_index = source.index("##### 💬 Teams 報告文")
-    send_index = source.index("##### 🚀 Teams送信")
+    send_index = source.index("##### 🚀 Teams自動送信")
 
     assert report_index < send_index
+
+
+def test_teams_auto_send_heading_is_not_duplicated():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert after_source.count("Teams自動送信") == 2  # heading + validation warning text
+    assert "##### 💬 Teams自動送信" not in after_source
+    assert "##### 🚀 Teams送信" not in after_source
 
 
 def test_teams_send_unavailable_reasons_are_rendered_in_one_place():
@@ -1205,6 +1228,14 @@ def test_teams_send_disabled_message_is_specific():
     assert "config/teams_config.json が未作成、または enabled=false" in source
     assert "chat_id が未設定" in source
     assert "送信スクリプトが利用できない" in source
+
+
+def test_teams_action_input_label_is_teams_report_content():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert '"Teams報告文に入れる対応内容"' in source
+    assert "自動判定と異なる場合のみ変更" in source
+    assert '"Teams報告アクション（手入力優先）"' not in source
 
 
 def test_teams_send_panel_status_labels_exist():
@@ -1680,16 +1711,25 @@ def test_nav_no_pill_radio_css():
 
 # ── 楽テルNO 移動テスト (Session 4) ──
 
-def test_rakuteru_no_input_in_teams_send_section():
+def test_rakuteru_no_input_before_teams_regeneration_button():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     teams_heading_index = source.index("##### 💬 Teams 報告文")
-    teams_send_index = source.index("##### 🚀 Teams送信", teams_heading_index)
     # Search for the widget by its unique key, which only exists at the widget definition
-    rakuteru_no_index = source.index('key="rakuteru_no_input"', teams_send_index)
-    teams_textarea_index = source.index('"Teams報告文"', teams_heading_index)
+    rakuteru_no_index = source.index('key="rakuteru_no_input"', teams_heading_index)
+    regenerate_index = source.index('key="regenerate_teams_chat_message"', teams_heading_index)
 
-    assert teams_heading_index < teams_textarea_index < teams_send_index < rakuteru_no_index
+    assert teams_heading_index < rakuteru_no_index < regenerate_index
+
+
+def test_teams_action_input_before_teams_regeneration_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    teams_heading_index = source.index("##### 💬 Teams 報告文")
+    teams_action_index = source.index('key="teams_action_input"', teams_heading_index)
+    regenerate_index = source.index('key="regenerate_teams_chat_message"', teams_heading_index)
+
+    assert teams_heading_index < teams_action_index < regenerate_index
 
 
 def test_rakuteru_no_not_in_template_col1():
