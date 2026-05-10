@@ -4,3 +4,8 @@ priority,enabled,template_code,template_label,repair_type,warranty_type,attentio
 発生頻度：{{occurrence_frequency}}
 ※保証対象外時の案内済み
 ※修理キャンセル時の概算費用{{estimated_fee}}",,,家電出張修理・自然故障の注意内容メモ
+10,1,0058,【出張修理】上位5社,出張修理,通常保証,"具体的な症状：{{symptom_detail}}
+発生時期：{{occurrence_time}}
+発生頻度：{{occurrence_frequency}}
+※保証対象外時の案内済み
+※修理キャンセル時の概算費用{{estimated_fee}}",,,上位5社出張修理の注意内容メモ

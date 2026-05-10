@@ -1505,16 +1505,38 @@ def test_ai_koumuten_system_kitchen_case_is_explicit_rules():
         app.load_template_codes(),
     )
     display = app.build_case_basic_template_display(form, decision["repair_type"])
+    form.update({
+        "template_code": selected["template_code"],
+        "template_label": selected["label"],
+    })
+    memo = app._build_after_call_memo(
+        form,
+        decision["warranty_result"],
+        decision["repair_type"],
+        decision["vendor"],
+        cost_estimate=decision["cost_estimate"],
+    )
+    tags = app.build_decision_tag_items(decision, form)
+    repair_tag = next(tag for tag in tags if tag["title"] == "修理方針")
+    vendor_tag = next(tag for tag in tags if tag["title"] == "拠点対応")
 
     check("AI工務店 repair type", decision["repair_type"], "出張修理")
     check("AI工務店 cost generic visit", decision["cost_estimate"], "5,000円～7,000円前後")
+    check("AI工務店 cost can announce", decision["cost_result"]["can_announce_cost"], True)
+    check("AI工務店 cost status", decision["cost_result"]["cost_status"], "confirmed")
     check("AI工務店 vendor", decision["vendor"], "担当エスカ（要確認）")
     check("AI工務店 vendor explicit csv", decision["vendor_result"]["matched"], True)
     check("AI工務店 vendor reason", decision["vendor_result"]["reason"], "アイ工務店上位5社案件の修理依頼先確認が必要")
     check("AI工務店 vendor escalation", decision["vendor_result"]["needs_escalation"], True)
+    check("AI工務店 escalation does not mask cost", decision["cost_estimate"] != "未確定", True)
     check("AI工務店 vendor not branch name", decision["vendor"] != form["store_name"], True)
     check("AI工務店 template code", selected["template_code"], "0058")
     check("AI工務店 template label", selected["label"], "【出張修理】上位5社")
+    assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
+    check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
+    check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
+    check("AI工務店 vendor tag primary", vendor_tag["primary"], "担当エスカ（要確認）")
+    check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "終話後エスカ")
     assert "アイ工務店" in display
     assert "上位5社テンプレート対象" in display
 
