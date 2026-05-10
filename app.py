@@ -1631,6 +1631,15 @@ def build_template_candidates_for_form(form: dict, repair_type: str, warranty_pl
         selected.get("label", ""),
     )
     _append_template_candidate(candidates, selected_row)
+    if selected_row is None and (selected.get("template_code") or selected.get("label")):
+        _append_template_candidate(candidates, {
+            "template_code": selected.get("template_code", ""),
+            "label": selected.get("label", ""),
+            "category": selected.get("source", ""),
+            "data_erase_required": "",
+            "cost_guidance_allowed": "",
+            "notes": (selected.get("store_rule") or {}).get("notes", ""),
+        })
 
     if repair_type == "出張修理" and not is_double_protect_plan(warranty_plan):
         row_0009 = _template_row_by_code_or_label(df_tpl, template_code="0009")
@@ -3770,7 +3779,12 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
     prefecture   = (form.get("prefecture") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
     product      = (form.get("product") or "").strip()
-    store        = (form.get("store_name") or "").strip()
+    store_targets = [
+        (form.get("store_name") or "").strip(),
+        (form.get("store_original") or "").strip(),
+        (form.get("store_name_original") or "").strip(),
+    ]
+    store = " ".join(t for t in store_targets if t)
 
     if not df.empty:
         for _, row in df.iterrows():
