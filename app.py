@@ -3803,11 +3803,15 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
             if pref and pref != prefecture:                     continue
             # area_group: CSVのNTT東西エリアと既存の地域グループを両方参照（空=ワイルドカード）
             if ag:
-                area_groups = {**AREA_GROUPS, **load_area_groups_dict()}
-                group_set = area_groups.get(ag)
-                form_area_group = (form.get("area_group") or "").strip()
-                if ag != form_area_group and (group_set is None or prefecture not in group_set):
-                    continue
+                if ag == "全国":
+                    if not prefecture:
+                        continue
+                else:
+                    area_groups = {**AREA_GROUPS, **load_area_groups_dict()}
+                    group_set = area_groups.get(ag)
+                    form_area_group = (form.get("area_group") or "").strip()
+                    if ag != form_area_group and (group_set is None or prefecture not in group_set):
+                        continue
             # keyword 包含一致
             if not _kw_match(mk, manufacturer):                continue
             if not _kw_match(pk, product):                     continue

@@ -1476,7 +1476,7 @@ def test_tc_template_store_rules_loaded_and_match_required_stores():
     check("store rule ライフデザイン・カバヤ group", kabaya["template_group"], "上位5社")
 
 
-def test_ai_koumuten_system_kitchen_case_is_explicit_rules():
+def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     form = make_form(
         product="システムキッチン",
         series="システムキッチン",
@@ -1519,26 +1519,86 @@ def test_ai_koumuten_system_kitchen_case_is_explicit_rules():
     tags = app.build_decision_tag_items(decision, form)
     repair_tag = next(tag for tag in tags if tag["title"] == "修理方針")
     vendor_tag = next(tag for tag in tags if tag["title"] == "拠点対応")
+    teams_message = app._build_teams_chat_message(
+        decision["working_form"],
+        decision["vendor"],
+        decision["vendor_result"].get("contact_type", ""),
+    )
 
     check("AI工務店 repair type", decision["repair_type"], "出張修理")
     check("AI工務店 cost generic visit", decision["cost_estimate"], "5,000円～7,000円前後")
     check("AI工務店 cost can announce", decision["cost_result"]["can_announce_cost"], True)
     check("AI工務店 cost status", decision["cost_result"]["cost_status"], "confirmed")
-    check("AI工務店 vendor", decision["vendor"], "担当エスカ（要確認）")
-    check("AI工務店 vendor explicit csv", decision["vendor_result"]["matched"], True)
-    check("AI工務店 vendor reason", decision["vendor_result"]["reason"], "アイ工務店上位5社案件の修理依頼先確認が必要")
-    check("AI工務店 vendor escalation", decision["vendor_result"]["needs_escalation"], True)
+    check("AI工務店 vendor", decision["vendor"], "ユナイトサービス㈱")
+    check("AI工務店 vendor fallback csv", decision["vendor_result"]["matched"], True)
+    check("AI工務店 vendor reason", decision["vendor_result"]["reason"], "依頼先一覧 No.7 上記以外・全国・全メーカー")
+    assert "依頼先一覧 No.7" in decision["vendor_result"]["reason"]
+    assert "上記以外" in decision["vendor_result"]["reason"]
+    check("AI工務店 vendor escalation", decision["vendor_result"]["needs_escalation"], False)
     check("AI工務店 escalation does not mask cost", decision["cost_estimate"] != "未確定", True)
     check("AI工務店 vendor not branch name", decision["vendor"] != form["store_name"], True)
+    check("AI工務店 vendor not escalation", decision["vendor"] != "担当エスカ（要確認）", True)
     check("AI工務店 template code", selected["template_code"], "0058")
     check("AI工務店 template label", selected["label"], "【出張修理】上位5社")
     assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
     check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
     check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
-    check("AI工務店 vendor tag primary", vendor_tag["primary"], "担当エスカ（要確認）")
-    check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "終話後エスカ")
+    check("AI工務店 vendor tag primary", vendor_tag["primary"], "ユナイトサービス㈱")
+    check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "確定")
+    assert "ユナイトサービス㈱へFAX済み" in teams_message
+    assert "担当確認依頼済み" not in teams_message
     assert "アイ工務店" in display
     assert "上位5社テンプレート対象" in display
+
+
+def test_ai_koumuten_vendor_does_not_depend_on_direct_store_rule():
+    rules = app.load_vendor_rules()
+    enabled = rules[rules["enabled"].astype(str).str.strip().isin(["1", "True", "true"])]
+    direct = enabled[
+        enabled["store_keyword"].astype(str).str.contains("アイ工務店", na=False)
+        & enabled["vendor_name"].astype(str).str.contains("ユナイトサービス", na=False)
+    ]
+    assert direct.empty
+
+
+def test_visit_vendor_list_no7_fallback_applies_to_generic_store():
+    d = app.run_decision(make_form(
+        store_name="通常販売店",
+        product="システムキッチン",
+        series="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+        appliance_type="住設",
+    ))
+
+    assert d["repair_type"] == "出張修理"
+    assert d["vendor"] == "ユナイトサービス㈱"
+    assert d["vendor_result"]["needs_escalation"] is False
+    assert d["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+
+
+def test_visit_vendor_list_no7_fallback_does_not_override_priority_rules():
+    bic = app.run_decision(make_form(call_line="ビックカメラ", product="冷蔵庫", prefecture="東京都"))
+    sofmap = app.run_decision(make_form(call_line="ソフマップ", product="冷蔵庫", prefecture="東京都"))
+    okinawa = app.run_decision(make_form(product="システムキッチン", manufacturer="パナソニック", prefecture="沖縄県"))
+    east = app.run_decision(make_form(product="冷蔵庫", manufacturer="パナソニック", prefecture="東京都"))
+    kyushu = app.run_decision(make_form(product="システムキッチン", manufacturer="パナソニック", prefecture="福岡県"))
+    rental = app.run_decision(make_form(
+        call_line="住設業務",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+        appliance_type="住設",
+        is_over_10years=False,
+    ))
+
+    assert bic["vendor"] == "ソフマップ修理センター"
+    assert sofmap["vendor"] == "ソフマップ修理センター"
+    assert okinawa["vendor"] == "宗建リノベーション"
+    assert east["vendor"] == "WRT修理センター"
+    assert "CER" in kyushu["vendor"]
+    assert rental["vendor"] == "ユナイトサービス㈱"
+    assert rental["vendor_result"]["reason"] == "賃貸東日本10年未満"
 
 
 def test_tc_template_store_group_priority_over_normal_template():
