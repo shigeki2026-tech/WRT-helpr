@@ -1329,6 +1329,7 @@ def test_teams_action_input_label_is_teams_report_content():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert '"Teams報告文に入れる対応内容"' in source
+    assert 'st.caption(f"自動判定：{auto_teams_action_display}")' in source
     assert "自動判定と異なる場合のみ変更" in source
     assert '"Teams報告アクション（手入力優先）"' not in source
 
@@ -1640,6 +1641,7 @@ def test_ai_koumuten_teams_regeneration_uses_current_unite_vendor_not_stale_esca
         "genre": "(新品)住宅設備機器",
         "category": "システムキッチン",
         "operator_name": "大濱",
+        "rakuteru_no": "2026_05_0490",
         "teams_action": "担当確認依頼済み",
         "teams_chat_message": "担当エスカ（要確認）へ担当確認依頼済み\nご確認お願いします。大濱",
     })
@@ -1657,8 +1659,34 @@ def test_ai_koumuten_teams_regeneration_uses_current_unite_vendor_not_stale_esca
 
     assert "ユナイトサービス㈱" in message
     assert "ユナイトサービス㈱へFAX済み" in message
+    assert message == "\n".join([
+        "2026_05_0490",
+        "住設",
+        "システムキッチン",
+        "ユナイトサービス㈱へFAX済み",
+        "ご確認お願いします。大濱",
+    ])
     assert "担当エスカ（要確認）" not in message
     assert "担当確認依頼済み" not in message
+
+
+def test_teams_send_preview_uses_current_teams_chat_message():
+    message = "\n".join([
+        "2026_05_0490",
+        "住設",
+        "システムキッチン",
+        "ユナイトサービス㈱へFAX済み",
+        "ご確認お願いします。大濱",
+    ])
+
+    preview = app.build_teams_send_preview_lines(message)
+
+    assert preview == [
+        "楽テルNO：2026_05_0490",
+        "回線：住設",
+        "製品：システムキッチン",
+        "対応：ユナイトサービス㈱へFAX済み",
+    ]
 
 
 def test_ai_koumuten_0058_memo_estimated_fee_has_no_body_emoji():
@@ -1863,6 +1891,9 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
 
     assert "st.code(" not in teams_area
     assert "コピー用：Teams報告文" not in teams_area
+    assert "height=160" in teams_area
+    assert "送信内容プレビュー：" in teams_area
+    assert "build_teams_send_preview_lines(teams_chat_message)" in teams_area
     assert 'render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
     assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
 

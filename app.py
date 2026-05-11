@@ -2206,6 +2206,12 @@ def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -
     return "\n".join(lines)
 
 
+def build_teams_send_preview_lines(teams_chat_message: str) -> list[str]:
+    lines = [line.strip() for line in str(teams_chat_message or "").splitlines() if line.strip()]
+    labels = ["楽テルNO", "回線", "製品", "対応"]
+    return [f"{label}：{value}" for label, value in zip(labels, lines[:4])]
+
+
 def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
                             vendor: str, caller_type: str, notes_filled: str,
                             contact_type: str = "") -> dict:
@@ -6742,13 +6748,17 @@ def render_tab_after_call():
             placeholder="楽テル登録後に入力",
         )
         form["rakuteru_no"] = rakuteru_val
+        auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+        auto_teams_action_display = f"{vendor}へ{auto_teams_action}" if vendor or auto_teams_action else ""
         form["teams_action"] = st.text_input(
             "Teams報告文に入れる対応内容",
             value=form.get("teams_action", ""),
-            placeholder=resolve_teams_request_action(form, vendor, contact_type),
+            placeholder=auto_teams_action,
             key="teams_action_input",
             help="自動判定と異なる場合のみ変更",
         )
+        if auto_teams_action_display:
+            st.caption(f"自動判定：{auto_teams_action_display}")
         st.caption("自動判定と異なる場合のみ変更")
         st.session_state.form = form
         teams_generation_form = form_for_current_teams_generation(form, vendor, contact_type)
@@ -6766,10 +6776,14 @@ def render_tab_after_call():
         teams_chat_message = st.text_area(
             "Teams報告文",
             form.get("teams_chat_message") or generated_teams_message,
-            height=100,
+            height=160,
             key="teams_chat_message_display",
         )
         form["teams_chat_message"] = teams_chat_message
+        teams_preview_lines = build_teams_send_preview_lines(teams_chat_message)
+        if teams_preview_lines:
+            st.markdown("送信内容プレビュー：")
+            st.info("\n".join(teams_preview_lines))
         render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")
         st.session_state.form = form
 
