@@ -1455,6 +1455,25 @@ def _dedupe_preserve_order(items: list) -> list:
     return result
 
 
+RESIDENTIAL_APPLIANCE_KEYWORDS = (
+    "住設", "住宅設備", "住宅設備機器", "給湯", "温水", "ビルトイン",
+    "システムキッチン", "キッチン", "IHクッキングヒーター", "クッキングヒーター",
+    "食器洗い乾燥機", "食洗機", "レンジフード", "浴室", "洗面", "トイレ",
+)
+
+
+def infer_appliance_type_from_form(form: dict, current_value: str = "") -> str:
+    """保証・製品情報から家電/住設を補助判定する。強い住設根拠のみ家電を上書きする。"""
+    current = (current_value or form.get("appliance_type") or "").strip()
+    evidence_text = " ".join(
+        str(form.get(field) or "")
+        for field in ("warranty_plan", "genre", "category", "series", "product", "product_original")
+    )
+    if any(keyword in evidence_text for keyword in RESIDENTIAL_APPLIANCE_KEYWORDS):
+        return "住設"
+    return current
+
+
 def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str, warranty_plan: str) -> str:
     """
     - warranty_plan に「物損」「ダブル」「DP」のいずれかを含む → ダブルプロテクト系を優先
@@ -1515,6 +1534,15 @@ def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -
         (form.get("store_name") or "").strip(),
         (form.get("store_original") or "").strip(),
         (form.get("store_name_original") or "").strip(),
+        (form.get("store_company") or "").strip(),
+        (form.get("operating_company") or "").strip(),
+    ]
+    source_labels = [
+        ("表示販売店", (form.get("store_name") or "").strip()),
+        ("運営会社", (form.get("store_original") or "").strip()),
+        ("販売店原文", (form.get("store_name_original") or "").strip()),
+        ("運営会社", (form.get("store_company") or "").strip()),
+        ("運営会社", (form.get("operating_company") or "").strip()),
     ]
     store_text = " ".join(t for t in store_targets if t)
     default_row = None
@@ -1526,6 +1554,13 @@ def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -
                 default_row = row
             continue
         if keyword in store_text:
+            matched_label = ""
+            matched_value = ""
+            for label, value in source_labels:
+                if value and keyword in value:
+                    matched_label = label
+                    matched_value = value
+                    break
             return {
                 "matched": True,
                 "store_keyword": keyword,
@@ -1535,6 +1570,9 @@ def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -
                 "template_group": (row.get("template_group") or "").strip(),
                 "notes": (row.get("notes") or "").strip(),
                 "priority": int(row.get("priority", 999)),
+                "matched_source_label": matched_label,
+                "matched_source_value": matched_value,
+                "display_store": (form.get("store_name") or "").strip(),
             }
 
     if default_row is not None:
@@ -3374,6 +3412,7 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         "manufacturer": "manufacturer", "model_number": "model_number",
         "series": "series", "store_name": "store_name",
         "genre": "genre", "category": "category",
+        "operating_company": "operating_company",
     }
     form = current_form.copy()
     for src, dst in mapping.items():
@@ -3407,10 +3446,8 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             form.get("manufacturer", ""),
         )
     genre = extracted.get("genre", "")
-    if genre:
-        form["appliance_type"] = "住設" if any(
-            x in genre for x in ["住設", "給湯", "温水", "ビルトイン"]
-        ) else "家電"
+    if genre or extracted.get("category") or extracted.get("plan"):
+        form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
     return form
 
 
@@ -3910,7 +3947,9 @@ def determine_script_route(form: dict, repair_type: str) -> dict:
                       reason="住設回線")
         return result
     if appliance_type == "住設":
-        result.update(sheet_name="住設【既築／中古のみ】", part="住設受付", reason="住設製品")
+        result.update(sheet_name="住設【既築／中古のみ】", part="住設受付",
+                      display_name="住設・出張修理" if repair_type == "出張修理" else "住設受付",
+                      reason="住設製品")
         return result
     if appliance_type == "家電" and repair_type == "出張修理":
         result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
@@ -4092,18 +4131,22 @@ def build_script_reference_info(decision: dict) -> dict:
     script_result = decision.get("script_result", {})
     script_link = lookup_script_link(script_result)
     script_type = summary["script_type"]
-    script_display = summary["script_part"] or summary["script_display"]
+    script_display = script_result.get("display_name") or summary["script_part"] or summary["script_display"]
     if script_type == "ダブルプロテクト" and script_display.startswith("家電・"):
         script_display = script_display.replace("家電・", "", 1)
+    matched = bool(script_link.get("matched"))
+    message = "" if matched else f"{script_type} / {script_display}\nURL未登録（手動で参照）"
+    if not matched and (decision.get("working_form", {}).get("appliance_type") == "住設" or "住設" in script_display):
+        message = f"{script_type} / {script_display}\n住設スクリプト未登録（手動参照）"
     return {
         "title": "📘 参照スクリプト",
         "script_type": script_type,
         "display": script_display,
         "label": f"{script_type} / {script_display}",
-        "matched": bool(script_link.get("matched")),
+        "matched": matched,
         "url": script_link.get("url", ""),
         "link_text": script_link.get("display_name", "スクリプト"),
-        "message": "" if script_link.get("matched") else f"{script_type} / {script_display}\nURL未登録（手動で参照）",
+        "message": message,
     }
 
 
@@ -4671,6 +4714,10 @@ def run_decision(form: dict) -> dict:
     if inferred_call_line_attrs.get("call_line"):
         working_form["call_line"] = inferred_call_line_attrs["call_line"]
     working_form["call_line"] = normalize_call_line_for_display(working_form.get("call_line", ""))
+    working_form["appliance_type"] = infer_appliance_type_from_form(
+        working_form,
+        working_form.get("appliance_type", ""),
+    )
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -5023,7 +5070,30 @@ def build_case_basic_template_display(form: dict, repair_type: str = "") -> str:
         form.get("warranty_plan", ""),
         df_tpl,
     )
-    return format_store_template_rule_display(selected.get("store_rule", {}))
+    store_rule = selected.get("store_rule", {})
+    if store_rule.get("matched"):
+        code_label = _template_option_label(selected)
+        lines = [
+            "テンプレート判定" + "結果：",
+            code_label,
+        ]
+        matched_label = store_rule.get("matched_source_label") or "判定根拠"
+        matched_value = store_rule.get("matched_source_value") or store_rule.get("normalized_store") or store_rule.get("store_keyword")
+        if matched_value:
+            lines.extend(["", "判定根拠：", f"{matched_label}：{matched_value}"])
+        detail = (
+            store_rule.get("notes")
+            or store_rule.get("template_group")
+            or store_rule.get("template_label")
+            or store_rule.get("template_code")
+        )
+        if detail:
+            lines.extend(["", "判定内容：", detail])
+        display_store = store_rule.get("display_store") or form.get("store_name", "")
+        if display_store and display_store != matched_value:
+            lines.extend(["", "表示販売店：", display_store])
+        return "\n".join(lines)
+    return format_store_template_rule_display(store_rule)
 
 
 def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
@@ -5401,6 +5471,12 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     appliance_type_opts = ["", "家電", "住設"]
 
     revision = get_case_basic_revision(st.session_state)
+    inferred_appliance_type = infer_appliance_type_from_form(form, form.get("appliance_type", ""))
+    if inferred_appliance_type != form.get("appliance_type", ""):
+        form["appliance_type"] = inferred_appliance_type
+        appliance_widget_key = case_basic_widget_key("appliance_type", revision)
+        if appliance_widget_key in st.session_state:
+            st.session_state[appliance_widget_key] = inferred_appliance_type
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         form["call_line"] = st.selectbox(

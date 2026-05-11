@@ -1482,7 +1482,7 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
         series="システムキッチン",
         manufacturer="パナソニック",
         prefecture="滋賀県",
-        appliance_type="住設",
+        appliance_type="家電",
         store_name="滋賀支店",
         warranty_plan="アイ工務店_住宅設備機器【10年保証】",
         warranty_start_date="2022/03/30",
@@ -1519,12 +1519,14 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     tags = app.build_decision_tag_items(decision, form)
     repair_tag = next(tag for tag in tags if tag["title"] == "修理方針")
     vendor_tag = next(tag for tag in tags if tag["title"] == "拠点対応")
+    script_tag = next(tag for tag in tags if tag["title"] == "スクリプト")
     teams_message = app._build_teams_chat_message(
         decision["working_form"],
         decision["vendor"],
         decision["vendor_result"].get("contact_type", ""),
     )
 
+    check("AI工務店 appliance type inferred", decision["working_form"]["appliance_type"], "住設")
     check("AI工務店 repair type", decision["repair_type"], "出張修理")
     check("AI工務店 cost generic visit", decision["cost_estimate"], "5,000円～7,000円前後")
     check("AI工務店 cost can announce", decision["cost_result"]["can_announce_cost"], True)
@@ -1545,10 +1547,15 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
     check("AI工務店 vendor tag primary", vendor_tag["primary"], "ユナイトサービス㈱")
     check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "確定")
+    check("AI工務店 script type", script_tag["primary"], "通常")
+    check("AI工務店 script display", script_tag["secondary"], "住設・出張修理")
+    assert "家電・出張修理" not in script_tag["secondary"]
     assert "ユナイトサービス㈱へFAX済み" in teams_message
     assert "担当確認依頼済み" not in teams_message
-    assert "アイ工務店" in display
-    assert "上位5社テンプレート対象" in display
+    assert "0058 【出張修理】上位5社" in display
+    assert "運営会社：株式会社アイ工務店" in display
+    assert "表示販売店：\n滋賀支店" in display
+    assert "販売店テンプレート未登録：滋賀支店" not in display
 
 
 def test_ai_koumuten_vendor_does_not_depend_on_direct_store_rule():
@@ -1559,6 +1566,56 @@ def test_ai_koumuten_vendor_does_not_depend_on_direct_store_rule():
         & enabled["vendor_name"].astype(str).str.contains("ユナイトサービス", na=False)
     ]
     assert direct.empty
+
+
+def test_ai_koumuten_extracted_residential_equipment_infers_jusetsu_and_store_template():
+    form = app.apply_extracted_fields_to_form(
+        {
+            "operating_company": "株式会社アイ工務店",
+            "store_name": "滋賀支店",
+            "plan": "アイ工務店_住宅設備機器【10年保証】",
+            "genre": "(新品)住宅設備機器",
+            "category": "システムキッチン",
+            "series": "システムキッチン",
+            "manufacturer": "パナソニック",
+        },
+        app.empty_form(),
+    )
+    decision = app.run_decision(form)
+    display = app.build_case_basic_template_display(form, decision["repair_type"])
+
+    assert form["appliance_type"] == "住設"
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert "0058 【出張修理】上位5社" in display
+    assert "運営会社：株式会社アイ工務店" in display
+    assert "販売店テンプレート未登録：滋賀支店" not in display
+
+
+def test_unregistered_jusetsu_script_shows_manual_reference_message():
+    decision = {
+        "repair_type": "出張修理",
+        "cost_estimate": "5,000円～7,000円前後",
+        "cost_result": {"cost_status": "confirmed", "can_announce_cost": True},
+        "vendor_result": {"needs_escalation": False},
+        "warranty_result": {"warranty_status": "active", "title": "保証期間内"},
+        "working_form": {"appliance_type": "住設", "warranty_plan": ""},
+        "repair_result": {},
+        "normalized_product": "システムキッチン",
+        "script_result": {
+            "sheet_name": "未登録住設",
+            "part": "未登録住設",
+            "script_type": "通常",
+            "display_name": "住設・出張修理",
+            "price_guidance_allowed": True,
+        },
+    }
+
+    info = app.build_script_reference_info(decision)
+
+    assert info["matched"] is False
+    assert info["display"] == "住設・出張修理"
+    assert "住設スクリプト未登録" in info["message"]
+    assert "家電・出張修理" not in info["label"]
 
 
 def test_visit_vendor_list_no7_fallback_applies_to_generic_store():
