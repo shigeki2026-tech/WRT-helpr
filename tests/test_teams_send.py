@@ -1654,6 +1654,32 @@ def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
     assert unknown["arrangement_method"] == ""
 
 
+def test_confirmed_vendor_block_does_not_show_stale_escalation_candidate():
+    card = app.build_vendor_candidate_card_info(
+        "ユナイトサービス㈱",
+        {"reason": "依頼先一覧 No.7 上記以外・全国・全メーカー", "needs_escalation": False},
+    )
+    block = app.format_confirmed_vendor_block("ユナイトサービス㈱", card)
+
+    assert "修理拠点：" in block
+    assert "ユナイトサービス㈱" in block
+    assert "状態：確定" in block
+    assert "手配方法：メール依頼" in block
+    assert "連絡先：担当確認" in block
+    assert "担当エスカ（要確認）" not in block
+    assert "拠点候補：担当エスカ（要確認）" not in block
+
+
+def test_after_call_history_template_keys_include_content_hash_to_avoid_stale_empty_display():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert 'key=f"history_after_{stable_hash_text(history_tmpl, 12)}"' in after_source
+    assert 'key=f"history_display_{stable_hash_text(history_tmpl, 12)}"' in source
+
+
 def test_after_call_display_uses_repair_request_memo_not_attention_memo():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")

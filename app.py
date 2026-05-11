@@ -2093,6 +2093,17 @@ def build_vendor_candidate_card_info(vendor: str, vendor_result: dict | None = N
     }
 
 
+def format_confirmed_vendor_block(vendor: str, vendor_card: dict) -> str:
+    arrangement = vendor_card.get("arrangement_method") or "手配方法を確認"
+    contact = vendor_card.get("contact") or "連絡先を確認"
+    return (
+        f"修理拠点：\n{vendor or '未確定'}\n\n"
+        "状態：確定\n\n"
+        f"手配方法：{arrangement}\n\n"
+        f"連絡先：{contact}"
+    )
+
+
 def resolve_vendor_handoff_info(vendor: str, contact_type: str = "") -> dict:
     vendor_text = (vendor or "").strip()
     if get_request_pdf_folder_info(vendor_text).get("required"):
@@ -6255,9 +6266,7 @@ def render_tab_call():
                 unsafe_allow_html=True,
             )  # UI v3
         else:  # UI v3
-            arrangement = vendor_card.get("arrangement_method") or "手配方法を確認"
-            contact = vendor_card.get("contact") or "連絡先を確認"
-            st.success(f"✅ 拠点確定：{vendor}\n\n手配方法：{arrangement}\n\n連絡先：{contact}")  # UI v3
+            st.success(f"✅ 拠点確定：{vendor}\n\n{format_confirmed_vendor_block(vendor, vendor_card)}")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
@@ -6329,7 +6338,12 @@ def render_tab_call():
                 st.session_state.form, repair_type, script_result, cost_estimate, vendor,
                 warranty_result, diagnostics)
             st.markdown("##### 📄 対応履歴テンプレ")
-            st.text_area("履歴テンプレ（コピーして使用）", history_tmpl, height=110, key="history_display")
+            st.text_area(
+                "履歴テンプレ（コピーして使用）",
+                history_tmpl,
+                height=110,
+                key=f"history_display_{stable_hash_text(history_tmpl, 12)}",
+            )
 
         if should_offer_master_registration_candidate(st.session_state.form, decision):
             with st.expander("マスタ登録候補", expanded=False):
@@ -6522,11 +6536,14 @@ def render_tab_after_call():
 
         st.divider()
 
-        st.markdown("##### 🏭 修理拠点候補")
         vr = decision["vendor_result"]
         vendor_card = build_vendor_candidate_card_info(vendor, vr)
-        if vr["matched"]:
-            st.info(f"{vendor}\n\n状態：{'終話後エスカ' if vr.get('needs_escalation') else '確定'}")
+        if vr["matched"] and not vr.get("needs_escalation"):
+            st.markdown("##### 🏭 修理拠点")
+            st.info(format_confirmed_vendor_block(vendor, vendor_card))
+        elif vr["matched"]:
+            st.markdown("##### 🏭 修理拠点候補")
+            st.info(f"{vendor}\n\n状態：終話後エスカ")
             if vr["needs_escalation"]:
                 esc = vendor_card["escalation"]
                 st.warning(
@@ -6535,6 +6552,7 @@ def render_tab_after_call():
                     f"次アクション：{esc['next_action']}"
                 )
         else:
+            st.markdown("##### 🏭 修理拠点候補")
             st.info(vendor)
 
         request_folder = vendor_card["request_folder"]
@@ -6812,7 +6830,12 @@ def render_tab_after_call():
                         st.caption(log["error_message"])
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
-    st.text_area("履歴テンプレ", history_tmpl, height=300, key="history_after")
+    st.text_area(
+        "履歴テンプレ",
+        history_tmpl,
+        height=300,
+        key=f"history_after_{stable_hash_text(history_tmpl, 12)}",
+    )
 
 
 # ============================================================
