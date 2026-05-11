@@ -625,7 +625,9 @@ def build_hearing_summary_lines(form: dict) -> list[str]:
 
 def build_attention_memo_preview_lines(form: dict) -> list[str]:
     return [
-        f"{label}：{get_hearing_value(form, field) if field in HEARING_INPUT_FIELD_IDS else str(form.get(field) or '').strip()}"
+        sanitize_generated_body_text(
+            f"{label}：{get_hearing_value(form, field) if field in HEARING_INPUT_FIELD_IDS else str(form.get(field) or '').strip()}"
+        )
         for field, label in HEARING_SUMMARY_FIELDS[:3]
     ]
 
@@ -5734,7 +5736,7 @@ def render_call_hearing_inputs(form: dict) -> None:
         placeholder="例：朝だけ、使用中だけ",
     )
     st.info(
-        "📋 修理依頼書メモ反映予定\n"
+        "修理依頼書メモ反映予定\n"
         + "\n".join(build_attention_memo_preview_lines(form))
     )
     st.session_state.form = form

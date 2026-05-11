@@ -525,6 +525,20 @@ def test_attention_memo_preview_uses_occurrence_free_text_values():
     ]
 
 
+def test_attention_memo_preview_lines_remove_body_clipboard_icon():
+    form = app.empty_form()
+    form.update({
+        "symptom_detail": "📋電源が付かない",
+        "occurrence_time_choice": "購入直後",
+        "occurrence_frequency_choice": "常時",
+    })
+
+    lines = app.build_attention_memo_preview_lines(form)
+
+    assert lines[0] == "具体的な症状：電源が付かない"
+    assert all("📋" not in line for line in lines)
+
+
 def test_attention_memo_regeneration_uses_occurrence_free_text_values():
     form = app.empty_form()
     form.update({
@@ -874,6 +888,7 @@ def test_attention_memo_preview_is_in_hearing_block_only():
     now_action_source = source[now_action_index:summary_index]
 
     assert "修理依頼書メモ反映予定" in hearing_source
+    assert "📋 修理依頼書メモ反映予定" not in hearing_source
     assert "attention_preview_lines = build_attention_memo_preview_lines" not in now_action_source
 
 
