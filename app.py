@@ -1875,7 +1875,8 @@ def render_vendor_send_template_text(template_text: str, context: dict) -> str:
         key = match.group(1).strip()
         return str(context.get(key, ""))
 
-    return re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", replace, template_text or "")
+    rendered = re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", replace, template_text or "")
+    return rendered.replace("📋", "")
 
 
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
@@ -2079,7 +2080,8 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
 def build_vendor_candidate_card_info(vendor: str, vendor_result: dict | None = None) -> dict:
     vendor_result = vendor_result or {}
     folder = get_request_pdf_folder_info(vendor)
-    action = "依頼書PDF格納" if folder.get("required") else ""
+    handoff = resolve_vendor_handoff_info(vendor, vendor_result.get("contact_type", ""))
+    action = "依頼書PDF格納" if folder.get("required") else handoff.get("arrangement_method", "")
     return {
         "vendor": vendor,
         "reason": (vendor_result.get("reason") or "").strip(),
@@ -2087,14 +2089,29 @@ def build_vendor_candidate_card_info(vendor: str, vendor_result: dict | None = N
         "escalation": build_vendor_escalation_info(vendor, vendor_result) if vendor_result.get("needs_escalation") else {},
         "request_folder": folder,
         "arrangement_method": action,
+        "contact": handoff.get("contact", ""),
     }
 
 
-def resolve_teams_request_action(form: dict, vendor: str, contact_type: str = "") -> str:
-    manual_action = (form.get("teams_action") or "").strip()
-    if manual_action:
-        return manual_action
+def resolve_vendor_handoff_info(vendor: str, contact_type: str = "") -> dict:
+    vendor_text = (vendor or "").strip()
+    if get_request_pdf_folder_info(vendor_text).get("required"):
+        return {"arrangement_method": "依頼書PDF格納", "contact": "担当確認"}
+    if "ユナイトサービス" in vendor_text or "ユナイト" in vendor_text:
+        return {"arrangement_method": "メール依頼", "contact": "担当確認"}
+    if "ソフマップ" in vendor_text:
+        return {"arrangement_method": "所定フォーム", "contact": "担当確認"}
+    if "宗建リノベーション" in vendor_text:
+        return {"arrangement_method": "電話依頼", "contact": "担当確認"}
+    if contact_type == "callback" or "翌営業日折り返し" in vendor_text:
+        return {"arrangement_method": "折り返し対応", "contact": "担当確認"}
+    return {"arrangement_method": "", "contact": ""}
 
+
+TEAMS_AUTO_ACTIONS = {"依頼書PDF格納済み", "FAX済み", "メール依頼済み", "担当確認依頼済み", "折り返し対応依頼済み", "手配済み"}
+
+
+def _auto_teams_request_action(vendor: str, contact_type: str = "") -> str:
     vendor_text = (vendor or "").strip()
     if contact_type == "callback" or "翌営業日折り返し" in vendor_text:
         return "折り返し対応依頼済み"
@@ -2105,6 +2122,23 @@ def resolve_teams_request_action(form: dict, vendor: str, contact_type: str = ""
     if "担当エスカ" in vendor_text or "要確認" in vendor_text:
         return "担当確認依頼済み"
     return "手配済み"
+
+
+def resolve_teams_request_action(form: dict, vendor: str, contact_type: str = "") -> str:
+    manual_action = (form.get("teams_action") or "").strip()
+    if manual_action:
+        return manual_action
+
+    return _auto_teams_request_action(vendor, contact_type)
+
+
+def form_for_current_teams_generation(form: dict, vendor: str, contact_type: str = "") -> dict:
+    current_auto_action = _auto_teams_request_action(vendor, contact_type)
+    manual_action = (form.get("teams_action") or "").strip()
+    if manual_action in TEAMS_AUTO_ACTIONS and manual_action != current_auto_action:
+        form = form.copy()
+        form["teams_action"] = ""
+    return form
 
 
 def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -> str:
@@ -6222,7 +6256,8 @@ def render_tab_call():
             )  # UI v3
         else:  # UI v3
             arrangement = vendor_card.get("arrangement_method") or "手配方法を確認"
-            st.success(f"✅ 拠点確定：{vendor}\n\n手配方法：{arrangement}")  # UI v3
+            contact = vendor_card.get("contact") or "連絡先を確認"
+            st.success(f"✅ 拠点確定：{vendor}\n\n手配方法：{arrangement}\n\n連絡先：{contact}")  # UI v3
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
@@ -6637,9 +6672,10 @@ def render_tab_after_call():
         )
         st.caption("自動判定と異なる場合のみ変更")
         st.session_state.form = form
-        generated_teams_message = _build_teams_chat_message(form, vendor, contact_type)
+        teams_generation_form = form_for_current_teams_generation(form, vendor, contact_type)
+        generated_teams_message = _build_teams_chat_message(teams_generation_form, vendor, contact_type)
         teams_hash = get_after_call_regeneration_hash(
-            form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
+            teams_generation_form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
         if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
             st.warning("基本項目が変更されています。Teams報告文を再生成してください。")

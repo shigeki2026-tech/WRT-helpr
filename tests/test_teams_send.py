@@ -1583,6 +1583,77 @@ def test_after_call_template_and_vendor_reasons_are_separated_for_ai_koumuten():
     assert "アイ工務店上位5社案件はユナイトサービスへ依頼" not in str(summary)
 
 
+def test_ai_koumuten_teams_regeneration_uses_current_unite_vendor_not_stale_escalation():
+    form = app.empty_form()
+    form.update({
+        "product": "システムキッチン",
+        "series": "システムキッチン",
+        "manufacturer": "パナソニック",
+        "prefecture": "滋賀県",
+        "appliance_type": "家電",
+        "store_name": "滋賀支店",
+        "store_original": "株式会社アイ工務店",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "genre": "(新品)住宅設備機器",
+        "category": "システムキッチン",
+        "operator_name": "大濱",
+        "teams_action": "担当確認依頼済み",
+        "teams_chat_message": "担当エスカ（要確認）へ担当確認依頼済み\nご確認お願いします。大濱",
+    })
+    decision = app.run_decision(form)
+    generation_form = app.form_for_current_teams_generation(
+        form,
+        decision["vendor"],
+        decision["vendor_result"].get("contact_type", ""),
+    )
+    message = app._build_teams_chat_message(
+        generation_form,
+        decision["vendor"],
+        decision["vendor_result"].get("contact_type", ""),
+    )
+
+    assert "ユナイトサービス㈱" in message
+    assert "ユナイトサービス㈱へFAX済み" in message
+    assert "担当エスカ（要確認）" not in message
+    assert "担当確認依頼済み" not in message
+
+
+def test_ai_koumuten_0058_memo_estimated_fee_has_no_body_emoji():
+    form = app.empty_form()
+    form.update({
+        "template_code": "0058",
+        "template_label": "【出張修理】上位5社",
+        "product": "システムキッチン",
+        "manufacturer": "パナソニック",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+    })
+    memo = app._build_after_call_memo(
+        form,
+        {"title": "保証期間内"},
+        "出張修理",
+        "ユナイトサービス㈱",
+        cost_estimate="5,000円～7,000円前後",
+    )
+
+    assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
+    assert "※📋修理キャンセル時" not in memo
+
+
+def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
+    card = app.build_vendor_candidate_card_info(
+        "ユナイトサービス㈱",
+        {"reason": "依頼先一覧 No.7 上記以外・全国・全メーカー", "needs_escalation": False},
+    )
+    unknown = app.build_vendor_candidate_card_info(
+        "未登録業者",
+        {"reason": "", "needs_escalation": False},
+    )
+
+    assert card["arrangement_method"] == "メール依頼"
+    assert card["contact"] == "担当確認"
+    assert unknown["arrangement_method"] == ""
+
+
 def test_after_call_display_uses_repair_request_memo_not_attention_memo():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
