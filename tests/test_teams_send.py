@@ -414,6 +414,45 @@ def test_rakutel_text_does_not_generate_blank_line_header():
     assert "【回線に入電】" not in text
 
 
+def test_residential_case_uses_jusetsu_call_line_and_rakutel_header_when_home_line_is_default():
+    form = app.empty_form()
+    form.update({
+        "call_line": "家電保証対応業務（24時間）",
+        "appliance_type": "家電",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "genre": "(新品)住宅設備機器",
+        "category": "システムキッチン",
+        "series": "システムキッチン",
+        "product": "システムキッチン",
+        "manufacturer": "パナソニック",
+        "prefecture": "滋賀県",
+    })
+
+    decision = app.run_decision(form)
+    rakutel_text = app._build_rakutel_text(decision["working_form"], "加入者", "")
+    teams_message = app._build_teams_chat_message(decision["working_form"], "ユナイトサービス㈱")
+
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert decision["working_form"]["call_line"] == "住設"
+    assert "【住設回線に入電】" in rakutel_text
+    assert "【家電回線に入電】" not in rakutel_text
+    assert teams_message.splitlines()[0] == "住設"
+
+
+def test_manual_call_line_prevents_residential_auto_call_line_override():
+    form = app.empty_form()
+    form.update({
+        "call_line": "家電",
+        "manual_call_line": True,
+        "appliance_type": "家電",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "product": "システムキッチン",
+    })
+
+    assert app.effective_call_line_for_form(form) == "家電"
+    assert "【家電回線に入電】" in app._build_rakutel_text(form, "加入者", "")
+
+
 def test_teams_chat_message_is_plain_text_before_send():
     form = app.empty_form()
     form.update({
@@ -660,6 +699,8 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
         "pasted_text": "old pasted",
         "extracted": {"product": "ドライヤー"},
         "memo_after": "old memo",
+        "memo_after_widget": "old memo",
+        "_memo_after_widget_synced": "old memo",
         "rakutel_text_display": "old rakutel",
         "teams_chat_message_display": "old teams",
         "call_memo_input": "old call memo",
@@ -691,6 +732,8 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert "teams_send_confirmed" not in state
     assert "request_pdf_storage_confirmed" not in state
     assert "call_memo_input" not in state
+    assert "memo_after_widget" not in state
+    assert "_memo_after_widget_synced" not in state
     assert "after_call_memo_display" not in state
     assert "call_memo_common_call" not in state
     assert "call_memo_common_after" not in state
@@ -1639,6 +1682,27 @@ def test_ai_koumuten_0058_memo_estimated_fee_has_no_body_emoji():
     assert "※📋修理キャンセル時" not in memo
 
 
+def test_repair_request_memo_sanitizes_stale_body_emoji_for_display_and_copy():
+    dirty_memo = "具体的な症状：\n※📋修理キャンセル時の概算費用5,000円～7,000円前後"
+    clean_memo = app.sanitize_generated_body_text(dirty_memo)
+
+    assert clean_memo == "具体的な症状：\n※修理キャンセル時の概算費用5,000円～7,000円前後"
+
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    memo_area = after_source[
+        after_source.index('memo_display = st.text_area('):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+
+    assert 'key=memo_widget_key' in memo_area
+    assert '"memo_after_widget"' in after_source
+    assert 'form["attention_memo"] = sanitize_generated_body_text(memo_display)' in memo_area
+    assert 'render_copy_button("📋 修理依頼書メモをコピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_area
+
+
 def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
     card = app.build_vendor_candidate_card_info(
         "ユナイトサービス㈱",
@@ -1789,8 +1853,8 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
 
     assert "st.code(" not in memo_area
     assert "コピー用：修理依頼書メモ" not in memo_area
-    assert 'render_copy_button("📋 修理依頼書メモをコピー", form["attention_memo"], "copy_attention_memo")' in memo_area
-    assert memo_area.index('form["attention_memo"] = memo_display') < memo_area.index("copy_attention_memo")
+    assert 'render_copy_button("📋 修理依頼書メモをコピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_area
+    assert memo_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_area.index("copy_attention_memo")
 
     assert "st.code(" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area
@@ -1825,7 +1889,7 @@ def test_after_call_copy_buttons_reference_regenerated_session_values():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    attention_regen = after_source.index('st.session_state["memo_after"] = form["attention_memo"]')
+    attention_regen = after_source.index('st.session_state[memo_widget_key] = form["attention_memo"]')
     attention_copy = after_source.index("copy_attention_memo")
     rakutel_regen = after_source.index('st.session_state["rakutel_text_display"] = form["rakutel_text"]')
     rakutel_copy = after_source.index("copy_rakutel_text")
@@ -1835,6 +1899,24 @@ def test_after_call_copy_buttons_reference_regenerated_session_values():
     assert attention_regen < attention_copy
     assert rakutel_regen < rakutel_copy
     assert teams_regen < teams_copy
+
+
+def test_after_call_memo_widget_key_is_not_modified_after_text_area_instantiation():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    memo_area = after_source[
+        after_source.index('memo_display = st.text_area('):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+    after_widget = memo_area[memo_area.index('memo_display = st.text_area('):]
+
+    assert 'key="memo_after"' not in memo_area
+    assert 'key=memo_widget_key' in memo_area
+    assert 'st.session_state[memo_widget_key] =' not in after_widget
+    assert 'st.session_state["memo_after_widget"] =' not in after_widget
+    assert 'st.session_state["memo_after"] =' not in after_source
 
 
 def test_push_bat_does_not_use_git_add_dot_and_pushes_origin_main():

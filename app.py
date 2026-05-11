@@ -1474,6 +1474,31 @@ def infer_appliance_type_from_form(form: dict, current_value: str = "") -> str:
     return current
 
 
+DEFAULT_HOME_CALL_LINE_VALUES = {
+    "",
+    "家電",
+    "家電保証対応業務（24時間）",
+    "家電業務",
+}
+
+
+def should_auto_use_residential_call_line(form: dict) -> bool:
+    if form.get("call_line_manual") or form.get("manual_call_line"):
+        return False
+    appliance_type = infer_appliance_type_from_form(form, form.get("appliance_type", ""))
+    if appliance_type != "住設":
+        return False
+    raw_call_line = (form.get("call_line") or "").strip()
+    normalized_call_line = normalize_call_line_for_display(raw_call_line)
+    return raw_call_line in DEFAULT_HOME_CALL_LINE_VALUES or normalized_call_line in {"", "家電"}
+
+
+def effective_call_line_for_form(form: dict) -> str:
+    if should_auto_use_residential_call_line(form):
+        return "住設"
+    return normalize_call_line_for_display(form.get("call_line", ""))
+
+
 def _auto_select_template_from_candidates(df_tpl: pd.DataFrame, repair_type: str, warranty_plan: str) -> str:
     """
     - warranty_plan に「物損」「ダブル」「DP」のいずれかを含む → ダブルプロテクト系を優先
@@ -1876,7 +1901,12 @@ def render_vendor_send_template_text(template_text: str, context: dict) -> str:
         return str(context.get(key, ""))
 
     rendered = re.sub(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", replace, template_text or "")
-    return rendered.replace("📋", "")
+    return sanitize_generated_body_text(rendered)
+
+
+def sanitize_generated_body_text(text: str) -> str:
+    """Remove UI-only icons that must not leak into generated business text."""
+    return str(text or "").replace("📋", "")
 
 
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
@@ -1921,7 +1951,7 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
         context = build_vendor_send_template_context(
             form, warranty_result, repair_type, vendor, cost_estimate
         )
-        return render_vendor_send_template_text(attention_template, context)
+        return sanitize_generated_body_text(render_vendor_send_template_text(attention_template, context))
 
     dp_note = ""
     if is_double_protect_plan(form.get("warranty_plan", "")):
@@ -1942,7 +1972,7 @@ def _build_after_call_memo(form: dict, warranty_result: dict, repair_type: str,
         memo += "\n\n【販売店別注意】\n" + "\n".join(f"- {note}" for note in store_attention_notes)
     if notes_filled:
         memo += f"\n\n【備考】\n{notes_filled}"
-    return memo
+    return sanitize_generated_body_text(memo)
 
 
 def _rakutel_call_direction(form: dict) -> str:
@@ -1970,7 +2000,7 @@ def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
 
 
 def _rakutel_call_heading(form: dict) -> str:
-    return build_rakutel_call_header(form.get("call_line", ""), _rakutel_call_direction(form))
+    return build_rakutel_call_header(effective_call_line_for_form(form), _rakutel_call_direction(form))
 
 
 def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") -> str:
@@ -2154,7 +2184,7 @@ def form_for_current_teams_generation(form: dict, vendor: str, contact_type: str
 
 def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -> str:
     rakuteru = (form.get("rakuteru_no") or "").strip()
-    case_name = normalize_call_line_for_display(form.get("call_line", ""))
+    case_name = effective_call_line_for_form(form)
     product = (form.get("product") or "").strip()
     send_to = (vendor or "").strip()
     action = resolve_teams_request_action(form, vendor, contact_type)
@@ -2545,6 +2575,8 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
     session_state["master_registration_candidate"] = {}
     for key in [
         "memo_after",
+        "memo_after_widget",
+        "_memo_after_widget_synced",
         "rakutel_text_display",
         "teams_chat_message_display",
         "teams_send_confirmed",
@@ -4024,6 +4056,7 @@ def determine_script_route(form: dict, repair_type: str) -> dict:
         return result
     if get_line_group(call_line) == "住設":
         result.update(sheet_name="住設【既築／中古のみ】", part="既築・中古住設受付",
+                      display_name="住設・出張修理" if repair_type == "出張修理" else "住設受付",
                       reason="住設回線")
         return result
     if appliance_type == "住設":
@@ -4798,6 +4831,8 @@ def run_decision(form: dict) -> dict:
         working_form,
         working_form.get("appliance_type", ""),
     )
+    if should_auto_use_residential_call_line(working_form):
+        working_form["call_line"] = "住設"
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -5187,6 +5222,8 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
             if widget_value == form_value:
                 pass
             elif last_value is not None and widget_value != last_value:
+                if field == "call_line":
+                    form["manual_call_line"] = True
                 form[field] = widget_value
                 form_value = widget_value
             elif not form_value and widget_value:
@@ -5557,6 +5594,13 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         appliance_widget_key = case_basic_widget_key("appliance_type", revision)
         if appliance_widget_key in st.session_state:
             st.session_state[appliance_widget_key] = inferred_appliance_type
+    if should_auto_use_residential_call_line(form):
+        form["call_line"] = "住設"
+        call_line_widget_key = case_basic_widget_key("call_line", revision)
+        if call_line_widget_key in st.session_state:
+            st.session_state[call_line_widget_key] = "住設"
+    if form.get("call_line") and form.get("call_line") not in call_line_opts:
+        call_line_opts = [form.get("call_line")] + call_line_opts
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         form["call_line"] = st.selectbox(
@@ -6588,28 +6632,43 @@ def render_tab_after_call():
         # ── 修理依頼書メモ（備考欄反映）──
         st.markdown("##### 📝 修理依頼書メモ")
         notes_filled = _fill_template_notes(selected_notes, form)
-        generated_attention_memo = _build_after_call_memo(
-            form, warranty_result, repair_type, vendor, notes_filled, cost_estimate)
+        generated_attention_memo = sanitize_generated_body_text(_build_after_call_memo(
+            form, warranty_result, repair_type, vendor, notes_filled, cost_estimate))
+        form["attention_memo"] = sanitize_generated_body_text(form.get("attention_memo", ""))
         attention_hash = get_after_call_regeneration_hash(
             form, "attention_memo", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
         if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
             st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
+        memo_widget_key = "memo_after_widget"
         if st.button("修理依頼書メモを再生成", key="regenerate_attention_memo", use_container_width=True):
-            form["attention_memo"] = generated_attention_memo
-            st.session_state["memo_after"] = form["attention_memo"]
+            form["attention_memo"] = sanitize_generated_body_text(generated_attention_memo)
+            st.session_state[memo_widget_key] = form["attention_memo"]
+            st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
             mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
         st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
 
+        memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
+        if memo_widget_key in st.session_state:
+            widget_value = sanitize_generated_body_text(st.session_state.get(memo_widget_key, ""))
+            if widget_value != st.session_state.get("_memo_after_widget_synced"):
+                memo_value = widget_value
+                form["attention_memo"] = memo_value
+            else:
+                st.session_state[memo_widget_key] = memo_value
+        else:
+            st.session_state[memo_widget_key] = memo_value
+        st.session_state["_memo_after_widget_synced"] = memo_value
         memo_display = st.text_area(
             "修理依頼書メモ",
-            form.get("attention_memo") or generated_attention_memo,
+            memo_value,
             height=260,
-            key="memo_after",
+            key=memo_widget_key,
         )
-        form["attention_memo"] = memo_display
-        render_copy_button("📋 修理依頼書メモをコピー", form["attention_memo"], "copy_attention_memo")
+        form["attention_memo"] = sanitize_generated_body_text(memo_display)
+        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+        render_copy_button("📋 修理依頼書メモをコピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
 
         # ── ラクテル用テキスト ──
         st.markdown("##### 📝 ラクテル用テキスト")
