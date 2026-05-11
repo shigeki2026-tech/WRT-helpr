@@ -1652,6 +1652,41 @@ def build_template_selection_reason(selection: dict) -> str:
     return " / ".join(_dedupe_preserve_order(reasons))
 
 
+def build_after_call_template_vendor_summary(form: dict, decision: dict,
+                                             template_selection: dict,
+                                             selected_option: str = "") -> dict:
+    """終話後処理のテンプレート理由と拠点理由を混ぜずに表示するための要約。"""
+    store_rule = template_selection.get("store_rule") or {}
+    template_label = selected_option or _template_option_label({
+        "template_code": template_selection.get("template_code", ""),
+        "label": template_selection.get("label", ""),
+    })
+    template_reason = (
+        store_rule.get("notes")
+        or store_rule.get("template_group")
+        or store_rule.get("template_label")
+        or build_template_selection_reason(template_selection)
+        or "回線・修理形態・保証プラン"
+    )
+    vendor_result = decision.get("vendor_result", {}) or {}
+    vendor = decision.get("vendor", "")
+    return {
+        "template": template_label,
+        "template_reason": template_reason,
+        "template_source_label": store_rule.get("matched_source_label") or "判定根拠",
+        "template_source_value": (
+            store_rule.get("matched_source_value")
+            or store_rule.get("normalized_store")
+            or store_rule.get("store_keyword")
+            or ""
+        ),
+        "display_store": store_rule.get("display_store") or form.get("store_name", ""),
+        "vendor": vendor,
+        "vendor_reason": vendor_result.get("reason", ""),
+        "vendor_status": "終話後エスカ" if vendor_result.get("needs_escalation") else "確定",
+    }
+
+
 def build_template_candidates_for_form(form: dict, repair_type: str, warranty_plan: str,
                                        df_tpl: pd.DataFrame, selected: dict = None) -> list[dict]:
     """
@@ -6404,10 +6439,22 @@ def render_tab_after_call():
                     key="tpl_label_select_after",
                 )
                 if auto_option:
-                    st.markdown(f"自動判定：{auto_option}")
-                    reason = build_template_selection_reason(template_selection)
-                    if reason:
-                        st.caption(f"理由：{reason}")
+                    summary = build_after_call_template_vendor_summary(
+                        form, decision, template_selection, selected_option_val or auto_option
+                    )
+                    st.markdown("**テンプレート：**")
+                    st.markdown(summary["template"])
+                    if summary["template_reason"]:
+                        st.caption(f"理由：{summary['template_reason']}")
+                    if summary["template_source_value"]:
+                        st.caption(f"判定根拠：{summary['template_source_label']} {summary['template_source_value']}")
+                    if summary["display_store"]:
+                        st.caption(f"表示販売店：{summary['display_store']}")
+                    st.markdown("**修理拠点：**")
+                    st.markdown(summary["vendor"] or "未確定")
+                    if summary["vendor_reason"]:
+                        st.caption(f"理由：{summary['vendor_reason']}")
+                    st.caption(f"状態：{summary['vendor_status']}")
                 with st.expander("候補テンプレートの詳細を見る", expanded=False):
                     st.caption("選択可能テンプレート：")
                     for option_label in option_rows.keys():
@@ -6444,7 +6491,7 @@ def render_tab_after_call():
         vr = decision["vendor_result"]
         vendor_card = build_vendor_candidate_card_info(vendor, vr)
         if vr["matched"]:
-            st.info(f"{vendor}\n\n（判定根拠: {vr.get('reason','')}）")
+            st.info(f"{vendor}\n\n状態：{'終話後エスカ' if vr.get('needs_escalation') else '確定'}")
             if vr["needs_escalation"]:
                 esc = vendor_card["escalation"]
                 st.warning(

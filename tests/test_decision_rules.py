@@ -1505,6 +1505,7 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
         app.load_template_codes(),
     )
     display = app.build_case_basic_template_display(form, decision["repair_type"])
+    summary = app.build_after_call_template_vendor_summary(form, decision, selected)
     form.update({
         "template_code": selected["template_code"],
         "template_label": selected["label"],
@@ -1542,6 +1543,10 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     check("AI工務店 vendor not escalation", decision["vendor"] != "担当エスカ（要確認）", True)
     check("AI工務店 template code", selected["template_code"], "0058")
     check("AI工務店 template label", selected["label"], "【出張修理】上位5社")
+    check("AI工務店 after-call template reason", summary["template_reason"], "アイ工務店 上位5社テンプレート対象")
+    check("AI工務店 after-call vendor reason", summary["vendor_reason"], "依頼先一覧 No.7 上記以外・全国・全メーカー")
+    assert summary["template_reason"] != summary["vendor_reason"]
+    assert "アイ工務店上位5社案件はユナイトサービスへ依頼" not in str(summary)
     assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
     check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
     check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")

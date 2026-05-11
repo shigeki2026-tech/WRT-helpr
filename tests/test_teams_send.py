@@ -1535,7 +1535,12 @@ def test_after_call_template_auto_and_candidate_display_exists():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert "自動判定：" in after_source
+    assert "**テンプレート：**" in after_source
+    assert "**修理拠点：**" in after_source
+    assert after_source.index("**テンプレート：**") < after_source.index("**修理拠点：**")
+    assert "summary[\"template_reason\"]" in after_source
+    assert "summary[\"vendor_reason\"]" in after_source
+    assert after_source.index("summary[\"template_reason\"]") < after_source.index("summary[\"vendor_reason\"]")
     assert "理由：" in after_source
     assert '"テンプレートを選択"' in after_source
     assert "selected_option_val = st.selectbox(" in after_source
@@ -1543,6 +1548,39 @@ def test_after_call_template_auto_and_candidate_display_exists():
     assert "選択可能テンプレート：" in after_source
     assert after_source.index("候補テンプレートの詳細を見る") < after_source.index("選択可能テンプレート：")
     assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+
+
+def test_after_call_template_and_vendor_reasons_are_separated_for_ai_koumuten():
+    form = app.empty_form()
+    form.update({
+        "product": "システムキッチン",
+        "series": "システムキッチン",
+        "manufacturer": "パナソニック",
+        "prefecture": "滋賀県",
+        "appliance_type": "家電",
+        "store_name": "滋賀支店",
+        "store_original": "株式会社アイ工務店",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "genre": "(新品)住宅設備機器",
+        "category": "システムキッチン",
+    })
+    decision = app.run_decision(form)
+    selected = app.select_template_for_form(
+        form,
+        decision["repair_type"],
+        form["warranty_plan"],
+        app.load_template_codes(),
+    )
+    summary = app.build_after_call_template_vendor_summary(form, decision, selected)
+
+    assert summary["template"] == "0058 【出張修理】上位5社"
+    assert summary["template_reason"] == "アイ工務店 上位5社テンプレート対象"
+    assert summary["template_source_label"] == "運営会社"
+    assert summary["template_source_value"] == "株式会社アイ工務店"
+    assert summary["display_store"] == "滋賀支店"
+    assert summary["vendor"] == "ユナイトサービス㈱"
+    assert summary["vendor_reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert "アイ工務店上位5社案件はユナイトサービスへ依頼" not in str(summary)
 
 
 def test_after_call_display_uses_repair_request_memo_not_attention_memo():
