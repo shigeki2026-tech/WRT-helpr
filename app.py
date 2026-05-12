@@ -33,6 +33,7 @@ DEFAULT_TEAMS_CONFIG = {
     "chat_name": "WRT報告用チャット",
     "send_mode": "powershell_graph",
 }
+SUPPORTED_TEAMS_SEND_MODES = {"powershell_graph"}
 REQUEST_PDF_FOLDERS = {
     "wrt": {
         "name": "WRT修理受付センター",
@@ -2315,6 +2316,8 @@ def teams_config_unavailable_reasons(config: dict) -> list[str]:
         reasons.append("config/teams_config.json が未作成、または enabled=false")
     if not (config.get("chat_id") or "").strip():
         reasons.append("chat_id が未設定")
+    if (config.get("send_mode") or "").strip() not in SUPPORTED_TEAMS_SEND_MODES:
+        reasons.append("send_mode は powershell_graph を指定してください")
     if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
         reasons.append("送信スクリプトが利用できない")
     if config.get("error"):
@@ -2385,10 +2388,13 @@ def build_teams_send_incomplete_reasons(
     pdf_storage_confirmed: bool,
     vendor: str,
     contact_type: str = "",
+    already_sent: bool = False,
 ) -> list[str]:
     reasons = []
     if teams_config_unavailable_reasons(teams_config):
         reasons.append("Teams設定が未完了")
+    if already_sent:
+        reasons.append("送信済み（二重送信防止）")
 
     message = (form.get("teams_chat_message") or "").strip()
     vendor_text = (vendor or "").strip()
@@ -2647,7 +2653,8 @@ def load_teams_config() -> dict:
 
 def is_teams_send_enabled() -> bool:
     config = load_teams_config()
-    return bool(config.get("enabled") and config.get("chat_id"))
+    send_mode = (config.get("send_mode") or "").strip()
+    return bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
 
 
 def send_teams_message_via_powershell(message: str) -> dict:
@@ -2659,6 +2666,8 @@ def send_teams_message_via_powershell(message: str) -> dict:
     chat_id = (config.get("chat_id") or "").strip()
     if not config.get("enabled") or not chat_id:
         return {"ok": False, "message": "送信失敗: Teams送信設定が未完了です", "stdout": "", "stderr": ""}
+    if (config.get("send_mode") or "").strip() not in SUPPORTED_TEAMS_SEND_MODES:
+        return {"ok": False, "message": "送信失敗: send_mode は powershell_graph を指定してください", "stdout": "", "stderr": ""}
 
     if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
         return {"ok": False, "message": "送信失敗: PowerShell送信スクリプトが見つかりません", "stdout": "", "stderr": ""}
@@ -6790,7 +6799,12 @@ def render_tab_after_call():
         st.markdown("##### 🚀 Teams自動送信")
         request_folder = get_request_pdf_folder_info(vendor)
         teams_config = load_teams_config()
-        teams_enabled = bool(teams_config.get("enabled") and teams_config.get("chat_id"))
+        teams_send_mode = (teams_config.get("send_mode") or "").strip()
+        teams_enabled = bool(
+            teams_config.get("enabled")
+            and teams_config.get("chat_id")
+            and teams_send_mode in SUPPORTED_TEAMS_SEND_MODES
+        )
         chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
         config_reasons = teams_config_unavailable_reasons(teams_config)
 
@@ -6809,6 +6823,7 @@ def render_tab_after_call():
             pdf_storage_confirmed,
             vendor,
             contact_type,
+            already_sent,
         )
         send_status = teams_send_status_label(incomplete_reasons, already_sent)
         st.markdown(f"**送信先：** {chat_name}")

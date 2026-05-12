@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,20 +22,28 @@ class SessionState(dict):
         self[name] = value
 
 
-def write_config(path: Path, enabled=True, chat_id="chat-123"):
+def write_config(path: Path, enabled=True, chat_id="chat-123", send_mode="powershell_graph"):
     path.write_text(
         json.dumps({
             "enabled": enabled,
             "chat_id": chat_id,
             "chat_name": "WRT報告用チャット",
-            "send_mode": "powershell_graph",
+            "send_mode": send_mode,
         }, ensure_ascii=False),
         encoding="utf-8",
     )
 
 
 def test_teams_config_example_exists():
-    assert (ROOT / "config" / "teams_config.example.json").is_file()
+    example_path = ROOT / "config" / "teams_config.example.json"
+    assert example_path.is_file()
+    example = json.loads(example_path.read_text(encoding="utf-8"))
+    assert example == {
+        "enabled": False,
+        "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
+        "chat_name": "WRT報告用チャット",
+        "send_mode": "powershell_graph",
+    }
 
 
 def test_teams_config_missing_is_disabled(monkeypatch, tmp_path):
@@ -57,6 +66,15 @@ def test_teams_config_reads_chat_id_from_env(monkeypatch, tmp_path):
     assert config["chat_id"] == "env-chat-id"
 
 
+def test_teams_config_enabled_false_is_disabled(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    write_config(config_path, enabled=False, chat_id="chat-123")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("WRT_TEAMS_CHAT_ID", raising=False)
+
+    assert app.is_teams_send_enabled() is False
+
+
 def test_teams_send_disabled_without_chat_id(monkeypatch, tmp_path):
     config_path = tmp_path / "teams_config.json"
     write_config(config_path, enabled=True, chat_id="")
@@ -64,6 +82,18 @@ def test_teams_send_disabled_without_chat_id(monkeypatch, tmp_path):
     monkeypatch.delenv("WRT_TEAMS_CHAT_ID", raising=False)
 
     assert app.is_teams_send_enabled() is False
+
+
+def test_teams_send_disabled_for_unsupported_send_mode(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    write_config(config_path, enabled=True, chat_id="chat-123", send_mode="unsupported")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("WRT_TEAMS_CHAT_ID", raising=False)
+
+    config = app.load_teams_config()
+
+    assert app.is_teams_send_enabled() is False
+    assert "send_mode は powershell_graph を指定してください" in app.teams_config_unavailable_reasons(config)
 
 
 def test_empty_message_does_not_call_subprocess(monkeypatch):
@@ -581,6 +611,25 @@ def test_teams_send_validation_allows_wrt_cer_when_pdf_storage_is_checked():
     assert errors == []
 
 
+def test_teams_send_validation_allows_when_all_required_conditions_are_ready():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_action": "FAX済み",
+        "teams_chat_message": "2026_05_0174\n家電回線\nドライヤー\nユナイトサービス㈱へFAX済み",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="ユナイトサービス㈱",
+    )
+
+    assert errors == []
+
+
 def test_teams_send_validation_blocks_drive_url_in_body():
     form = {
         "rakuteru_no": "2026_05_0174",
@@ -624,6 +673,27 @@ def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
 def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label([], already_sent=False) == "送信可能"
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
+
+
+def test_teams_send_panel_reasons_include_duplicate_send_state():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_action": "FAX済み",
+        "teams_chat_message": "2026_05_0174\n家電回線\nドライヤー\nユナイトサービス㈱へFAX済み",
+    }
+    config = {"enabled": True, "chat_id": "chat-123", "send_mode": "powershell_graph"}
+
+    reasons = app.build_teams_send_incomplete_reasons(
+        form,
+        config,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="ユナイトサービス㈱",
+        already_sent=True,
+    )
+
+    assert "送信済み（二重送信防止）" in reasons
 
 
 def test_escalation_teams_message_uses_confirmation_request_not_pdf_storage():
@@ -1405,6 +1475,47 @@ def test_send_teams_message_success(monkeypatch, tmp_path):
     assert result["message"] == "送信成功"
 
 
+def test_send_teams_message_uses_chat_id_and_message_file_arguments(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    script_path = tmp_path / "send_teams_message.ps1"
+    write_config(config_path, chat_id="chat-456")
+    script_path.write_text("# test script", encoding="utf-8")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
+
+    def fake_run(args, capture_output, text, timeout):
+        assert args[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+        assert args[5] == str(script_path)
+        assert args[6:9] == ["-ChatId", "chat-456", "-MessageFile"]
+        assert Path(args[9]).read_text(encoding="utf-8") == "hello teams"
+        return SimpleNamespace(returncode=0, stdout="SUCCESS message-001\n", stderr="")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    result = app.send_teams_message_via_powershell("hello teams")
+
+    assert result["ok"] is True
+
+
+def test_send_teams_message_blocks_unsupported_send_mode(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    script_path = tmp_path / "send_teams_message.ps1"
+    write_config(config_path, send_mode="unsupported")
+    script_path.write_text("# test script", encoding="utf-8")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called")
+
+    monkeypatch.setattr(app.subprocess, "run", fail_run)
+
+    result = app.send_teams_message_via_powershell("hello teams")
+
+    assert result["ok"] is False
+    assert "send_mode は powershell_graph" in result["message"]
+
+
 def test_send_teams_message_failure(monkeypatch, tmp_path):
     config_path = tmp_path / "teams_config.json"
     script_path = tmp_path / "send_teams_message.ps1"
@@ -1423,6 +1534,22 @@ def test_send_teams_message_failure(monkeypatch, tmp_path):
     assert result["ok"] is False
     assert "送信失敗" in result["message"]
     assert result["stderr"] == "denied"
+
+
+def test_send_teams_message_script_documents_graph_contract():
+    source = (ROOT / "scripts" / "send_teams_message.ps1").read_text(encoding="utf-8")
+
+    assert "[string]$ChatId" in source
+    assert "[string]$MessageFile" in source
+    assert "Get-Content -LiteralPath $MessageFile -Raw -Encoding UTF8" in source
+    assert "Import-Module Microsoft.Graph.Authentication" in source
+    assert "Import-Module Microsoft.Graph.Teams" in source
+    assert 'Connect-MgGraph -Scopes "ChatMessage.Send"' in source
+    assert "New-MgChatMessage -ChatId $ChatId -BodyParameter $bodyParameter" in source
+    assert 'Write-Output ("SUCCESS " + $message.Id)' in source
+    assert "exit 0" in source
+    assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
+    assert "exit 1" in source
 
 
 def test_teams_send_log_includes_preview(monkeypatch):
@@ -1970,6 +2097,20 @@ def test_gitignore_excludes_codex_temp_folders():
     assert ".codex_unit_tmp/" in source
     assert "__pycache__/" in source
     assert ".pytest_cache/" in source
+
+
+def test_teams_config_json_is_gitignored_and_not_tracked():
+    gitignore_lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "config/teams_config.json"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert "config/teams_config.json" in gitignore_lines
+    assert tracked.stdout.strip() == ""
 
 
 def test_after_call_regeneration_dirty_state_helpers():
