@@ -1806,13 +1806,52 @@ def test_teams_send_preview_uses_current_teams_chat_message():
         "ご確認お願いします。大濱",
     ])
 
-    preview = app.build_teams_send_preview_lines(message)
+    preview = app.build_teams_send_preview_lines(message, "2026_05_0490")
 
     assert preview == [
         "楽テルNO：2026_05_0490",
         "回線：住設",
         "製品：システムキッチン",
         "対応：ユナイトサービス㈱へFAX済み",
+        "確認文：ご確認お願いします。大濱",
+    ]
+
+
+def test_teams_send_preview_does_not_shift_when_rakuteru_no_is_blank():
+    message = "\n".join([
+        "住設",
+        "エコキュート",
+        "ユナイトサービス㈱へFAX済み",
+        "ご確認お願いします。大濱",
+    ])
+
+    preview = app.build_teams_send_preview_lines(message, "")
+
+    assert preview == [
+        "楽テルNO：未入力",
+        "回線：住設",
+        "製品：エコキュート",
+        "対応：ユナイトサービス㈱へFAX済み",
+        "確認文：ご確認お願いします。大濱",
+    ]
+
+
+def test_teams_send_preview_keeps_rakuteru_no_from_field_even_if_message_has_no_rakuteru_line():
+    message = "\n".join([
+        "住設",
+        "エコキュート",
+        "ユナイトサービス㈱へFAX済み",
+        "ご確認お願いします。大濱",
+    ])
+
+    preview = app.build_teams_send_preview_lines(message, "2026_05_0664")
+
+    assert preview == [
+        "楽テルNO：2026_05_0664",
+        "回線：住設",
+        "製品：エコキュート",
+        "対応：ユナイトサービス㈱へFAX済み",
+        "確認文：ご確認お願いします。大濱",
     ]
 
 
@@ -2020,7 +2059,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "コピー用：Teams報告文" not in teams_area
     assert "height=160" in teams_area
     assert "送信内容プレビュー：" in teams_area
-    assert "build_teams_send_preview_lines(teams_chat_message)" in teams_area
+    assert 'build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))' in teams_area
     assert 'render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
     assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
 

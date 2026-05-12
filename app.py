@@ -2207,10 +2207,17 @@ def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -
     return "\n".join(lines)
 
 
-def build_teams_send_preview_lines(teams_chat_message: str) -> list[str]:
+def build_teams_send_preview_lines(teams_chat_message: str, rakuteru_no: str = "") -> list[str]:
     lines = [line.strip() for line in str(teams_chat_message or "").splitlines() if line.strip()]
-    labels = ["楽テルNO", "回線", "製品", "対応"]
-    return [f"{label}：{value}" for label, value in zip(labels, lines[:4])]
+    rakuteru_no = (rakuteru_no or "").strip()
+    message_lines = list(lines)
+    if rakuteru_no and message_lines and message_lines[0] == rakuteru_no:
+        message_lines = message_lines[1:]
+
+    preview = [f"楽テルNO：{rakuteru_no or '未入力'}"]
+    labels = ["回線", "製品", "対応", "確認文"]
+    preview.extend(f"{label}：{value}" for label, value in zip(labels, message_lines[:4]))
+    return preview
 
 
 def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
@@ -6789,7 +6796,7 @@ def render_tab_after_call():
             key="teams_chat_message_display",
         )
         form["teams_chat_message"] = teams_chat_message
-        teams_preview_lines = build_teams_send_preview_lines(teams_chat_message)
+        teams_preview_lines = build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))
         if teams_preview_lines:
             st.markdown("送信内容プレビュー：")
             st.info("\n".join(teams_preview_lines))
