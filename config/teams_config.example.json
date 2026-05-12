@@ -1,6 +1,6 @@
 {
   "enabled": false,
-  "chat_id": "",
+  "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
   "chat_name": "WRT報告用チャット",
   "send_mode": "powershell_graph"
 }
