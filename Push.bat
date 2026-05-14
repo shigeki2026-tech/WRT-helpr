@@ -7,6 +7,8 @@ git add app.py
 git add data
 git add tests
 git add scripts
+git add docs
+git add config/teams_config.example.json
 git add .gitignore
 git add pytest.ini
 git add Push.bat
@@ -17,6 +19,8 @@ if %ERRORLEVEL%==0 (
     pause
     exit /b 0
 )
+
+git diff --cached --stat
 
 git commit -m "update"
 git push origin main

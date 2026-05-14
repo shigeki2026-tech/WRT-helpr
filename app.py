@@ -2334,10 +2334,15 @@ def teams_config_unavailable_reasons(config: dict) -> list[str]:
 
 def _teams_case_already_sent(session_state, form: dict) -> bool:
     message = (form.get("teams_chat_message") or "").strip()
+    body_hash = _teams_message_body_hash(form)
+    sent_body_hash = session_state.get("teams_sent_body_hash")
     return bool(
         session_state.get("teams_sent")
         and message
-        and session_state.get("teams_sent_message") == message
+        and (
+            (body_hash and sent_body_hash and sent_body_hash == body_hash)
+            or (not sent_body_hash and session_state.get("teams_sent_message") == message)
+        )
     )
 
 
@@ -2357,12 +2362,35 @@ def _extract_teams_message_id(stdout: str) -> str:
 
 
 def _teams_last_send_failed(session_state, form: dict) -> bool:
-    message = (form.get("teams_chat_message") or "").strip()
+    body_hash = _teams_message_body_hash(form)
     return bool(
         session_state.get("teams_send_failed")
-        and message
-        and session_state.get("teams_send_failed_message") == message
+        and body_hash
+        and session_state.get("teams_send_failed_body_hash") == body_hash
     )
+
+
+def _teams_send_in_progress(session_state, form: dict) -> bool:
+    body_hash = _teams_message_body_hash(form)
+    return bool(
+        session_state.get("teams_send_in_progress")
+        and body_hash
+        and session_state.get("teams_send_in_progress_body_hash") == body_hash
+    )
+
+
+def _mark_teams_send_in_progress(session_state, form: dict,
+                                 now: datetime | None = None) -> None:
+    now = now or datetime.now()
+    session_state["teams_send_in_progress"] = True
+    session_state["teams_send_in_progress_body_hash"] = _teams_message_body_hash(form)
+    session_state["teams_send_started_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
+
+
+def _clear_teams_send_in_progress(session_state) -> None:
+    session_state["teams_send_in_progress"] = False
+    session_state["teams_send_in_progress_body_hash"] = ""
+    session_state["teams_send_started_at"] = ""
 
 
 def _mark_teams_message_sent(session_state, form: dict, now: datetime | None = None,
@@ -2378,8 +2406,10 @@ def _mark_teams_message_sent(session_state, form: dict, now: datetime | None = N
             session_state["teams_sent_message_id"] = message_id
     session_state["teams_send_failed"] = False
     session_state["teams_send_failed_message"] = ""
+    session_state["teams_send_failed_body_hash"] = ""
     session_state["teams_send_failed_at"] = ""
     session_state["teams_send_error_message"] = ""
+    _clear_teams_send_in_progress(session_state)
 
 
 def _mark_teams_message_send_failed(session_state, form: dict, result: dict,
@@ -2387,8 +2417,10 @@ def _mark_teams_message_send_failed(session_state, form: dict, result: dict,
     now = now or datetime.now()
     session_state["teams_send_failed"] = True
     session_state["teams_send_failed_message"] = (form.get("teams_chat_message") or "").strip()
+    session_state["teams_send_failed_body_hash"] = _teams_message_body_hash(form)
     session_state["teams_send_failed_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
     session_state["teams_send_error_message"] = result.get("message", "") or "エラー内容を取得できませんでした"
+    _clear_teams_send_in_progress(session_state)
 
 
 def validate_teams_send_request(
@@ -2472,7 +2504,9 @@ def build_teams_send_incomplete_reasons(
 
 
 def teams_send_status_label(incomplete_reasons: list[str], already_sent: bool,
-                            send_failed: bool = False) -> str:
+                            send_failed: bool = False, in_progress: bool = False) -> str:
+    if in_progress:
+        return "送信処理中"
     if already_sent:
         return "送信済み"
     if send_failed:
@@ -2653,8 +2687,12 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_sent_at",
         "teams_sent_body_hash",
         "teams_sent_message_id",
+        "teams_send_in_progress",
+        "teams_send_in_progress_body_hash",
+        "teams_send_started_at",
         "teams_send_failed",
         "teams_send_failed_message",
+        "teams_send_failed_body_hash",
         "teams_send_failed_at",
         "teams_send_error_message",
         "request_pdf_storage_confirmed",
@@ -6880,6 +6918,7 @@ def render_tab_after_call():
         action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
         effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
         already_sent = _teams_case_already_sent(st.session_state, form)
+        in_progress = _teams_send_in_progress(st.session_state, form)
         send_failed = _teams_last_send_failed(st.session_state, form)
         incomplete_reasons = build_teams_send_incomplete_reasons(
             form,
@@ -6891,7 +6930,7 @@ def render_tab_after_call():
             contact_type,
             already_sent,
         )
-        send_status = teams_send_status_label(incomplete_reasons, already_sent, send_failed)
+        send_status = teams_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
         st.markdown(f"**送信先：** {chat_name}")
         st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
         if config_reasons:
@@ -6899,13 +6938,17 @@ def render_tab_after_call():
             st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
         if send_status == "送信可能":
             st.success(f"状態：{send_status}")
+        elif send_status == "送信処理中":
+            st.info(f"状態：{send_status}")
         elif send_status == "送信済み":
             st.info(f"状態：{send_status}")
         elif send_status == "送信失敗":
             st.error(f"状態：{send_status}")
         else:
             st.warning(f"状態：{send_status}")
-        if already_sent:
+        if in_progress:
+            st.markdown("**未完了：なし**")
+        elif already_sent:
             st.markdown("**未完了：なし**")
         elif incomplete_reasons:
             st.markdown("**未完了：**")
@@ -6914,7 +6957,14 @@ def render_tab_after_call():
             st.markdown("**未完了：なし**")
         if not teams_enabled:
             st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
-        if already_sent:
+        if in_progress:
+            started_at = st.session_state.get("teams_send_started_at") or "日時不明"
+            st.info(
+                f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
+                f"送信先：{chat_name}\n"
+                f"開始時刻：{started_at}"
+            )
+        elif already_sent:
             sent_at = st.session_state.get("teams_sent_at") or "日時不明"
             st.success(f"Teamsへ送信しました。\n送信先：{chat_name}\n送信日時：{sent_at}")
             with st.expander("送信済み本文（確認用）", expanded=False):
@@ -6953,9 +7003,19 @@ def render_tab_after_call():
             if already_sent and not allow_resend:
                 st.warning("すでに送信済みです。再送する場合のみ実行してください。")
                 return
+            if in_progress:
+                st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
+                return
 
             teams_send_body = _get_teams_send_body(form)
-            result = send_teams_message_via_powershell(teams_send_body)
+            _mark_teams_send_in_progress(st.session_state, form)
+            st.info(
+                f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
+                f"送信先：{chat_name}\n"
+                f"開始時刻：{st.session_state.get('teams_send_started_at', '')}"
+            )
+            with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
+                result = send_teams_message_via_powershell(teams_send_body)
             append_teams_send_log(
                 result,
                 teams_chat_message,
@@ -6976,7 +7036,9 @@ def render_tab_after_call():
                 st.text("stderr")
                 st.code(result.get("stderr", "") or "（なし）", language=None)
 
-        if already_sent:
+        if in_progress:
+            st.button("送信処理中", disabled=True, use_container_width=True)
+        elif already_sent:
             st.button("送信済み", disabled=True, use_container_width=True)
             if st.button("同じ内容を再送する", disabled=not teams_enabled, use_container_width=True):
                 run_teams_send(allow_resend=True)

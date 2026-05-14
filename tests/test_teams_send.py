@@ -674,6 +674,7 @@ def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label([], already_sent=False) == "送信可能"
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
     assert app.teams_send_status_label([], already_sent=False, send_failed=True) == "送信失敗"
+    assert app.teams_send_status_label([], already_sent=False, in_progress=True) == "送信処理中"
 
 
 def test_teams_send_panel_reasons_include_duplicate_send_state():
@@ -732,6 +733,7 @@ def test_teams_send_validation_blocks_escalation_pdf_storage_text():
 def test_mark_teams_sent_sets_duplicate_send_state():
     state = SessionState()
     form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+    app._mark_teams_send_in_progress(state, form, datetime(2026, 5, 8, 12, 34, 50))
 
     app._mark_teams_message_sent(
         state,
@@ -746,12 +748,40 @@ def test_mark_teams_sent_sets_duplicate_send_state():
     assert state["teams_sent_body_hash"]
     assert state["teams_sent_message_id"] == "message-001"
     assert state["teams_send_failed"] is False
+    assert state["teams_send_in_progress"] is False
+    assert state["teams_send_in_progress_body_hash"] == ""
     assert app._teams_case_already_sent(state, form) is True
+
+
+def test_teams_sent_state_only_matches_same_body_hash():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+    changed_form = {"teams_chat_message": "2026_05_0174\n住設"}
+
+    app._mark_teams_message_sent(state, form, datetime(2026, 5, 8, 12, 34, 56))
+
+    assert app._teams_case_already_sent(state, form) is True
+    assert app._teams_case_already_sent(state, changed_form) is False
+
+
+def test_teams_send_in_progress_only_matches_same_body_hash():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+    changed_form = {"teams_chat_message": "2026_05_0174\n住設"}
+
+    app._mark_teams_send_in_progress(state, form, datetime(2026, 5, 8, 12, 34, 50))
+
+    assert state["teams_send_in_progress"] is True
+    assert state["teams_send_started_at"] == "2026/05/08 12:34:50"
+    assert state["teams_send_in_progress_body_hash"]
+    assert app._teams_send_in_progress(state, form) is True
+    assert app._teams_send_in_progress(state, changed_form) is False
 
 
 def test_mark_teams_send_failed_sets_current_message_error_state():
     state = SessionState()
     form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+    app._mark_teams_send_in_progress(state, form, datetime(2026, 5, 8, 12, 35, 0))
 
     app._mark_teams_message_send_failed(
         state,
@@ -762,8 +792,11 @@ def test_mark_teams_send_failed_sets_current_message_error_state():
 
     assert state["teams_send_failed"] is True
     assert state["teams_send_failed_message"] == form["teams_chat_message"]
+    assert state["teams_send_failed_body_hash"]
     assert state["teams_send_failed_at"] == "2026/05/08 12:35:10"
     assert state["teams_send_error_message"] == "送信失敗: denied"
+    assert state["teams_send_in_progress"] is False
+    assert state["teams_send_in_progress_body_hash"] == ""
     assert app._teams_last_send_failed(state, form) is True
 
 
@@ -1455,6 +1488,24 @@ def test_teams_send_success_ui_hides_normal_primary_send_button():
     assert "送信済み本文（確認用）" in after_source
     assert sent_button_index < resend_button_index < normal_button_index
     assert 'type="primary"' not in after_source[sent_button_index:resend_button_index]
+
+
+def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    status_index = after_source.index('send_status == "送信処理中"')
+    in_progress_index = after_source.index("if in_progress:", status_index)
+    message_index = after_source.index("Teamsへ送信しています。完了まで画面を閉じないでください。", in_progress_index)
+    disabled_button_index = after_source.index('st.button("送信処理中"', message_index)
+    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', disabled_button_index)
+
+    assert "teams_send_in_progress_body_hash" in source
+    assert "Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。" in after_source
+    assert disabled_button_index < normal_button_index
+    assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
 
 
 def test_teams_send_failure_ui_keeps_error_and_normal_send_button():
