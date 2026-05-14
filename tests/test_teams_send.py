@@ -675,6 +675,7 @@ def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
     assert app.teams_send_status_label([], already_sent=False, send_failed=True) == "送信失敗"
     assert app.teams_send_status_label([], already_sent=False, in_progress=True) == "送信処理中"
+    assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=False, send_failed=True) == "送信不可"
 
 
 def test_teams_send_panel_reasons_include_duplicate_send_state():
@@ -1544,6 +1545,21 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
     assert "teams_send_requested_body_hash" in source
     assert "Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。" in after_source
     assert disabled_button_index < normal_button_index
+    assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
+
+
+def test_teams_send_incomplete_ui_hides_normal_primary_send_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    sent_branch_index = after_source.index("elif already_sent:")
+    incomplete_branch_index = after_source.index("elif incomplete_reasons:", sent_branch_index)
+    disabled_button_index = after_source.index('st.button("未完了項目があります"', incomplete_branch_index)
+    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', disabled_button_index)
+
+    assert incomplete_branch_index < disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
 
 

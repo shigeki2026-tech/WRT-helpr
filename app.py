@@ -2545,10 +2545,10 @@ def teams_send_status_label(incomplete_reasons: list[str], already_sent: bool,
         return "送信処理中"
     if already_sent:
         return "送信済み"
-    if send_failed:
-        return "送信失敗"
     if incomplete_reasons:
         return "送信不可"
+    if send_failed:
+        return "送信失敗"
     return "送信可能"
 
 
@@ -7080,6 +7080,8 @@ def render_tab_after_call():
             st.button("送信済み", disabled=True, use_container_width=True)
             if st.button("同じ内容を再送する", disabled=not teams_enabled, use_container_width=True):
                 request_teams_send(allow_resend=True)
+        elif incomplete_reasons:
+            st.button("未完了項目があります", disabled=True, use_container_width=True)
         else:
             if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
                 request_teams_send(allow_resend=False)
