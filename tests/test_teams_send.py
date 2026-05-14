@@ -733,7 +733,7 @@ def test_teams_send_validation_blocks_escalation_pdf_storage_text():
 def test_mark_teams_sent_sets_duplicate_send_state():
     state = SessionState()
     form = {"teams_chat_message": "2026_05_0174\n家電回線"}
-    app._mark_teams_send_in_progress(state, form, datetime(2026, 5, 8, 12, 34, 50))
+    app._mark_teams_send_requested(state, form, now=datetime(2026, 5, 8, 12, 34, 50))
 
     app._mark_teams_message_sent(
         state,
@@ -748,6 +748,8 @@ def test_mark_teams_sent_sets_duplicate_send_state():
     assert state["teams_sent_body_hash"]
     assert state["teams_sent_message_id"] == "message-001"
     assert state["teams_send_failed"] is False
+    assert state["teams_send_requested"] is False
+    assert state["teams_send_requested_body_hash"] == ""
     assert state["teams_send_in_progress"] is False
     assert state["teams_send_in_progress_body_hash"] == ""
     assert app._teams_case_already_sent(state, form) is True
@@ -778,10 +780,44 @@ def test_teams_send_in_progress_only_matches_same_body_hash():
     assert app._teams_send_in_progress(state, changed_form) is False
 
 
+def test_mark_teams_send_requested_sets_requested_and_in_progress_state():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+
+    app._mark_teams_send_requested(
+        state,
+        form,
+        allow_resend=True,
+        now=datetime(2026, 5, 8, 12, 34, 50),
+    )
+
+    assert state["teams_send_requested"] is True
+    assert state["teams_send_requested_body_hash"]
+    assert state["teams_send_requested_allow_resend"] is True
+    assert app._teams_send_requested(state, form) is True
+    assert state["teams_send_in_progress"] is True
+    assert state["teams_send_in_progress_body_hash"] == state["teams_send_requested_body_hash"]
+    assert state["teams_send_started_at"] == "2026/05/08 12:34:50"
+
+
+def test_stale_teams_send_request_is_cleared_when_body_hash_changes():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+    changed_form = {"teams_chat_message": "2026_05_0174\n住設"}
+    app._mark_teams_send_requested(state, form, now=datetime(2026, 5, 8, 12, 34, 50))
+
+    app._clear_stale_teams_send_transient_state(state, changed_form)
+
+    assert state["teams_send_requested"] is False
+    assert state["teams_send_requested_body_hash"] == ""
+    assert state["teams_send_in_progress"] is False
+    assert state["teams_send_in_progress_body_hash"] == ""
+
+
 def test_mark_teams_send_failed_sets_current_message_error_state():
     state = SessionState()
     form = {"teams_chat_message": "2026_05_0174\n家電回線"}
-    app._mark_teams_send_in_progress(state, form, datetime(2026, 5, 8, 12, 35, 0))
+    app._mark_teams_send_requested(state, form, now=datetime(2026, 5, 8, 12, 35, 0))
 
     app._mark_teams_message_send_failed(
         state,
@@ -795,6 +831,8 @@ def test_mark_teams_send_failed_sets_current_message_error_state():
     assert state["teams_send_failed_body_hash"]
     assert state["teams_send_failed_at"] == "2026/05/08 12:35:10"
     assert state["teams_send_error_message"] == "送信失敗: denied"
+    assert state["teams_send_requested"] is False
+    assert state["teams_send_requested_body_hash"] == ""
     assert state["teams_send_in_progress"] is False
     assert state["teams_send_in_progress_body_hash"] == ""
     assert app._teams_last_send_failed(state, form) is True
@@ -1499,10 +1537,11 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
     status_index = after_source.index('send_status == "送信処理中"')
     in_progress_index = after_source.index("if in_progress:", status_index)
     message_index = after_source.index("Teamsへ送信しています。完了まで画面を閉じないでください。", in_progress_index)
-    disabled_button_index = after_source.index('st.button("送信処理中"', message_index)
+    disabled_button_index = after_source.index('st.button("送信処理中..."', message_index)
     normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', disabled_button_index)
 
     assert "teams_send_in_progress_body_hash" in source
+    assert "teams_send_requested_body_hash" in source
     assert "Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。" in after_source
     assert disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]

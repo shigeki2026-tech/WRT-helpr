@@ -2379,6 +2379,15 @@ def _teams_send_in_progress(session_state, form: dict) -> bool:
     )
 
 
+def _teams_send_requested(session_state, form: dict) -> bool:
+    body_hash = _teams_message_body_hash(form)
+    return bool(
+        session_state.get("teams_send_requested")
+        and body_hash
+        and session_state.get("teams_send_requested_body_hash") == body_hash
+    )
+
+
 def _mark_teams_send_in_progress(session_state, form: dict,
                                  now: datetime | None = None) -> None:
     now = now or datetime.now()
@@ -2387,10 +2396,35 @@ def _mark_teams_send_in_progress(session_state, form: dict,
     session_state["teams_send_started_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
 
 
+def _mark_teams_send_requested(session_state, form: dict, allow_resend: bool = False,
+                               now: datetime | None = None) -> None:
+    body_hash = _teams_message_body_hash(form)
+    session_state["teams_send_requested"] = True
+    session_state["teams_send_requested_body_hash"] = body_hash
+    session_state["teams_send_requested_allow_resend"] = bool(allow_resend)
+    _mark_teams_send_in_progress(session_state, form, now)
+
+
+def _clear_teams_send_requested(session_state) -> None:
+    session_state["teams_send_requested"] = False
+    session_state["teams_send_requested_body_hash"] = ""
+    session_state["teams_send_requested_allow_resend"] = False
+
+
 def _clear_teams_send_in_progress(session_state) -> None:
     session_state["teams_send_in_progress"] = False
     session_state["teams_send_in_progress_body_hash"] = ""
     session_state["teams_send_started_at"] = ""
+
+
+def _clear_stale_teams_send_transient_state(session_state, form: dict) -> None:
+    body_hash = _teams_message_body_hash(form)
+    requested_hash = session_state.get("teams_send_requested_body_hash")
+    in_progress_hash = session_state.get("teams_send_in_progress_body_hash")
+    if requested_hash and requested_hash != body_hash:
+        _clear_teams_send_requested(session_state)
+    if in_progress_hash and in_progress_hash != body_hash:
+        _clear_teams_send_in_progress(session_state)
 
 
 def _mark_teams_message_sent(session_state, form: dict, now: datetime | None = None,
@@ -2409,6 +2443,7 @@ def _mark_teams_message_sent(session_state, form: dict, now: datetime | None = N
     session_state["teams_send_failed_body_hash"] = ""
     session_state["teams_send_failed_at"] = ""
     session_state["teams_send_error_message"] = ""
+    _clear_teams_send_requested(session_state)
     _clear_teams_send_in_progress(session_state)
 
 
@@ -2420,6 +2455,7 @@ def _mark_teams_message_send_failed(session_state, form: dict, result: dict,
     session_state["teams_send_failed_body_hash"] = _teams_message_body_hash(form)
     session_state["teams_send_failed_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
     session_state["teams_send_error_message"] = result.get("message", "") or "エラー内容を取得できませんでした"
+    _clear_teams_send_requested(session_state)
     _clear_teams_send_in_progress(session_state)
 
 
@@ -2687,6 +2723,9 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_sent_at",
         "teams_sent_body_hash",
         "teams_sent_message_id",
+        "teams_send_requested",
+        "teams_send_requested_body_hash",
+        "teams_send_requested_allow_resend",
         "teams_send_in_progress",
         "teams_send_in_progress_body_hash",
         "teams_send_started_at",
@@ -6917,6 +6956,7 @@ def render_tab_after_call():
         confirmed = bool(st.session_state.get("teams_send_confirmed", False))
         action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
         effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+        _clear_stale_teams_send_transient_state(st.session_state, form)
         already_sent = _teams_case_already_sent(st.session_state, form)
         in_progress = _teams_send_in_progress(st.session_state, form)
         send_failed = _teams_last_send_failed(st.session_state, form)
@@ -6987,7 +7027,7 @@ def render_tab_after_call():
             key="teams_action_confirmed",
         )
 
-        def run_teams_send(allow_resend: bool = False):
+        def request_teams_send(allow_resend: bool = False):
             validation_errors = validate_teams_send_request(
                 form,
                 teams_enabled,
@@ -7007,13 +7047,11 @@ def render_tab_after_call():
                 st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
                 return
 
+            _mark_teams_send_requested(st.session_state, form, allow_resend=allow_resend)
+            st.rerun()
+
+        def execute_requested_teams_send():
             teams_send_body = _get_teams_send_body(form)
-            _mark_teams_send_in_progress(st.session_state, form)
-            st.info(
-                f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
-                f"送信先：{chat_name}\n"
-                f"開始時刻：{st.session_state.get('teams_send_started_at', '')}"
-            )
             with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
                 result = send_teams_message_via_powershell(teams_send_body)
             append_teams_send_log(
@@ -7037,14 +7075,17 @@ def render_tab_after_call():
                 st.code(result.get("stderr", "") or "（なし）", language=None)
 
         if in_progress:
-            st.button("送信処理中", disabled=True, use_container_width=True)
+            st.button("送信処理中...", disabled=True, use_container_width=True)
         elif already_sent:
             st.button("送信済み", disabled=True, use_container_width=True)
             if st.button("同じ内容を再送する", disabled=not teams_enabled, use_container_width=True):
-                run_teams_send(allow_resend=True)
+                request_teams_send(allow_resend=True)
         else:
             if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
-                run_teams_send(allow_resend=False)
+                request_teams_send(allow_resend=False)
+
+        if _teams_send_requested(st.session_state, form):
+            execute_requested_teams_send()
 
         recent_logs = st.session_state.get("teams_send_log", [])[:3]
         if recent_logs:
