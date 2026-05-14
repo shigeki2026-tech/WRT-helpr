@@ -673,6 +673,7 @@ def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
 def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label([], already_sent=False) == "送信可能"
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
+    assert app.teams_send_status_label([], already_sent=False, send_failed=True) == "送信失敗"
 
 
 def test_teams_send_panel_reasons_include_duplicate_send_state():
@@ -732,12 +733,38 @@ def test_mark_teams_sent_sets_duplicate_send_state():
     state = SessionState()
     form = {"teams_chat_message": "2026_05_0174\n家電回線"}
 
-    app._mark_teams_message_sent(state, form, datetime(2026, 5, 8, 12, 34, 56))
+    app._mark_teams_message_sent(
+        state,
+        form,
+        datetime(2026, 5, 8, 12, 34, 56),
+        result={"stdout": "SUCCESS message-001\n"},
+    )
 
     assert state["teams_sent"] is True
     assert state["teams_sent_message"] == form["teams_chat_message"]
     assert state["teams_sent_at"] == "2026/05/08 12:34:56"
+    assert state["teams_sent_body_hash"]
+    assert state["teams_sent_message_id"] == "message-001"
+    assert state["teams_send_failed"] is False
     assert app._teams_case_already_sent(state, form) is True
+
+
+def test_mark_teams_send_failed_sets_current_message_error_state():
+    state = SessionState()
+    form = {"teams_chat_message": "2026_05_0174\n家電回線"}
+
+    app._mark_teams_message_send_failed(
+        state,
+        form,
+        {"message": "送信失敗: denied"},
+        datetime(2026, 5, 8, 12, 35, 10),
+    )
+
+    assert state["teams_send_failed"] is True
+    assert state["teams_send_failed_message"] == form["teams_chat_message"]
+    assert state["teams_send_failed_at"] == "2026/05/08 12:35:10"
+    assert state["teams_send_error_message"] == "送信失敗: denied"
+    assert app._teams_last_send_failed(state, form) is True
 
 
 def test_local_user_settings_loads_default_operator_name(tmp_path):
@@ -1410,6 +1437,38 @@ def test_teams_send_panel_status_labels_exist():
     assert "送信不可" in source
     assert "送信可能" in source
     assert "送信済み" in source
+    assert "送信失敗" in source
+
+
+def test_teams_send_success_ui_hides_normal_primary_send_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    already_sent_index = after_source.index("if already_sent:")
+    sent_button_index = after_source.index('st.button("送信済み"', already_sent_index)
+    resend_button_index = after_source.index('st.button("同じ内容を再送する"', sent_button_index)
+    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', resend_button_index)
+
+    assert "Teamsへ送信しました。" in after_source
+    assert "送信済み本文（確認用）" in after_source
+    assert sent_button_index < resend_button_index < normal_button_index
+    assert 'type="primary"' not in after_source[sent_button_index:resend_button_index]
+
+
+def test_teams_send_failure_ui_keeps_error_and_normal_send_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    failure_index = after_source.index('send_status == "送信失敗"')
+    error_index = after_source.index("Teams送信に失敗しました：", failure_index)
+    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', error_index)
+
+    assert failure_index < error_index < normal_button_index
+    assert "_mark_teams_message_send_failed" in after_source
 
 
 def test_dp_rakutel_text_includes_guarantee_amount_confirmation():
@@ -1473,6 +1532,7 @@ def test_send_teams_message_success(monkeypatch, tmp_path):
 
     assert result["ok"] is True
     assert result["message"] == "送信成功"
+    assert result["message_id"] == "message-001"
 
 
 def test_send_teams_message_uses_chat_id_and_message_file_arguments(monkeypatch, tmp_path):
