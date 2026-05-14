@@ -674,8 +674,11 @@ AREA_GROUPS: dict = {
 
 # ── CSV 必須列定義 ──
 _ALIAS_COLS        = ["priority", "enabled", "keyword", "normalized_product", "product_group", "notes"]
-_REPAIR_TYPE_COLS  = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
-                      "model_keyword", "condition_keyword", "repair_type", "needs_confirmation", "notes"]
+_REPAIR_TYPE_COLS  = [
+    "priority", "enabled", "product_keyword", "manufacturer_keyword",
+    "model_keyword", "condition_keyword", "repair_type", "needs_confirmation", "notes",
+    "certainty", "reason", "memo_note", "rakutel_repair_type_override", "active",
+]
 _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
                       "manufacturer_group", "condition_keyword", "repair_type",
                       "cost_estimate", "can_announce_cost", "needs_escalation",
@@ -709,6 +712,9 @@ _VENDOR_SEND_TEMPLATE_COLS = [
     "priority", "enabled", "template_code", "template_label", "repair_type",
     "warranty_type", "attention_memo_template", "rakutel_template",
     "teams_template", "notes",
+]
+_MEMO_SNIPPET_COLS = [
+    "snippet_id", "category", "label", "body", "active", "sort_order",
 ]
 # legacy
 _MASTER_REQUIRED_COLS = [
@@ -825,6 +831,31 @@ def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_script_guidance.csv", _SCRIPT_GUIDANCE_COLS)
 
 
+@st.cache_data
+def _load_memo_snippets_cached(mtime: float) -> pd.DataFrame:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "master_memo_snippets.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=_MEMO_SNIPPET_COLS)
+    rows = None
+    for encoding in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            with open(path, "r", encoding=encoding, errors="replace", newline="") as f:
+                rows = list(csv.DictReader(f))
+            break
+        except Exception:
+            rows = None
+    if not rows:
+        return pd.DataFrame(columns=_MEMO_SNIPPET_COLS)
+    df = pd.DataFrame(rows, dtype=str)
+    for col in _MEMO_SNIPPET_COLS:
+        if col not in df.columns:
+            df[col] = ""
+    df = df.fillna("")
+    df["sort_order"] = pd.to_numeric(df["sort_order"], errors="coerce").fillna(999).astype(int)
+    df = df[df["active"].astype(str).str.strip().ne("0")].copy()
+    return df.sort_values(["sort_order", "snippet_id"], kind="stable").reset_index(drop=True)
+
+
 def _csv_mtime(filename: str) -> float:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", filename)
     return os.path.getmtime(path) if os.path.exists(path) else 0.0
@@ -864,6 +895,10 @@ def load_vendor_send_templates() -> pd.DataFrame:
 
 def load_script_guidance_csv() -> pd.DataFrame:
     return _load_script_guidance_cached(_csv_mtime("master_script_guidance.csv"))
+
+
+def load_memo_snippets() -> pd.DataFrame:
+    return _load_memo_snippets_cached(_csv_mtime("master_memo_snippets.csv"))
 
 
 MASTER_APPEND_TARGETS = {
@@ -1910,6 +1945,39 @@ def render_vendor_send_template_text(template_text: str, context: dict) -> str:
 def sanitize_generated_body_text(text: str) -> str:
     """Remove UI-only icons that must not leak into generated business text."""
     return str(text or "").replace("📋", "")
+
+
+def _join_text_blocks(existing: str, addition: str) -> str:
+    existing = sanitize_generated_body_text(existing).rstrip()
+    addition = sanitize_generated_body_text(addition).strip()
+    if not existing:
+        return addition
+    if not addition:
+        return existing
+    return f"{existing}\n\n{addition}"
+
+
+def append_attention_memo_snippets(form: dict, snippet_ids: list[str]) -> list[dict]:
+    """CSV定型文を修理依頼書メモだけへ重複なしで追記する。"""
+    df = load_memo_snippets()
+    if df.empty or not snippet_ids:
+        form["attention_memo"] = sanitize_generated_body_text(form.get("attention_memo", ""))
+        return []
+
+    selected = {str(snippet_id or "").strip() for snippet_id in snippet_ids if str(snippet_id or "").strip()}
+    current = sanitize_generated_body_text(form.get("attention_memo", ""))
+    added: list[dict] = []
+    for _, row in df.iterrows():
+        snippet_id = str(row.get("snippet_id") or "").strip()
+        body = sanitize_generated_body_text(row.get("body") or "")
+        if snippet_id not in selected or not body:
+            continue
+        if body in current:
+            continue
+        current = _join_text_blocks(current, body)
+        added.append(row.to_dict())
+    form["attention_memo"] = current
+    return added
 
 
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
@@ -3459,6 +3527,25 @@ def _kw_match(keyword: str, target: str) -> bool:
     return kw.lower() in tg.lower()
 
 
+def _split_rule_keywords(keyword: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[;|｜、,\n]+", str(keyword or "")) if part.strip()]
+
+
+def _kw_any_match(keyword: str, target: str) -> bool:
+    parts = _split_rule_keywords(keyword)
+    if not parts:
+        return True
+    return any(part.lower() in (target or "").lower() for part in parts)
+
+
+def _repair_rule_reason(row) -> str:
+    return (
+        (row.get("reason") or "").strip()
+        or (row.get("notes") or "").strip()
+        or "master_repair_type_rules.csv に一致"
+    )
+
+
 # ============================================================
 # テキスト抽出
 # ============================================================
@@ -3778,34 +3865,51 @@ def determine_repair_type_from_rules(form: dict) -> dict:
     product      = (form.get("product") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
     model        = (form.get("model_number") or "").strip()
-    condition    = (form.get("extra_condition") or "").strip()
+    condition    = " ".join([
+        (form.get("extra_condition") or "").strip(),
+        (form.get("appliance_type") or "").strip(),
+        (form.get("prefecture") or "").strip(),
+        (form.get("area_group") or "").strip(),
+    ]).strip()
 
     if not df.empty:
         for _, row in df.iterrows():
+            if str(row.get("active", "")).strip() == "0":
+                continue
             pk  = (row.get("product_keyword") or "").strip()
             mk  = (row.get("manufacturer_keyword") or "").strip()
             mok = (row.get("model_keyword") or "").strip()
             ck  = (row.get("condition_keyword") or "").strip()
 
-            if not _kw_match(pk, product):      continue
-            if not _kw_match(mk, manufacturer): continue
-            if not _kw_match(mok, model):       continue
-            if not _kw_match(ck, condition):    continue
+            if not _kw_any_match(pk, product):      continue
+            if not _kw_any_match(mk, manufacturer): continue
+            if not _kw_any_match(mok, model):       continue
+            if not _kw_any_match(ck, condition):    continue
 
             matched_kw = pk or mk or mok or ck or "(条件なし)"
+            certainty = (row.get("certainty") or "").strip()
+            needs_confirmation = (
+                str(row.get("needs_confirmation", "0")).strip() == "1"
+                or certainty == "needs_check"
+            )
             return {
                 "matched":           True,
                 "repair_type":       (row.get("repair_type") or "要確認").strip(),
-                "needs_confirmation": str(row.get("needs_confirmation", "0")).strip() == "1",
+                "needs_confirmation": needs_confirmation,
                 "keyword":           matched_kw,
                 "priority":          int(row.get("priority", 999)),
                 "csv_name":          "master_repair_type_rules.csv",
                 "notes":             (row.get("notes") or "").strip(),
+                "certainty":         certainty,
+                "reason":            _repair_rule_reason(row),
+                "memo_note":         (row.get("memo_note") or "").strip(),
+                "rakutel_repair_type_override": (row.get("rakutel_repair_type_override") or "").strip(),
             }
 
     return {
         "matched": False, "repair_type": "", "needs_confirmation": False,
         "keyword": "", "priority": None, "csv_name": "", "notes": "",
+        "certainty": "", "reason": "", "memo_note": "", "rakutel_repair_type_override": "",
     }
 
 
@@ -4422,6 +4526,19 @@ def build_script_reference_info(decision: dict) -> dict:
     }
 
 
+def repair_policy_reason_for_display(decision: dict) -> str:
+    repair_result = decision.get("repair_result", {}) or {}
+    if repair_result.get("reason"):
+        return str(repair_result.get("reason") or "").strip()
+    if repair_result.get("notes"):
+        return str(repair_result.get("notes") or "").strip()
+    if repair_result.get("matched"):
+        return "CSVマスタに一致"
+    if decision.get("repair_source") == "既存ロジック":
+        return "既存フォールバック判定"
+    return "判定理由未登録"
+
+
 def build_script_guidance_panel_info(form: dict, decision: dict,
                                      script_reference: dict | None = None) -> dict:
     """公式本文ではなく、通話補助として表示する聴取事項・注意点を返す。"""
@@ -4475,6 +4592,7 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
     warranty_status_label = summary["warranty"]["value"]
     warranty_plan = (form.get("warranty_plan") or "").strip()
     product_price = (form.get("product_price") or "").strip()
+    repair_reason = repair_policy_reason_for_display(decision)
 
     return [
         {
@@ -4490,6 +4608,7 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "title": "修理方針",
             "primary": summary["repair"]["value"],
             "secondary": summary["cost"]["value"],
+            "tertiary": f"判定理由: {repair_reason}",
             "color": summary["repair"]["color"],
         },
         {
@@ -4813,9 +4932,10 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
     if repair_type in ("出張修理", "持込修理"):
         next_rt = ("訪問先住所・設置場所を確認"
                    if repair_type == "出張修理" else "付属品・返送先住所を確認")
+        reason = repair_policy_reason_for_display(result)
         items.append(_item(
             "修理形態判定", "ok", f"修理形態: {repair_type}",
-            "修理形態が確定しました。",
+            f"修理形態が確定しました。判定理由: {reason}",
             next_action=next_rt,
             impact="info",
         ))
@@ -6579,6 +6699,8 @@ def render_tab_call():
             if repair_result["matched"]:
                 st.markdown(f"- CSV: `{repair_result['csv_name']}`  priority={repair_result['priority']}")
                 st.markdown(f"- keyword: `{repair_result['keyword']}` → **{repair_result['repair_type']}**")
+                if repair_result.get("reason"):
+                    st.markdown(f"- reason: {repair_result['reason']}")
                 if repair_result["notes"]:
                     st.markdown(f"- notes: {repair_result['notes']}")
             else:
@@ -6807,6 +6929,52 @@ def render_tab_after_call():
             mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
         st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
+
+        if memo_widget_key in st.session_state:
+            widget_value = sanitize_generated_body_text(st.session_state.get(memo_widget_key, ""))
+            if widget_value != st.session_state.get("_memo_after_widget_synced"):
+                form["attention_memo"] = widget_value
+
+        snippets_df = load_memo_snippets()
+        if not snippets_df.empty:
+            st.markdown("###### 修理依頼書メモ 追記候補")
+            snippet_options = snippets_df["snippet_id"].tolist()
+            snippet_label_map = {
+                str(row.get("snippet_id") or ""): str(row.get("label") or row.get("snippet_id") or "")
+                for _, row in snippets_df.iterrows()
+            }
+            selected_snippet_ids = st.multiselect(
+                "追記する定型文",
+                snippet_options,
+                format_func=lambda snippet_id: snippet_label_map.get(str(snippet_id), str(snippet_id)),
+                key="attention_memo_snippet_select",
+            )
+            if selected_snippet_ids:
+                preview_bodies = [
+                    str(row.get("body") or "")
+                    for _, row in snippets_df[snippets_df["snippet_id"].isin(selected_snippet_ids)].iterrows()
+                ]
+                st.text_area(
+                    "選択文言プレビュー",
+                    "\n\n".join(preview_bodies),
+                    height=140,
+                    key="attention_memo_snippet_preview",
+                    disabled=True,
+                )
+            if st.button(
+                "選択した文言を修理依頼書メモへ追記",
+                key="append_attention_memo_snippets",
+                use_container_width=True,
+                disabled=not bool(selected_snippet_ids),
+            ):
+                added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
+                st.session_state[memo_widget_key] = form["attention_memo"]
+                st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+                st.session_state.form = form
+                if added_snippets:
+                    st.success("選択した文言を修理依頼書メモへ追記しました。")
+                else:
+                    st.info("選択した文言はすでに修理依頼書メモに含まれています。")
 
         memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
         if memo_widget_key in st.session_state:

@@ -93,6 +93,54 @@ def check(label: str, actual, expected, *, contains: bool = False) -> None:
     )
 
 
+def test_appendix_repair_policy_visit_and_carry_in_rules():
+    cases = [
+        ({"product": "エアコン"}, "出張修理"),
+        ({"product": "洗濯機"}, "出張修理"),
+        ({"product": "冷蔵庫"}, "出張修理"),
+        ({"product": "ドライヤー"}, "持込修理"),
+        ({"product": "パソコン"}, "持込修理"),
+        ({"product": "電子レンジ", "manufacturer": "ユアサプライム"}, "持込修理"),
+        ({"product": "電子レンジ", "manufacturer": "バルミューダ"}, "持込修理"),
+        ({"product": "オーブンレンジ", "manufacturer": "バルミューダ"}, "要確認"),
+    ]
+    for values, expected in cases:
+        decision = app.run_decision(make_form(**values))
+        assert decision["repair_type"] == expected
+        assert decision["repair_result"]["reason"]
+
+
+def test_appendix_repair_policy_needs_check_and_notes():
+    printer = app.run_decision(make_form(product="プリンター"))
+    assert printer["repair_type"] == "要確認"
+    assert printer["repair_result"]["certainty"] == "needs_check"
+    assert "型番" in printer["repair_result"]["reason"]
+
+    purifier = app.run_decision(make_form(product="空気清浄機"))
+    assert purifier["repair_type"] == "要確認"
+    assert purifier["repair_result"]["certainty"] == "needs_check"
+    assert "引取修理" in purifier["repair_result"]["notes"]
+
+
+def test_appendix_repair_policy_manufacturer_and_condition_priority():
+    ricoh_projector = app.run_decision(make_form(product="プロジェクター", manufacturer="リコー"))
+    assert ricoh_projector["repair_type"] == "出張修理"
+
+    yamazen_visit = app.run_decision(make_form(
+        product="トースター",
+        manufacturer="山善",
+        extra_condition="取説に出張修理明記あり",
+    ))
+    assert yamazen_visit["repair_type"] == "出張修理"
+
+    yamazen_carry_in = app.run_decision(make_form(
+        product="トースター",
+        manufacturer="山善",
+        extra_condition="取説に出張修理明記なし",
+    ))
+    assert yamazen_carry_in["repair_type"] == "持込修理"
+
+
 # ============================================================
 # TC01: ドライヤー・ヘアアイロン → alias normalisation
 # ============================================================

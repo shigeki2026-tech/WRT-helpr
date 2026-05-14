@@ -11,6 +11,57 @@ import app
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_append_attention_memo_snippets_only_updates_repair_request_memo():
+    form = app.empty_form()
+    form.update({
+        "attention_memo": "既存本文",
+        "rakutel_text": "既存ラクテル",
+        "teams_chat_message": "既存Teams",
+        "product": "プリンター",
+        "call_line": "家電保証対応業務（24時間）",
+        "operator_name": "MPG担当",
+        "rakuteru_no": "2026_05_0001",
+    })
+
+    added = app.append_attention_memo_snippets(form, ["manufacturer_warranty"])
+
+    assert len(added) == 1
+    assert "既存本文" in form["attention_memo"]
+    assert "【メーカー保証期間中の為、メーカー保証に準じる】" in form["attention_memo"]
+    assert form["rakutel_text"] == "既存ラクテル"
+    assert form["teams_chat_message"] == "既存Teams"
+
+
+def test_append_attention_memo_snippets_does_not_duplicate():
+    form = app.empty_form()
+    app.append_attention_memo_snippets(form, ["store_request"])
+    once = form["attention_memo"]
+    app.append_attention_memo_snippets(form, ["store_request"])
+
+    assert form["attention_memo"] == once
+    assert form["attention_memo"].count("【○○店/○○様より修理依頼】") == 1
+
+
+def test_appended_attention_memo_snippet_stays_out_of_generated_texts():
+    form = app.empty_form()
+    form.update({
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "プリンター",
+        "manufacturer": "キヤノン",
+        "operator_name": "MPG担当",
+        "rakuteru_no": "2026_05_0002",
+    })
+    app.append_attention_memo_snippets(form, ["out_of_scope_store_contact"])
+    snippet_text = "保証対象外時：販売店へ連絡要"
+
+    rakutel_text = app._build_rakutel_text(form, "加入者", "")
+    teams_text = app._build_teams_chat_message(form, "WRT修理受付センター")
+
+    assert snippet_text in form["attention_memo"]
+    assert snippet_text not in rakutel_text
+    assert snippet_text not in teams_text
+
+
 class SessionState(dict):
     def __getattr__(self, name):
         try:
