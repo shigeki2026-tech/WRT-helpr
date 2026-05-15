@@ -108,9 +108,9 @@ def test_case_bic_camera_active():
     assert extracted["store_name"] == "ビックカメラ新宿店"
     assert form["product"] == "洗濯機"
     assert form["manufacturer"] == "パナソニック"
-    assert decision["inferred_call_line_attrs"]["call_line"] == "ビックカメラ"
-    assert decision["vendor"] == "ソフマップ修理センター"
-    assert decision["script_result"]["price_guidance_allowed"] is False
+    assert form["call_line"] == ""
+    assert decision["inferred_call_line_attrs"]["call_line"] == ""
+    assert decision["inferred_call_line_attrs"]["is_bic_sofmap"] is True
     assert decision["warranty_status"] == "active"
 
 

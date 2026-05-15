@@ -495,7 +495,7 @@ def test_rakutel_text_does_not_generate_blank_line_header():
     assert "【回線に入電】" not in text
 
 
-def test_residential_case_uses_jusetsu_call_line_and_rakutel_header_when_home_line_is_default():
+def test_residential_case_keeps_manual_home_line_and_only_infers_appliance_type():
     form = app.empty_form()
     form.update({
         "call_line": "家電保証対応業務（24時間）",
@@ -514,10 +514,10 @@ def test_residential_case_uses_jusetsu_call_line_and_rakutel_header_when_home_li
     teams_message = app._build_teams_chat_message(decision["working_form"], "ユナイトサービス㈱")
 
     assert decision["working_form"]["appliance_type"] == "住設"
-    assert decision["working_form"]["call_line"] == "住設"
-    assert "【住設回線に入電】" in rakutel_text
-    assert "【家電回線に入電】" not in rakutel_text
-    assert teams_message.splitlines()[0] == "住設"
+    assert decision["working_form"]["call_line"] == "家電"
+    assert "【家電回線に入電】" in rakutel_text
+    assert "【住設回線に入電】" not in rakutel_text
+    assert teams_message.splitlines()[0] == "家電"
 
 
 def test_manual_call_line_prevents_residential_auto_call_line_override():
@@ -2005,7 +2005,6 @@ def test_ai_koumuten_teams_regeneration_uses_current_unite_vendor_not_stale_esca
     assert "ユナイトサービス㈱へFAX済み" in message
     assert message == "\n".join([
         "2026_05_0490",
-        "住設",
         "システムキッチン",
         "ユナイトサービス㈱へFAX済み",
         "ご確認お願いします。大濱",

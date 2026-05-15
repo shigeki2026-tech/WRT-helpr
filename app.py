@@ -1521,19 +1521,10 @@ DEFAULT_HOME_CALL_LINE_VALUES = {
 
 
 def should_auto_use_residential_call_line(form: dict) -> bool:
-    if form.get("call_line_manual") or form.get("manual_call_line"):
-        return False
-    appliance_type = infer_appliance_type_from_form(form, form.get("appliance_type", ""))
-    if appliance_type != "住設":
-        return False
-    raw_call_line = (form.get("call_line") or "").strip()
-    normalized_call_line = normalize_call_line_for_display(raw_call_line)
-    return raw_call_line in DEFAULT_HOME_CALL_LINE_VALUES or normalized_call_line in {"", "家電"}
+    return False
 
 
 def effective_call_line_for_form(form: dict) -> str:
-    if should_auto_use_residential_call_line(form):
-        return "住設"
     return normalize_call_line_for_display(form.get("call_line", ""))
 
 
@@ -4278,24 +4269,18 @@ def determine_vendor_candidate(form: dict) -> str:
 # ============================================================
 def infer_call_line_attrs(form: dict) -> dict:
     """
-    call_line と store_name から案件属性を自動推定する。
+    call_line と store_name から案件属性を補助判定する。
     戻り値: {"call_line": str, "is_bic_sofmap": bool}
     """
     call_line = (form.get("call_line") or "").strip()
     store = (form.get("store_name") or "").strip()
-    inferred_call_line = call_line
-    if not inferred_call_line:
-        if "ビックカメラ" in store or ("ビック" in store and "カメラ" in store):
-            inferred_call_line = "ビックカメラ"
-        elif "ソフマップ" in store:
-            inferred_call_line = "ソフマップ"
     is_bic_sofmap = (
-        "ビックカメラ" in inferred_call_line or
-        "ソフマップ" in inferred_call_line or
+        "ビックカメラ" in call_line or
+        "ソフマップ" in call_line or
         "ビックカメラ" in store or
         "ソフマップ" in store
     )
-    return {"call_line": inferred_call_line, "is_bic_sofmap": is_bic_sofmap}
+    return {"call_line": call_line, "is_bic_sofmap": is_bic_sofmap}
 
 
 # ============================================================
@@ -4539,6 +4524,135 @@ def repair_policy_reason_for_display(decision: dict) -> str:
     return "判定理由未登録"
 
 
+def _missing_text(fields: list[str]) -> str:
+    labels = [field_label(field) if field != "repair_type" else "修理方針" for field in fields]
+    return "不足：" + " / ".join(_dedupe_preserve_order(labels))
+
+
+def _repair_type_needs_model(repair_result: dict) -> bool:
+    text = " ".join(str(repair_result.get(field) or "") for field in ("reason", "notes", "memo_note"))
+    return "型番" in text
+
+
+def decision_tag_missing_fields(decision: dict, form: dict | None = None) -> dict[str, list[str]]:
+    form = form or decision.get("working_form", {})
+    if "working_form" not in decision and not form:
+        return {"受付可否": [], "修理方針": [], "拠点対応": [], "スクリプト": []}
+    working_form = decision.get("working_form", form) or {}
+    repair_type = (decision.get("repair_type") or "").strip()
+    repair_result = decision.get("repair_result", {}) or {}
+
+    warranty_missing = [
+        field for field in ("warranty_start_date", "warranty_end_date", "warranty_plan")
+        if not (form.get(field) or working_form.get(field) or "").strip()
+    ]
+    if warranty_missing and not (form.get("product_price") or working_form.get("product_price") or "").strip():
+        warranty_missing.append("product_price")
+
+    product = (working_form.get("product") or form.get("product") or "").strip()
+    manufacturer = (working_form.get("manufacturer") or form.get("manufacturer") or "").strip()
+    model = (working_form.get("model_number") or form.get("model_number") or "").strip()
+    repair_missing: list[str] = []
+    if not product or product == PRODUCT_OTHER:
+        repair_missing.extend(["product", "manufacturer", "model_number"])
+    else:
+        if not manufacturer or manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+            repair_missing.append("manufacturer")
+        if _repair_type_needs_model(repair_result) and not model:
+            repair_missing.append("model_number")
+
+    vendor_missing: list[str] = []
+    if not (working_form.get("prefecture") or form.get("prefecture") or "").strip():
+        vendor_missing.append("prefecture")
+    if not product or product == PRODUCT_OTHER:
+        vendor_missing.append("product")
+    if not repair_type or repair_type == "要確認":
+        vendor_missing.append("repair_type")
+
+    script_missing: list[str] = []
+    if not (working_form.get("call_line") or form.get("call_line") or "").strip():
+        script_missing.append("call_line")
+    if not (working_form.get("appliance_type") or form.get("appliance_type") or "").strip():
+        script_missing.append("appliance_type")
+    if not repair_type or repair_type == "要確認":
+        script_missing.append("repair_type")
+
+    return {
+        "受付可否": _dedupe_preserve_order(warranty_missing),
+        "修理方針": _dedupe_preserve_order(repair_missing),
+        "拠点対応": _dedupe_preserve_order(vendor_missing),
+        "スクリプト": _dedupe_preserve_order(script_missing),
+    }
+
+
+def _missing_tag(title: str, fields: list[str], tertiary: str = "") -> dict:
+    tag = {
+        "title": title,
+        "primary": "未判定",
+        "secondary": _missing_text(fields),
+        "color": TAG_COLOR_MISSING,
+    }
+    if tertiary:
+        tag["tertiary"] = tertiary
+    return tag
+
+
+def _attention_tag(title: str, primary: str, fields: list[str], reason: str = "") -> dict:
+    tag = {
+        "title": title,
+        "primary": primary or "要確認",
+        "secondary": _missing_text(fields),
+        "color": TAG_COLOR_WARNING,
+    }
+    if reason:
+        tag["tertiary"] = f"確認：{reason}"
+    return tag
+
+
+def build_next_confirmation_sections(decision: dict, form: dict | None = None) -> dict[str, list[str]]:
+    form = form or decision.get("working_form", {})
+    missing = decision_tag_missing_fields(decision, form)
+    call_required: list[str] = []
+    after_call: list[str] = []
+
+    action_by_field = {
+        "call_line": "回線名を選択してください",
+        "warranty_start_date": "保証開始日・保証終了日を確認してください",
+        "warranty_end_date": "保証開始日・保証終了日を確認してください",
+        "warranty_plan": "保証プランを確認してください",
+        "product_price": "商品価格を確認してください",
+        "manufacturer": "メーカーを確認してください",
+        "model_number": "型番を確認してください",
+        "prefecture": "都道府県または住所を確認してください",
+        "product": "製品を確認してください",
+        "appliance_type": "家電/住設区分を確認してください",
+        "repair_type": "修理方針が要確認のため、取説または過去履歴を確認してください",
+    }
+    for fields in missing.values():
+        for field in fields:
+            action = action_by_field.get(field)
+            if action:
+                call_required.append(action)
+
+    for item in sort_diagnostic_items((decision.get("diagnostics") or {}).get("items", [])):
+        action = (item.get("next_action") or "").strip()
+        if not action:
+            continue
+        if item.get("impact") in ("blocking", "call_time_required"):
+            call_required.append(action)
+        elif item.get("impact") == "after_call_ok":
+            after_call.append(action)
+
+    script_reference = build_script_reference_info(decision)
+    if not script_reference.get("matched") and not missing.get("スクリプト"):
+        after_call.append("スクリプトURL未登録のため、正式Excelを手動参照してください")
+
+    return {
+        "call_required": _dedupe_preserve_order(call_required),
+        "after_call_ok": _dedupe_preserve_order(after_call),
+    }
+
+
 def build_script_guidance_panel_info(form: dict, decision: dict,
                                      script_reference: dict | None = None) -> dict:
     """公式本文ではなく、通話補助として表示する聴取事項・注意点を返す。"""
@@ -4593,9 +4707,13 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
     warranty_plan = (form.get("warranty_plan") or "").strip()
     product_price = (form.get("product_price") or "").strip()
     repair_reason = repair_policy_reason_for_display(decision)
+    missing = decision_tag_missing_fields(decision, form)
 
-    return [
-        {
+    if missing["受付可否"]:
+        warranty_tag = _missing_tag("受付可否", missing["受付可否"])
+        warranty_tag["compact"] = True
+    else:
+        warranty_tag = {
             "title": "受付可否",
             "primary": warranty_status_label,
             "secondary": product_display,
@@ -4603,21 +4721,43 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "quaternary": f"商品価格　{product_price}" if product_price else "商品価格　未入力",
             "color": summary["warranty"]["color"],
             "compact": True,
-        },
-        {
+        }
+
+    if missing["修理方針"]:
+        product_missing = "product" in missing["修理方針"]
+        repair_primary = (
+            summary["repair"]["value"]
+            if not product_missing and decision.get("repair_type") in ("出張修理", "持込修理", "要確認")
+            else "未判定"
+        )
+        repair_tag = (
+            _missing_tag("修理方針", missing["修理方針"], f"確認：{repair_reason}")
+            if repair_primary == "未判定"
+            else _attention_tag("修理方針", repair_primary, missing["修理方針"], repair_reason)
+        )
+    else:
+        repair_tag = {
             "title": "修理方針",
             "primary": summary["repair"]["value"],
             "secondary": summary["cost"]["value"],
             "tertiary": f"判定理由: {repair_reason}",
             "color": summary["repair"]["color"],
-        },
-        {
+        }
+
+    if missing["拠点対応"]:
+        vendor_tag = _missing_tag("拠点対応", missing["拠点対応"])
+    else:
+        vendor_tag = {
             "title": "拠点対応",
             "primary": vendor or "未確定",
             "secondary": vendor_status,
             "color": TAG_COLOR_WARNING if vendor_card.get("needs_escalation") else TAG_COLOR_OK,
-        },
-        {
+        }
+
+    if missing["スクリプト"]:
+        script_tag = _missing_tag("スクリプト", missing["スクリプト"])
+    else:
+        script_tag = {
             "title": "スクリプト",
             "primary": script_reference.get("script_type", ""),
             "secondary": script_reference.get("display", ""),
@@ -4626,7 +4766,13 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
                          if script_reference.get("matched") else "URL未登録（手動で参照）",
             "matched": script_reference.get("matched", False),
-        },
+        }
+
+    return [
+        warranty_tag,
+        repair_tag,
+        vendor_tag,
+        script_tag,
     ]
 
 
@@ -5103,15 +5249,11 @@ def run_decision(form: dict) -> dict:
     else:
         working_form["manufacturer"] = normalize_manufacturer(selected_manufacturer)
     inferred_call_line_attrs = infer_call_line_attrs(working_form)
-    if inferred_call_line_attrs.get("call_line"):
-        working_form["call_line"] = inferred_call_line_attrs["call_line"]
     working_form["call_line"] = normalize_call_line_for_display(working_form.get("call_line", ""))
     working_form["appliance_type"] = infer_appliance_type_from_form(
         working_form,
         working_form.get("appliance_type", ""),
     )
-    if should_auto_use_residential_call_line(working_form):
-        working_form["call_line"] = "住設"
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -5297,6 +5439,7 @@ TAG_COLOR_WARNING = "#7D6608"   # 要確認・エスカ
 TAG_COLOR_ACTION  = "#1A5276"   # 修理方針・スクリプト（通常）
 TAG_COLOR_DP      = "#6C3483"   # ダブルプロテクト案件
 TAG_COLOR_ERROR   = "#922B21"   # 受付不可・エラー
+TAG_COLOR_MISSING = "#B03A2E"   # 未入力・未判定・不足あり
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -5387,6 +5530,7 @@ def render_decision_tags_panel(form: dict) -> None:
         decision = run_decision(form)
         script_reference = build_script_reference_info(decision)
         tags = build_decision_tag_items(decision, form, script_reference)
+        next_sections = build_next_confirmation_sections(decision, form)
     except Exception as exc:
         st.warning(f"判定タグを生成できません: {exc}")
         return
@@ -5411,6 +5555,15 @@ def render_decision_tags_panel(form: dict) -> None:
                              compact=tag.get("compact", False)),
                 unsafe_allow_html=True,
             )
+    if next_sections.get("call_required") or next_sections.get("after_call_ok"):
+        st.markdown("##### 次に確認すること")
+        if next_sections.get("call_required"):
+            for action in next_sections["call_required"]:
+                st.markdown(f"- {action}")
+        if next_sections.get("after_call_ok"):
+            st.caption("終話後でよい確認")
+            for action in next_sections["after_call_ok"]:
+                st.markdown(f"- {action}")
 
 
 def render_global_top_panels(form: dict) -> None:
@@ -5873,11 +6026,6 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         appliance_widget_key = case_basic_widget_key("appliance_type", revision)
         if appliance_widget_key in st.session_state:
             st.session_state[appliance_widget_key] = inferred_appliance_type
-    if should_auto_use_residential_call_line(form):
-        form["call_line"] = "住設"
-        call_line_widget_key = case_basic_widget_key("call_line", revision)
-        if call_line_widget_key in st.session_state:
-            st.session_state[call_line_widget_key] = "住設"
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
     col_a, col_b, col_c = st.columns(3)

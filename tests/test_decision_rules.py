@@ -141,6 +141,120 @@ def test_appendix_repair_policy_manufacturer_and_condition_priority():
     assert yamazen_carry_in["repair_type"] == "持込修理"
 
 
+def test_initial_decision_tags_are_unjudged_with_missing_items():
+    form = app.empty_form()
+    decision = app.run_decision(form)
+    tags = app.build_decision_tag_items(decision, form)
+
+    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定"]
+    assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags)
+    assert "保証開始日" in tags[0]["secondary"]
+    assert "製品" in tags[1]["secondary"]
+    assert "都道府県" in tags[2]["secondary"]
+    assert "回線名" in tags[3]["secondary"]
+
+
+def test_decision_tags_confirm_only_when_required_information_is_present():
+    form = make_form(
+        product="エアコン",
+        manufacturer="ダイキン",
+        model_number="AN123",
+        prefecture="東京都",
+        appliance_type="家電",
+        call_line="家電",
+        warranty_plan="A3_E2_一般家電延長保証【5年】",
+        warranty_start_date="2026/01/01",
+        warranty_end_date="2031/12/31",
+    )
+    decision = app.run_decision(form)
+    tags = app.build_decision_tag_items(decision, form)
+
+    assert tags[0]["primary"] == "保証期間内"
+    assert tags[0]["color"] != app.TAG_COLOR_MISSING
+    assert tags[1]["primary"] == "出張修理"
+    assert tags[1]["color"] != app.TAG_COLOR_MISSING
+    assert tags[2]["primary"]
+    assert tags[2]["color"] != app.TAG_COLOR_MISSING
+    assert tags[3]["primary"] == "通常"
+    assert tags[3]["color"] != app.TAG_COLOR_MISSING
+
+
+def test_repair_tag_shows_missing_manufacturer_and_model_when_needed():
+    ac_form = make_form(product="エアコン", model_number="AN123")
+    ac_decision = app.run_decision(ac_form)
+    ac_repair_tag = app.build_decision_tag_items(ac_decision, ac_form)[1]
+    assert ac_repair_tag["primary"] == "出張修理"
+    assert "メーカー" in ac_repair_tag["secondary"]
+    assert ac_repair_tag["color"] == app.TAG_COLOR_WARNING
+
+    printer_form = make_form(product="プリンター", manufacturer="キヤノン")
+    printer_decision = app.run_decision(printer_form)
+    printer_repair_tag = app.build_decision_tag_items(printer_decision, printer_form)[1]
+    assert "型番" in printer_repair_tag["secondary"]
+
+
+def test_vendor_tag_shows_missing_prefecture_when_vendor_needs_area():
+    form = make_form(product="エアコン", manufacturer="ダイキン", model_number="AN123", appliance_type="家電")
+    decision = app.run_decision(form)
+    vendor_tag = app.build_decision_tag_items(decision, form)[2]
+
+    assert vendor_tag["primary"] == "未判定"
+    assert "都道府県" in vendor_tag["secondary"]
+
+
+def test_call_line_is_not_auto_filled_from_copy_or_residential_evidence():
+    form = app.apply_extracted_fields_to_form(
+        {
+            "plan": "アイ工務店_住宅設備機器【10年保証】",
+            "genre": "(新品)住宅設備機器",
+            "category": "システムキッチン",
+            "series": "システムキッチン",
+            "manufacturer": "パナソニック",
+        },
+        app.empty_form(),
+    )
+    decision = app.run_decision(form)
+
+    assert form["call_line"] == ""
+    assert decision["working_form"]["call_line"] == ""
+    assert decision["working_form"]["appliance_type"] == "住設"
+
+
+def test_manual_call_line_is_preserved_even_for_residential_case():
+    form = make_form(
+        call_line="家電保証対応業務（24時間）",
+        appliance_type="家電",
+        warranty_plan="アイ工務店_住宅設備機器【10年保証】",
+        product="システムキッチン",
+        series="システムキッチン",
+        manufacturer="パナソニック",
+    )
+    decision = app.run_decision(form)
+
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert decision["working_form"]["call_line"] == "家電"
+
+
+def test_next_confirmation_sections_collect_call_required_items():
+    form = app.empty_form()
+    decision = app.run_decision(form)
+    sections = app.build_next_confirmation_sections(decision, form)
+
+    assert "回線名を選択してください" in sections["call_required"]
+    assert "保証開始日・保証終了日を確認してください" in sections["call_required"]
+    assert "メーカーを確認してください" in sections["call_required"]
+
+
+def test_rakutel_heading_requires_manual_call_line_selection():
+    blank_text = app._build_rakutel_text(app.empty_form(), "加入者", "")
+    assert "【未選択回線に入電】" in blank_text
+
+    form = app.empty_form()
+    form["call_line"] = "家電保証対応業務（24時間）"
+    selected_text = app._build_rakutel_text(form, "加入者", "")
+    assert "【家電回線に入電】" in selected_text
+
+
 # ============================================================
 # TC01: ドライヤー・ヘアアイロン → alias normalisation
 # ============================================================
@@ -436,9 +550,10 @@ def test_tc18_bic_store_infer():
     d = app.run_decision(make_form(store_name="ビックカメラ新宿店"))
     check("TC18 ビック/ソフマップ属性 → True",
           d["inferred_call_line_attrs"]["is_bic_sofmap"], True)
-    # store_name からビック/ソフマップ属性が立つため vendor もソフマップになる
-    check("TC18 vendor → ソフマップ修理センター",
-          d["vendor"], "ソフマップ修理センター")
+    check("TC18 回線名は自動入力しない",
+          d["inferred_call_line_attrs"]["call_line"], "")
+    check("TC18 vendor は回線名未選択ではソフマップ確定しない",
+          d["vendor"] != "ソフマップ修理センター", True)
 
 
 # ============================================================
@@ -449,8 +564,10 @@ def test_tc19_sofmap_store_infer():
     d = app.run_decision(make_form(store_name="ソフマップAkiba"))
     check("TC19 ビック/ソフマップ属性 → True",
           d["inferred_call_line_attrs"]["is_bic_sofmap"], True)
-    check("TC19 vendor → ソフマップ修理センター",
-          d["vendor"], "ソフマップ修理センター")
+    check("TC19 回線名は自動入力しない",
+          d["inferred_call_line_attrs"]["call_line"], "")
+    check("TC19 vendor は回線名未選択ではソフマップ確定しない",
+          d["vendor"] != "ソフマップ修理センター", True)
 
 
 # ============================================================
@@ -1600,9 +1717,8 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
     check("AI工務店 vendor tag primary", vendor_tag["primary"], "ユナイトサービス㈱")
     check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "確定")
-    check("AI工務店 script type", script_tag["primary"], "通常")
-    check("AI工務店 script display", script_tag["secondary"], "住設・出張修理")
-    assert "家電・出張修理" not in script_tag["secondary"]
+    check("AI工務店 script type", script_tag["primary"], "未判定")
+    assert "回線名" in script_tag["secondary"]
     assert "ユナイトサービス㈱へFAX済み" in teams_message
     assert "担当確認依頼済み" not in teams_message
     assert "0058 【出張修理】上位5社" in display
@@ -2561,7 +2677,9 @@ def _make_acceptance_tag(product="洗濯機", warranty_plan="A3_E2_一般家電�
                           product_price="337,154円", warranty_status="active"):
     form = app.empty_form()
     form.update({"product": product, "warranty_plan": warranty_plan,
-                 "product_price": product_price})
+                 "product_price": product_price,
+                 "warranty_start_date": "2026/01/01",
+                 "warranty_end_date": "2031/12/31"})
     decision = {
         "warranty_result": {"warranty_status": warranty_status, "title": {
             "active": "保証期間内", "expired": "保証期間終了",
@@ -2624,7 +2742,8 @@ def test_tc_acceptance_tag_empty_product_shows_unselected():
 
 def test_tc_acceptance_tag_empty_warranty_plan_shows_placeholder():
     tag = _make_acceptance_tag(warranty_plan="")
-    assert tag["tertiary"] == "保証プラン未入力"
+    assert tag["primary"] == "未判定"
+    assert "保証プラン" in tag["secondary"]
 
 
 def test_tc_acceptance_tag_empty_price_shows_placeholder():
