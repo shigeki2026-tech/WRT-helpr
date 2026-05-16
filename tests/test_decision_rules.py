@@ -148,9 +148,9 @@ def test_initial_decision_tags_are_unjudged_with_missing_items():
 
     assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定"]
     assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags)
-    assert "保証開始日" in tags[0]["secondary"]
+    assert "保証期間" in tags[0]["secondary"]
     assert "製品" in tags[1]["secondary"]
-    assert "都道府県" in tags[2]["secondary"]
+    assert "住所/都道府県" in tags[2]["secondary"]
     assert "回線名" in tags[3]["secondary"]
 
 
@@ -240,9 +240,68 @@ def test_next_confirmation_sections_collect_call_required_items():
     decision = app.run_decision(form)
     sections = app.build_next_confirmation_sections(decision, form)
 
-    assert "回線名を選択してください" in sections["call_required"]
-    assert "保証開始日・保証終了日を確認してください" in sections["call_required"]
-    assert "メーカーを確認してください" in sections["call_required"]
+    assert sections["initial"] is True
+    assert sections["call_required"] == ["回線名を選択", "保証情報を貼り付け"]
+    assert "メーカーを確認" not in sections["call_required"]
+    assert "型番を確認" not in sections["call_required"]
+    assert "住所/都道府県を確認" not in sections["call_required"]
+
+
+def test_next_confirmation_sections_after_paste_are_short_and_limited():
+    form = make_form(product="エアコン")
+    decision = app.run_decision(form)
+    sections = app.build_next_confirmation_sections(decision, form)
+
+    assert sections["initial"] is False
+    assert "保証期間を確認" in sections["call_required"]
+    assert "保証開始日・保証終了日を確認してください" not in sections["call_required"]
+    assert "メーカーを確認" in sections["call_required"]
+    assert "住所/都道府県を確認" in sections["call_required"]
+    assert len(sections["call_required"]) <= 5
+
+
+def test_next_confirmation_sections_dedupe_warranty_period():
+    form = make_form(product="ドライヤー", manufacturer="パナソニック")
+    decision = app.run_decision(form)
+    sections = app.build_next_confirmation_sections(decision, form)
+
+    assert sections["call_required"].count("保証期間を確認") == 1
+
+
+def test_next_confirmation_sections_keep_detail_missing_by_area():
+    form = make_form(product="エアコン")
+    decision = app.run_decision(form)
+    sections = app.build_next_confirmation_sections(decision, form)
+
+    assert "detail_missing" in sections
+    assert "受付可否" in sections["detail_missing"]
+    assert "修理方針" in sections["detail_missing"]
+    assert "拠点対応" in sections["detail_missing"]
+    assert "スクリプト" in sections["detail_missing"]
+    assert "warranty_start_date" in sections["detail_missing"]["受付可否"]
+    assert "manufacturer" in sections["detail_missing"]["修理方針"]
+
+
+def test_missing_text_compacts_related_fields_for_tags():
+    text = app._missing_text([
+        "warranty_start_date",
+        "warranty_end_date",
+        "warranty_plan",
+        "product_price",
+        "prefecture",
+        "address",
+        "repair_type",
+    ])
+
+    assert text == "不足：保証期間 / 保証プラン / 商品価格 / 住所/都道府県 / 修理方針"
+
+
+def test_next_confirmation_ui_uses_cards_and_collapsed_detail():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "次にやること" in source
+    assert "next-confirmation-cards" in source
+    assert 'st.expander("不足項目の詳細を開く", expanded=False)' in source
 
 
 def test_rakutel_heading_requires_manual_call_line_selection():

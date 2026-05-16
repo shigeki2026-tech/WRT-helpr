@@ -6,6 +6,7 @@ import os
 import csv  # CSV読み込み改善
 import json
 import hashlib
+import html
 import subprocess
 import tempfile
 import shutil
@@ -4525,8 +4526,49 @@ def repair_policy_reason_for_display(decision: dict) -> str:
 
 
 def _missing_text(fields: list[str]) -> str:
-    labels = [field_label(field) if field != "repair_type" else "修理方針" for field in fields]
+    labels = compact_missing_field_labels(fields)
     return "不足：" + " / ".join(_dedupe_preserve_order(labels))
+
+
+MISSING_FIELD_SHORT_LABELS = {
+    "warranty_start_date": "保証期間",
+    "warranty_end_date": "保証期間",
+    "warranty_plan": "保証プラン",
+    "product_price": "商品価格",
+    "product": "製品",
+    "manufacturer": "メーカー",
+    "model_number": "型番",
+    "prefecture": "住所/都道府県",
+    "address": "住所/都道府県",
+    "repair_type": "修理方針",
+    "call_line": "回線名",
+    "appliance_type": "家電/住設",
+}
+
+
+INITIAL_CASE_FIELDS = (
+    "product",
+    "manufacturer",
+    "model_number",
+    "warranty_start_date",
+    "warranty_end_date",
+    "warranty_plan",
+    "store_name",
+    "address",
+    "prefecture",
+    "customer_name",
+    "wrt_no",
+)
+
+
+def compact_missing_field_labels(fields: list[str]) -> list[str]:
+    labels = [MISSING_FIELD_SHORT_LABELS.get(field, field_label(field)) for field in fields]
+    return _dedupe_preserve_order(labels)
+
+
+def is_initial_case_state(form: dict | None) -> bool:
+    form = form or {}
+    return all(not str(form.get(field) or "").strip() for field in INITIAL_CASE_FIELDS)
 
 
 def _repair_type_needs_model(repair_result: dict) -> bool:
@@ -4609,24 +4651,92 @@ def _attention_tag(title: str, primary: str, fields: list[str], reason: str = ""
     return tag
 
 
-def build_next_confirmation_sections(decision: dict, form: dict | None = None) -> dict[str, list[str]]:
+def _normalize_confirmation_action(action: str, timing: str = "call") -> str:
+    text = (action or "").strip()
+    if not text:
+        return ""
+    if "保証開始日" in text or "保証終了日" in text or "保証期間" in text:
+        return "保証期間を確認"
+    if "保証プラン" in text:
+        return "保証プランを確認"
+    if "商品価格" in text:
+        return "商品価格を確認"
+    if "都道府県" in text or "住所" in text:
+        return "住所/都道府県を確認"
+    if "メーカー" in text:
+        return "メーカーを確認"
+    if "型番" in text:
+        return "型番を確認"
+    if "製品" in text:
+        return "製品を確認"
+    if "回線名" in text:
+        return "回線名を選択"
+    if "家電/住設" in text or "家電・住設" in text:
+        return "家電/住設を確認"
+    if "修理方針" in text or "修理形態" in text or "取説" in text or "過去履歴" in text:
+        return "修理形態を確認"
+    if "Excel" in text or "正式" in text or "URL未登録" in text:
+        return "正式Excelを参照"
+    if "SV" in text or "担当" in text or "エスカ" in text or "拠点" in text:
+        return "終話後に拠点確認" if timing == "after" else "拠点を確認"
+    if text.endswith("してください"):
+        text = text.removesuffix("してください")
+    return text
+
+
+def _confirmation_priority(action: str) -> int:
+    order = {
+        "保証期間を確認": 10,
+        "保証プランを確認": 20,
+        "商品価格を確認": 25,
+        "製品を確認": 30,
+        "メーカーを確認": 40,
+        "型番を確認": 50,
+        "住所/都道府県を確認": 60,
+        "修理形態を確認": 70,
+        "回線名を選択": 80,
+        "家電/住設を確認": 90,
+        "正式Excelを参照": 120,
+        "終話後に拠点確認": 130,
+    }
+    return order.get(action, 999)
+
+
+def _confirmation_cards(call_required: list[str], after_call: list[str]) -> list[dict]:
+    cards = [{"timing": "通話中", "text": text, "tone": "call"} for text in call_required]
+    cards.extend({"timing": "終話後", "text": text, "tone": "after"} for text in after_call)
+    return cards
+
+
+def build_next_confirmation_sections(decision: dict, form: dict | None = None) -> dict:
     form = form or decision.get("working_form", {})
     missing = decision_tag_missing_fields(decision, form)
     call_required: list[str] = []
     after_call: list[str] = []
 
+    if is_initial_case_state(form):
+        call_required = ["回線名を選択", "保証情報を貼り付け"]
+        return {
+            "initial": True,
+            "call_required": call_required,
+            "after_call_ok": [],
+            "detail_missing": missing,
+            "cards": _confirmation_cards(call_required, []),
+        }
+
     action_by_field = {
-        "call_line": "回線名を選択してください",
-        "warranty_start_date": "保証開始日・保証終了日を確認してください",
-        "warranty_end_date": "保証開始日・保証終了日を確認してください",
-        "warranty_plan": "保証プランを確認してください",
-        "product_price": "商品価格を確認してください",
-        "manufacturer": "メーカーを確認してください",
-        "model_number": "型番を確認してください",
-        "prefecture": "都道府県または住所を確認してください",
-        "product": "製品を確認してください",
-        "appliance_type": "家電/住設区分を確認してください",
-        "repair_type": "修理方針が要確認のため、取説または過去履歴を確認してください",
+        "call_line": "回線名を選択",
+        "warranty_start_date": "保証期間を確認",
+        "warranty_end_date": "保証期間を確認",
+        "warranty_plan": "保証プランを確認",
+        "product_price": "商品価格を確認",
+        "manufacturer": "メーカーを確認",
+        "model_number": "型番を確認",
+        "prefecture": "住所/都道府県を確認",
+        "address": "住所/都道府県を確認",
+        "product": "製品を確認",
+        "appliance_type": "家電/住設を確認",
+        "repair_type": "修理形態を確認",
     }
     for fields in missing.values():
         for field in fields:
@@ -4635,21 +4745,29 @@ def build_next_confirmation_sections(decision: dict, form: dict | None = None) -
                 call_required.append(action)
 
     for item in sort_diagnostic_items((decision.get("diagnostics") or {}).get("items", [])):
-        action = (item.get("next_action") or "").strip()
+        impact = item.get("impact")
+        timing = "after" if impact == "after_call_ok" else "call"
+        action = _normalize_confirmation_action(item.get("next_action") or "", timing)
         if not action:
             continue
-        if item.get("impact") in ("blocking", "call_time_required"):
+        if impact in ("blocking", "call_time_required"):
             call_required.append(action)
-        elif item.get("impact") == "after_call_ok":
+        elif impact == "after_call_ok":
             after_call.append(action)
 
     script_reference = build_script_reference_info(decision)
     if not script_reference.get("matched") and not missing.get("スクリプト"):
-        after_call.append("スクリプトURL未登録のため、正式Excelを手動参照してください")
+        after_call.append("正式Excelを参照")
+
+    call_required = sorted(_dedupe_preserve_order(call_required), key=_confirmation_priority)[:5]
+    after_call = sorted(_dedupe_preserve_order(after_call), key=_confirmation_priority)
 
     return {
-        "call_required": _dedupe_preserve_order(call_required),
-        "after_call_ok": _dedupe_preserve_order(after_call),
+        "initial": False,
+        "call_required": call_required,
+        "after_call_ok": after_call,
+        "detail_missing": missing,
+        "cards": _confirmation_cards(call_required, after_call),
     }
 
 
@@ -5524,6 +5642,52 @@ def render_common_case_memo(form: dict, key: str = "case_memo_global", height: i
     sync_case_memo_global(form, st.session_state)
 
 
+def _next_confirmation_card_html(cards: list[dict]) -> str:
+    tone_styles = {
+        "call": ("#fff6e8", "#f2c06b", "#6f4b00"),
+        "after": ("#eef5fb", "#b8d5f0", "#234c72"),
+        "info": ("#eef8f1", "#9ed6ad", "#23613a"),
+    }
+    parts = [
+        "<div class='next-confirmation-cards' style='display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px 0;'>"
+    ]
+    for card in cards:
+        bg, border, fg = tone_styles.get(card.get("tone"), tone_styles["call"])
+        timing = html.escape(str(card.get("timing") or "通話中"))
+        text = html.escape(str(card.get("text") or ""))
+        parts.append(
+            "<div style='display:flex;align-items:center;gap:6px;"
+            f"background:{bg};border:1px solid {border};color:{fg};"
+            "border-radius:8px;padding:5px 8px;font-size:0.86rem;line-height:1.25;'>"
+            f"<span style='font-weight:700;font-size:0.75rem;'>{timing}</span>"
+            f"<span>{text}</span>"
+            "</div>"
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def render_next_confirmation_sections(next_sections: dict) -> None:
+    cards = next_sections.get("cards") or _confirmation_cards(
+        next_sections.get("call_required", []),
+        next_sections.get("after_call_ok", []),
+    )
+    if cards:
+        title = "次にやること" if next_sections.get("initial") else "次に確認すること"
+        st.markdown(f"##### {title}")
+        st.markdown(_next_confirmation_card_html(cards), unsafe_allow_html=True)
+
+    detail_missing = next_sections.get("detail_missing") or {}
+    if any(detail_missing.values()):
+        with st.expander("不足項目の詳細を開く", expanded=False):
+            for area, fields in detail_missing.items():
+                if not fields:
+                    continue
+                st.markdown(f"**{area}**")
+                for label in compact_missing_field_labels(fields):
+                    st.markdown(f"- {label}")
+
+
 def render_decision_tags_panel(form: dict) -> None:
     st.markdown("##### 🧭 判定タグ")
     try:
@@ -5555,15 +5719,7 @@ def render_decision_tags_panel(form: dict) -> None:
                              compact=tag.get("compact", False)),
                 unsafe_allow_html=True,
             )
-    if next_sections.get("call_required") or next_sections.get("after_call_ok"):
-        st.markdown("##### 次に確認すること")
-        if next_sections.get("call_required"):
-            for action in next_sections["call_required"]:
-                st.markdown(f"- {action}")
-        if next_sections.get("after_call_ok"):
-            st.caption("終話後でよい確認")
-            for action in next_sections["after_call_ok"]:
-                st.markdown(f"- {action}")
+    render_next_confirmation_sections(next_sections)
 
 
 def render_global_top_panels(form: dict) -> None:
