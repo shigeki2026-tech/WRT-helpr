@@ -2,5 +2,8 @@
   "enabled": false,
   "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
   "chat_name": "WRT報告用チャット",
-  "send_mode": "powershell_graph"
+  "send_mode": "powershell_graph",
+  "warranty_enabled": false,
+  "warranty_chat_id": "",
+  "warranty_chat_name": "ワランティ報告用チャット"
 }

@@ -33,6 +33,9 @@ DEFAULT_TEAMS_CONFIG = {
     "chat_id": "",
     "chat_name": "WRT報告用チャット",
     "send_mode": "powershell_graph",
+    "warranty_enabled": False,
+    "warranty_chat_id": "",
+    "warranty_chat_name": "ワランティ報告用チャット",
 }
 SUPPORTED_TEAMS_SEND_MODES = {"powershell_graph"}
 REQUEST_PDF_FOLDERS = {
@@ -2267,6 +2270,65 @@ def _build_teams_chat_message(form: dict, vendor: str, contact_type: str = "") -
     return "\n".join(lines)
 
 
+def warranty_report_store_name(form: dict) -> str:
+    for field in ("operating_company", "store_company", "store_name", "store_original"):
+        value = (form.get(field) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def warranty_report_vendor_short_name(vendor: str) -> str:
+    vendor_text = (vendor or "").strip()
+    if not vendor_text or "担当エスカ" in vendor_text or "要確認" in vendor_text:
+        return ""
+    if "ユナイト" in vendor_text:
+        return "ユナイト"
+    if "ソフマップ" in vendor_text:
+        return "ソフマップ"
+    if "WRT修理センター" in vendor_text:
+        return "WRT修理センター"
+    if "WRT修理受付センター" in vendor_text:
+        return "WRT修理受付センター"
+    return vendor_text
+
+
+def warranty_report_send_method_label(vendor_result: dict, vendor: str = "", form: dict | None = None) -> str:
+    vendor_result = vendor_result or {}
+    raw_method = (
+        vendor_result.get("send_method")
+        or vendor_result.get("arrangement_method")
+        or vendor_result.get("contact_method")
+        or ""
+    )
+    if not raw_method and vendor:
+        raw_method = resolve_teams_request_action(form or {}, vendor, vendor_result.get("contact_type", ""))
+    method = str(raw_method or "").strip()
+    if "FAX" in method or "ＦＡＸ" in method or "ファックス" in method:
+        return "FAX送信済"
+    if "メール" in method or "mail" in method.lower():
+        return "メール送信済"
+    return ""
+
+
+def build_warranty_report_message(form: dict, decision: dict) -> str:
+    vendor_result = (decision or {}).get("vendor_result", {}) or {}
+    vendor = (vendor_result.get("vendor_name") or (decision or {}).get("vendor") or "").strip()
+    rakuteru_no = (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip()
+    store_name = warranty_report_store_name(form)
+    vendor_short = warranty_report_vendor_short_name(vendor)
+    method_label = warranty_report_send_method_label(vendor_result, vendor, form)
+    if not all([rakuteru_no, store_name, vendor_short, method_label]):
+        return ""
+    return "　".join([
+        rakuteru_no,
+        store_name,
+        "修理受付済",
+        f"{vendor_short}へ{method_label}",
+        "ご確認お願い致します。",
+    ])
+
+
 def build_teams_send_preview_lines(teams_chat_message: str, rakuteru_no: str = "") -> list[str]:
     lines = [line.strip() for line in str(teams_chat_message or "").splitlines() if line.strip()]
     rakuteru_no = (rakuteru_no or "").strip()
@@ -2390,6 +2452,166 @@ def teams_config_unavailable_reasons(config: dict) -> list[str]:
     if config.get("error"):
         reasons.append(str(config["error"]))
     return reasons
+
+
+def warranty_teams_config_unavailable_reasons(config: dict) -> list[str]:
+    reasons = []
+    if not config.get("warranty_enabled"):
+        reasons.append("ワランティ送信設定が無効です")
+    if not (config.get("warranty_chat_id") or "").strip():
+        reasons.append("ワランティ送信先 chat_id が未設定です")
+    if (config.get("send_mode") or "").strip() not in SUPPORTED_TEAMS_SEND_MODES:
+        reasons.append("send_mode は powershell_graph を指定してください")
+    if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
+        reasons.append("Teams/PowerShell送信スクリプトが利用できません")
+    if config.get("error"):
+        reasons.append(str(config["error"]))
+    return reasons
+
+
+def _warranty_report_body_hash(message: str) -> str:
+    body = teams_plain_text_to_html((message or "").strip())
+    if not body:
+        return ""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _warranty_report_already_sent(session_state, message: str) -> bool:
+    body_hash = _warranty_report_body_hash(message)
+    return bool(
+        session_state.get("warranty_report_sent")
+        and body_hash
+        and session_state.get("warranty_report_sent_body_hash") == body_hash
+    )
+
+
+def validate_warranty_report_send_request(
+    form: dict,
+    decision: dict,
+    teams_config: dict,
+    message: str = "",
+    already_sent: bool = False,
+) -> list[str]:
+    vendor_result = (decision or {}).get("vendor_result", {}) or {}
+    vendor = (vendor_result.get("vendor_name") or (decision or {}).get("vendor") or "").strip()
+    errors = []
+    errors.extend(warranty_teams_config_unavailable_reasons(teams_config))
+    if not (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip():
+        errors.append("楽テルNOが未入力です")
+    if not warranty_report_store_name(form):
+        errors.append("販売店/運営会社名が未取得です")
+    if not warranty_report_vendor_short_name(vendor):
+        errors.append("修理拠点が未確定です")
+    if not warranty_report_send_method_label(vendor_result, vendor, form):
+        errors.append("送信方法が未確定です")
+    if not (message or build_warranty_report_message(form, decision)).strip():
+        errors.append("ワランティ送信用文面を生成できません")
+    if already_sent:
+        errors.append("同じ内容は送信済みです")
+    return list(dict.fromkeys(errors))
+
+
+def warranty_report_send_status_label(incomplete_reasons: list[str], already_sent: bool,
+                                      send_failed: bool = False,
+                                      in_progress: bool = False) -> str:
+    if in_progress:
+        return "送信処理中"
+    if already_sent:
+        return "送信済み"
+    if incomplete_reasons:
+        return "送信不可"
+    if send_failed:
+        return "送信失敗"
+    return "送信可能"
+
+
+def _warranty_report_send_in_progress(session_state, message: str) -> bool:
+    body_hash = _warranty_report_body_hash(message)
+    return bool(
+        session_state.get("warranty_report_send_in_progress")
+        and body_hash
+        and session_state.get("warranty_report_send_in_progress_body_hash") == body_hash
+    )
+
+
+def _warranty_report_send_requested(session_state, message: str) -> bool:
+    body_hash = _warranty_report_body_hash(message)
+    return bool(
+        session_state.get("warranty_report_send_requested")
+        and body_hash
+        and session_state.get("warranty_report_send_requested_body_hash") == body_hash
+    )
+
+
+def _warranty_report_last_send_failed(session_state, message: str) -> bool:
+    body_hash = _warranty_report_body_hash(message)
+    return bool(
+        session_state.get("warranty_report_send_failed")
+        and body_hash
+        and session_state.get("warranty_report_send_failed_body_hash") == body_hash
+    )
+
+
+def _clear_warranty_report_send_requested(session_state) -> None:
+    session_state["warranty_report_send_requested"] = False
+    session_state["warranty_report_send_requested_body_hash"] = ""
+
+
+def _clear_warranty_report_send_in_progress(session_state) -> None:
+    session_state["warranty_report_send_in_progress"] = False
+    session_state["warranty_report_send_in_progress_body_hash"] = ""
+    session_state["warranty_report_send_started_at"] = ""
+
+
+def _clear_stale_warranty_report_send_transient_state(session_state, message: str) -> None:
+    body_hash = _warranty_report_body_hash(message)
+    requested_hash = session_state.get("warranty_report_send_requested_body_hash")
+    in_progress_hash = session_state.get("warranty_report_send_in_progress_body_hash")
+    if requested_hash and requested_hash != body_hash:
+        _clear_warranty_report_send_requested(session_state)
+    if in_progress_hash and in_progress_hash != body_hash:
+        _clear_warranty_report_send_in_progress(session_state)
+
+
+def _mark_warranty_report_send_requested(session_state, message: str,
+                                         now: datetime | None = None) -> None:
+    now = now or datetime.now()
+    body_hash = _warranty_report_body_hash(message)
+    session_state["warranty_report_send_requested"] = True
+    session_state["warranty_report_send_requested_body_hash"] = body_hash
+    session_state["warranty_report_send_in_progress"] = True
+    session_state["warranty_report_send_in_progress_body_hash"] = body_hash
+    session_state["warranty_report_send_started_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
+
+
+def _mark_warranty_report_sent(session_state, message: str, result: dict | None = None,
+                               now: datetime | None = None) -> None:
+    now = now or datetime.now()
+    session_state["warranty_report_sent"] = True
+    session_state["warranty_report_sent_message"] = (message or "").strip()
+    session_state["warranty_report_sent_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
+    session_state["warranty_report_sent_body_hash"] = _warranty_report_body_hash(message)
+    if result:
+        message_id = result.get("message_id") or _extract_teams_message_id(result.get("stdout", ""))
+        if message_id:
+            session_state["warranty_report_sent_message_id"] = message_id
+    session_state["warranty_report_send_failed"] = False
+    session_state["warranty_report_send_failed_body_hash"] = ""
+    session_state["warranty_report_send_failed_at"] = ""
+    session_state["warranty_report_send_error_message"] = ""
+    _clear_warranty_report_send_requested(session_state)
+    _clear_warranty_report_send_in_progress(session_state)
+
+
+def _mark_warranty_report_send_failed(session_state, message: str, result: dict,
+                                      now: datetime | None = None) -> None:
+    now = now or datetime.now()
+    session_state["warranty_report_send_failed"] = True
+    session_state["warranty_report_send_failed_body_hash"] = _warranty_report_body_hash(message)
+    session_state["warranty_report_send_failed_at"] = now.strftime("%Y/%m/%d %H:%M:%S")
+    session_state["warranty_report_send_error_message"] = result.get("message", "") or "エラー内容を取得できませんでした"
+    _clear_warranty_report_send_requested(session_state)
+    _clear_warranty_report_send_in_progress(session_state)
 
 
 def _teams_case_already_sent(session_state, form: dict) -> bool:
@@ -2794,6 +3016,21 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_send_failed_body_hash",
         "teams_send_failed_at",
         "teams_send_error_message",
+        "warranty_report_message_display",
+        "warranty_report_send_requested",
+        "warranty_report_send_requested_body_hash",
+        "warranty_report_send_in_progress",
+        "warranty_report_send_in_progress_body_hash",
+        "warranty_report_send_started_at",
+        "warranty_report_sent",
+        "warranty_report_sent_message",
+        "warranty_report_sent_at",
+        "warranty_report_sent_body_hash",
+        "warranty_report_sent_message_id",
+        "warranty_report_send_failed",
+        "warranty_report_send_failed_body_hash",
+        "warranty_report_send_failed_at",
+        "warranty_report_send_error_message",
         "request_pdf_storage_confirmed",
         "tpl_label_select_after",
         "teams_action_input",
@@ -2841,6 +3078,13 @@ def load_teams_config() -> dict:
             if not config_exists:
                 config["enabled"] = True
 
+    if not config.get("warranty_chat_id"):
+        env_warranty_chat_id = os.environ.get("WRT_WARRANTY_TEAMS_CHAT_ID", "").strip()
+        if env_warranty_chat_id:
+            config["warranty_chat_id"] = env_warranty_chat_id
+            if not config_exists:
+                config["warranty_enabled"] = True
+
     if not config.get("chat_id"):
         config["enabled"] = False
 
@@ -2853,14 +3097,14 @@ def is_teams_send_enabled() -> bool:
     return bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
 
 
-def send_teams_message_via_powershell(message: str) -> dict:
+def send_teams_message_via_powershell(message: str, chat_id_override: str = "") -> dict:
     body = (message or "").strip()
     if not body:
         return {"ok": False, "message": "送信失敗: 送信本文が空です", "stdout": "", "stderr": ""}
 
     config = load_teams_config()
-    chat_id = (config.get("chat_id") or "").strip()
-    if not config.get("enabled") or not chat_id:
+    chat_id = (chat_id_override or config.get("chat_id") or "").strip()
+    if (not chat_id_override and not config.get("enabled")) or not chat_id:
         return {"ok": False, "message": "送信失敗: Teams送信設定が未完了です", "stdout": "", "stderr": ""}
     if (config.get("send_mode") or "").strip() not in SUPPORTED_TEAMS_SEND_MODES:
         return {"ok": False, "message": "送信失敗: send_mode は powershell_graph を指定してください", "stdout": "", "stderr": ""}
@@ -5688,6 +5932,129 @@ def render_next_confirmation_sections(next_sections: dict) -> None:
                     st.markdown(f"- {label}")
 
 
+def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
+    st.markdown("##### 📣 ワランティ報告送信")
+    teams_config = load_teams_config()
+    chat_name = teams_config.get("warranty_chat_name") or DEFAULT_TEAMS_CONFIG["warranty_chat_name"]
+    generated_message = build_warranty_report_message(form, decision)
+    preview_value = st.session_state.get("warranty_report_message_display", generated_message)
+    if not str(preview_value or "").strip() and generated_message:
+        preview_value = generated_message
+    message = st.text_area(
+        "送信文プレビュー",
+        value=preview_value,
+        height=90,
+        key="warranty_report_message_display",
+        help="ワランティ報告専用の送信文です。ラクテル用テキスト、修理依頼書メモ、既存Teams報告文には反映されません。",
+    )
+    _clear_stale_warranty_report_send_transient_state(st.session_state, message)
+    already_sent = _warranty_report_already_sent(st.session_state, message)
+    in_progress = _warranty_report_send_in_progress(st.session_state, message)
+    send_failed = _warranty_report_last_send_failed(st.session_state, message)
+    incomplete_reasons = validate_warranty_report_send_request(
+        form,
+        decision,
+        teams_config,
+        message,
+        already_sent=already_sent,
+    )
+    status = warranty_report_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
+    st.markdown(f"**送信先：** {chat_name}")
+    st.markdown(f"**状態：** {status}")
+    if incomplete_reasons and not already_sent:
+        st.markdown("**送信不可理由：**")
+        st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
+    elif already_sent:
+        sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
+        st.success(f"ワランティへ送信済みです。\n送信日時：{sent_at}")
+    elif send_failed:
+        error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
+        st.error(f"ワランティ送信に失敗しました：{error_message}")
+    elif in_progress:
+        started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
+        st.info(f"ワランティへ送信しています。完了まで画面を閉じないでください。\n開始時刻：{started_at}")
+    else:
+        st.success("送信可能です")
+
+    def request_warranty_report_send(allow_resend: bool = False):
+        current_already_sent = _warranty_report_already_sent(st.session_state, message)
+        validation_errors = validate_warranty_report_send_request(
+            form,
+            decision,
+            teams_config,
+            message,
+            already_sent=(current_already_sent and not allow_resend),
+        )
+        if validation_errors:
+            st.warning("未完了項目があります。ワランティ報告送信パネルの送信不可理由を確認してください。")
+            return
+        if in_progress:
+            st.warning("ワランティ送信処理中です。完了まで画面を閉じないでください。")
+            return
+        _mark_warranty_report_send_requested(st.session_state, message)
+        st.rerun()
+
+    def execute_requested_warranty_report_send():
+        warranty_chat_id = (teams_config.get("warranty_chat_id") or "").strip()
+        body = teams_plain_text_to_html(message)
+        with st.spinner("ワランティへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
+            result = send_teams_message_via_powershell(body, chat_id_override=warranty_chat_id)
+        vendor_name = ((decision.get("vendor_result") or {}).get("vendor_name") or decision.get("vendor") or "")
+        append_teams_send_log(
+            result,
+            message,
+            chat_name,
+            form=form,
+            vendor=vendor_name,
+            teams_action="ワランティ報告送信",
+        )
+        if result.get("ok"):
+            _mark_warranty_report_sent(st.session_state, message, result=result)
+            st.rerun()
+        else:
+            _mark_warranty_report_send_failed(st.session_state, message, result)
+            st.rerun()
+
+    if in_progress:
+        st.button(
+            "送信処理中...",
+            key="warranty_report_sending_button",
+            disabled=True,
+            use_container_width=True,
+        )
+    elif already_sent:
+        st.button(
+            "送信済み",
+            key="warranty_report_sent_button",
+            disabled=True,
+            use_container_width=True,
+        )
+        if st.button(
+            "同じ内容を再送する",
+            key="warranty_report_resend_button",
+            use_container_width=True,
+        ):
+            request_warranty_report_send(allow_resend=True)
+    elif incomplete_reasons:
+        st.button(
+            "未完了項目があります",
+            key="warranty_report_send_incomplete_button",
+            disabled=True,
+            use_container_width=True,
+        )
+    else:
+        if st.button(
+            "ワランティへ送信",
+            key="warranty_report_send_button",
+            type="primary",
+            use_container_width=True,
+        ):
+            request_warranty_report_send()
+
+    if _warranty_report_send_requested(st.session_state, message):
+        execute_requested_warranty_report_send()
+
+
 def render_decision_tags_panel(form: dict) -> None:
     st.markdown("##### 🧭 判定タグ")
     try:
@@ -7572,6 +7939,8 @@ def render_tab_after_call():
                     )
                     if log.get("error_message"):
                         st.caption(log["error_message"])
+
+        render_warranty_report_send_panel(form, decision)
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
     st.text_area(

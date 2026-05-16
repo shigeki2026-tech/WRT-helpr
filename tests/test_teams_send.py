@@ -73,13 +73,17 @@ class SessionState(dict):
         self[name] = value
 
 
-def write_config(path: Path, enabled=True, chat_id="chat-123", send_mode="powershell_graph"):
+def write_config(path: Path, enabled=True, chat_id="chat-123", send_mode="powershell_graph",
+                 warranty_enabled=False, warranty_chat_id=""):
     path.write_text(
         json.dumps({
             "enabled": enabled,
             "chat_id": chat_id,
             "chat_name": "WRT報告用チャット",
             "send_mode": send_mode,
+            "warranty_enabled": warranty_enabled,
+            "warranty_chat_id": warranty_chat_id,
+            "warranty_chat_name": "ワランティ報告用チャット",
         }, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -94,6 +98,9 @@ def test_teams_config_example_exists():
         "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
         "chat_name": "WRT報告用チャット",
         "send_mode": "powershell_graph",
+        "warranty_enabled": False,
+        "warranty_chat_id": "",
+        "warranty_chat_name": "ワランティ報告用チャット",
     }
 
 
@@ -157,6 +164,166 @@ def test_empty_message_does_not_call_subprocess(monkeypatch):
 
     assert result["ok"] is False
     assert "本文が空" in result["message"]
+
+
+def warranty_decision(vendor_name="ユナイトサービス㈱", send_method="", contact_type=""):
+    return {
+        "vendor": vendor_name,
+        "vendor_result": {
+            "vendor_name": vendor_name,
+            "send_method": send_method,
+            "contact_type": contact_type,
+            "needs_escalation": "担当エスカ" in vendor_name or "要確認" in vendor_name,
+        },
+    }
+
+
+def warranty_form(**overrides):
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_1073",
+        "store_name": "ヤマダホームズ",
+        "rakutel_text": "既存ラクテル",
+        "attention_memo": "既存依頼書メモ",
+        "teams_chat_message": "既存Teams報告文",
+    })
+    form.update(overrides)
+    return form
+
+
+def warranty_config(enabled=True, chat_id="warranty-chat"):
+    config = app.DEFAULT_TEAMS_CONFIG.copy()
+    config.update({
+        "warranty_enabled": enabled,
+        "warranty_chat_id": chat_id,
+        "send_mode": "powershell_graph",
+    })
+    return config
+
+
+def test_warranty_report_message_uses_expected_full_width_space_format():
+    message = app.build_warranty_report_message(
+        warranty_form(),
+        warranty_decision(send_method="FAX"),
+    )
+
+    assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
+    assert " " not in message
+    assert message.count("　") == 4
+
+
+def test_warranty_report_message_shortens_unite_and_maps_methods():
+    fax_message = app.build_warranty_report_message(
+        warranty_form(),
+        warranty_decision(vendor_name="ユナイトサービス㈱", send_method="FAX"),
+    )
+    mail_message = app.build_warranty_report_message(
+        warranty_form(),
+        warranty_decision(vendor_name="ソフマップ修理センター", send_method="メール"),
+    )
+
+    assert "ユナイトへFAX送信済" in fax_message
+    assert "ソフマップへメール送信済" in mail_message
+
+
+def test_warranty_report_message_uses_existing_auto_send_method_when_explicit_method_blank():
+    message = app.build_warranty_report_message(warranty_form(), warranty_decision("ユナイトサービス㈱"))
+
+    assert "ユナイトへFAX送信済" in message
+
+
+def test_warranty_report_validation_blocks_missing_required_fields():
+    base_form = warranty_form()
+    base_decision = warranty_decision(send_method="FAX")
+    config = warranty_config()
+
+    assert "楽テルNOが未入力です" in app.validate_warranty_report_send_request(
+        {**base_form, "rakuteru_no": ""}, base_decision, config
+    )
+    assert "販売店/運営会社名が未取得です" in app.validate_warranty_report_send_request(
+        {**base_form, "store_name": "", "store_original": ""}, base_decision, config
+    )
+    assert "修理拠点が未確定です" in app.validate_warranty_report_send_request(
+        base_form, warranty_decision("担当エスカ（要確認）", send_method="FAX"), config
+    )
+    assert "送信方法が未確定です" in app.validate_warranty_report_send_request(
+        base_form, warranty_decision("WRT修理センター"), config
+    )
+
+
+def test_warranty_report_validation_blocks_config_and_duplicate():
+    form = warranty_form()
+    decision = warranty_decision(send_method="FAX")
+
+    disabled = app.validate_warranty_report_send_request(form, decision, warranty_config(enabled=False))
+    no_chat = app.validate_warranty_report_send_request(form, decision, warranty_config(chat_id=""))
+    duplicate = app.validate_warranty_report_send_request(
+        form,
+        decision,
+        warranty_config(),
+        app.build_warranty_report_message(form, decision),
+        already_sent=True,
+    )
+
+    assert "ワランティ送信設定が無効です" in disabled
+    assert "ワランティ送信先 chat_id が未設定です" in no_chat
+    assert "同じ内容は送信済みです" in duplicate
+
+
+def test_warranty_report_message_stays_out_of_rakutel_memo_and_existing_teams():
+    form = warranty_form()
+    decision = warranty_decision(send_method="FAX")
+    message = app.build_warranty_report_message(form, decision)
+
+    assert message
+    assert form["rakutel_text"] == "既存ラクテル"
+    assert form["attention_memo"] == "既存依頼書メモ"
+    assert form["teams_chat_message"] == "既存Teams報告文"
+
+
+def test_warranty_report_send_uses_warranty_chat_id(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    write_config(
+        config_path,
+        enabled=False,
+        chat_id="",
+        warranty_enabled=True,
+        warranty_chat_id="warranty-chat-id",
+    )
+    script_path = tmp_path / "send_teams_message.ps1"
+    script_path.write_text("# test", encoding="utf-8")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
+
+    calls = {}
+
+    def fake_run(args, **kwargs):
+        calls["args"] = args
+        return SimpleNamespace(returncode=0, stdout="SUCCESS message-1", stderr="")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    result = app.send_teams_message_via_powershell("hello", chat_id_override="warranty-chat-id")
+
+    assert result["ok"] is True
+    assert "warranty-chat-id" in calls["args"]
+
+
+def test_warranty_report_panel_buttons_have_unique_keys():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_start = source.index("def render_warranty_report_send_panel")
+    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
+    panel_source = source[panel_start:panel_end]
+
+    for key in [
+        'key="warranty_report_sending_button"',
+        'key="warranty_report_sent_button"',
+        'key="warranty_report_resend_button"',
+        'key="warranty_report_send_incomplete_button"',
+        'key="warranty_report_send_button"',
+        'key="warranty_report_message_display"',
+    ]:
+        assert key in panel_source
 
 
 def test_teams_send_body_uses_teams_chat_message_not_rakutel_text():

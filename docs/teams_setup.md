@@ -15,12 +15,17 @@ Copy-Item .\config\teams_config.example.json .\config\teams_config.json
 
 `config/teams_config.json` を開き、`chat_id` を実際の Teams チャット ID に置き換えます。初期状態では安全のため `enabled` は `false` です。
 
+ワランティ報告送信を使う場合は、同じファイル内の `warranty_enabled` と `warranty_chat_id` をローカルで設定します。本番の `warranty_chat_id` もGitへコミットしません。
+
 ```json
 {
   "enabled": true,
   "chat_id": "実際のTeamsチャットID",
   "chat_name": "WRT報告用チャット",
-  "send_mode": "powershell_graph"
+  "send_mode": "powershell_graph",
+  "warranty_enabled": false,
+  "warranty_chat_id": "",
+  "warranty_chat_name": "ワランティ報告用チャット"
 }
 ```
 
