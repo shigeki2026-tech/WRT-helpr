@@ -132,7 +132,7 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "st.multiselect" not in snippet_source
     assert "st.checkbox" not in snippet_source
     assert "st.selectbox" in snippet_source
-    assert "memo_col, memo_action_col = st.columns([5, 2], gap=\"large\")" in after_source
+    assert "memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")" in after_source
     assert "with memo_col:" in after_source
     assert "with memo_action_col:" in after_source
     assert "修理依頼書メモ 操作" in after_source
@@ -185,9 +185,9 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert "memo_col, memo_action_col = st.columns([5, 2], gap=\"large\")" in after_source
-    assert "rakutel_text_col, rakutel_action_col = st.columns([5, 2], gap=\"large\")" in after_source
-    assert "teams_text_col, teams_action_col = st.columns([5, 2], gap=\"large\")" in after_source
+    assert "memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")" in after_source
+    assert "rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")" in after_source
+    assert "teams_text_col, teams_action_col = st.columns([2, 3], gap=\"large\")" in after_source
     assert "with memo_col:" in after_source
     assert "with memo_action_col:" in after_source
     assert "with rakutel_text_col:" in after_source
@@ -197,6 +197,7 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert "修理依頼書メモ 操作" in after_source
     assert "ラクテル用テキスト 操作" in after_source
     assert "Teams報告文 操作" in after_source
+    assert "st.columns([5, 2], gap=\"large\")" not in after_source
 
     rakutel_section = after_source[
         after_source.index("##### 📝 ラクテル用テキスト"):
@@ -215,6 +216,45 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert teams_section.index("with teams_action_col:") < teams_section.index('"Teamsチャットへ送信"')
     assert "追加候補に入れる" not in after_source
     assert "選択中リスト" not in after_source
+
+
+def test_after_call_record_area_is_full_width_below_top_columns():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    top_left_index = after_source.index("##### 📋 送付テンプレート・拠点")
+    top_right_index = after_source.index("##### 補助情報")
+    record_heading_index = after_source.index("##### 📝 記録文")
+    memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
+    record_area = after_source[record_heading_index:memo_heading_index]
+
+    assert top_left_index < record_heading_index
+    assert top_right_index < record_heading_index
+    assert "with col2:" not in record_area
+    assert "\n    st.markdown(\"##### 📝 記録文\")" in after_source
+    assert after_source.index("memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
+    assert after_source.index("rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
+    assert after_source.index("teams_text_col, teams_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
+
+
+def test_repair_request_template_is_shown_before_memo_regeneration_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    memo_action = after_source[
+        after_source.index("修理依頼書メモ 操作"):
+        after_source.index("###### 追記候補")
+    ]
+
+    assert "修理依頼文テンプレ" in memo_action
+    assert "テンプレート未確定" in memo_action
+    assert "memo_template_code" in memo_action
+    assert "memo_template_label" in memo_action
+    assert "build_template_selection_reason(template_selection)" in memo_action
+    assert memo_action.index("修理依頼文テンプレ") < memo_action.index('key="regenerate_attention_memo"')
 
 
 def test_after_call_contact_method_table_is_collapsed_by_default():
