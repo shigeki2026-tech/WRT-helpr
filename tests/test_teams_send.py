@@ -32,6 +32,25 @@ def test_append_attention_memo_snippets_only_updates_repair_request_memo():
     assert form["teams_chat_message"] == "既存Teams"
 
 
+def test_memo_snippet_master_has_ui_columns_and_sorted_active_rows():
+    df = app.load_memo_snippets()
+
+    assert {"condition_text", "ui_group", "default_checked"}.issubset(df.columns)
+    assert all(str(value).strip() != "0" for value in df["active"].tolist())
+    assert df["sort_order"].tolist() == sorted(df["sort_order"].tolist())
+    assert "基本案内" in set(df["ui_group"])
+    assert "販売店連絡" in set(df["ui_group"])
+
+
+def test_memo_snippet_condition_text_is_not_part_of_body():
+    df = app.load_memo_snippets()
+    row = df[df["snippet_id"] == "data_erase_backup"].iloc[0]
+
+    assert row["condition_text"]
+    assert "PC・プリンター" in row["condition_text"]
+    assert "PC・プリンター" not in row["body"]
+
+
 def test_append_attention_memo_snippets_does_not_duplicate():
     form = app.empty_form()
     app.append_attention_memo_snippets(form, ["store_request"])
@@ -40,6 +59,18 @@ def test_append_attention_memo_snippets_does_not_duplicate():
 
     assert form["attention_memo"] == once
     assert form["attention_memo"].count("【○○店/○○様より修理依頼】") == 1
+
+
+def test_append_attention_memo_snippets_adds_body_only_not_condition_text():
+    form = app.empty_form()
+    form["attention_memo"] = "既存本文"
+
+    added = app.append_attention_memo_snippets(form, ["data_erase_backup"])
+
+    assert len(added) == 1
+    assert "既存本文" in form["attention_memo"]
+    assert "【初期化・部品交換の可能性があり、データ消去・バックアップのご案内同意済み】" in form["attention_memo"]
+    assert "PC・プリンター" not in form["attention_memo"]
 
 
 def test_appended_attention_memo_snippet_stays_out_of_generated_texts():
@@ -60,6 +91,55 @@ def test_appended_attention_memo_snippet_stays_out_of_generated_texts():
     assert snippet_text in form["attention_memo"]
     assert snippet_text not in rakutel_text
     assert snippet_text not in teams_text
+
+
+def test_appended_attention_memo_snippet_stays_out_of_warranty_report():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_1073",
+        "store_name": "ヤマダホームズ",
+    })
+    app.append_attention_memo_snippets(form, ["out_of_scope_store_contact"])
+    decision = {
+        "vendor": "ユナイトサービス㈱",
+        "vendor_result": {"vendor_name": "ユナイトサービス㈱", "send_method": "FAX"},
+    }
+
+    message = app.build_warranty_report_message(form, decision)
+
+    assert "保証対象外時：販売店へ連絡要" not in message
+    assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
+
+
+def test_memo_snippet_ui_uses_japanese_checkboxes_not_multiselect():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    snippet_source = after_source[
+        after_source.index("修理依頼書メモ 追記候補"):
+        after_source.index('memo_value = sanitize_generated_body_text')
+    ]
+
+    assert "Choose options" not in source
+    assert "Select all" not in source
+    assert "st.multiselect" not in snippet_source
+    assert "st.checkbox" in snippet_source
+    assert "修理依頼書メモ 追記候補" in snippet_source
+    assert "追記する定型文" in snippet_source
+    assert "追記条件" in snippet_source
+    assert "本文プレビュー" in snippet_source
+    assert "memo_snippet_append_button" in snippet_source
+    assert "memo_snippet_clear_selection_button" in snippet_source
+
+
+def test_memo_snippet_checkbox_keys_are_unique_and_snippet_id_based():
+    df = app.load_memo_snippets()
+    keys = [app.memo_snippet_checkbox_key(snippet_id) for snippet_id in df["snippet_id"].tolist()]
+
+    assert len(keys) == len(set(keys))
+    assert "memo_snippet_select_manufacturer_warranty" in keys
+    assert all(key.startswith("memo_snippet_select_") for key in keys)
 
 
 class SessionState(dict):

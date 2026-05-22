@@ -717,8 +717,14 @@ _VENDOR_SEND_TEMPLATE_COLS = [
     "warranty_type", "attention_memo_template", "rakutel_template",
     "teams_template", "notes",
 ]
+_HANDOVER_RULE_COLS = [
+    "priority", "enabled", "rule_name", "store_keywords", "case_keywords",
+    "appliance_type", "call_type_inquiry", "call_type_repair", "rakutel_status",
+    "handover_request_content", "notes", "exclude_wrong_number", "active",
+]
 _MEMO_SNIPPET_COLS = [
-    "snippet_id", "category", "label", "body", "active", "sort_order",
+    "snippet_id", "category", "ui_group", "label", "body", "condition_text",
+    "default_checked", "active", "sort_order",
 ]
 # legacy
 _MASTER_REQUIRED_COLS = [
@@ -831,6 +837,11 @@ def _load_vendor_send_templates_cached(mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def _load_handover_rules_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_handover_rules.csv", _HANDOVER_RULE_COLS)
+
+
+@st.cache_data
 def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_script_guidance.csv", _SCRIPT_GUIDANCE_COLS)
 
@@ -895,6 +906,10 @@ def load_call_lines() -> pd.DataFrame:
 
 def load_vendor_send_templates() -> pd.DataFrame:
     return _load_vendor_send_templates_cached(_csv_mtime("master_vendor_send_templates.csv"))
+
+
+def load_handover_rules() -> pd.DataFrame:
+    return _load_handover_rules_cached(_csv_mtime("master_handover_rules.csv"))
 
 
 def load_script_guidance_csv() -> pd.DataFrame:
@@ -1973,6 +1988,27 @@ def append_attention_memo_snippets(form: dict, snippet_ids: list[str]) -> list[d
         added.append(row.to_dict())
     form["attention_memo"] = current
     return added
+
+
+def memo_snippet_checkbox_key(snippet_id: str) -> str:
+    safe_id = re.sub(r"[^0-9A-Za-z_]+", "_", str(snippet_id or "").strip())
+    return f"memo_snippet_select_{safe_id}"
+
+
+def selected_memo_snippet_ids(session_state, snippets_df: pd.DataFrame) -> list[str]:
+    selected: list[str] = []
+    for _, row in snippets_df.iterrows():
+        snippet_id = str(row.get("snippet_id") or "").strip()
+        if snippet_id and session_state.get(memo_snippet_checkbox_key(snippet_id), False):
+            selected.append(snippet_id)
+    return selected
+
+
+def clear_memo_snippet_selection(session_state, snippets_df: pd.DataFrame) -> None:
+    for _, row in snippets_df.iterrows():
+        snippet_id = str(row.get("snippet_id") or "").strip()
+        if snippet_id:
+            session_state[memo_snippet_checkbox_key(snippet_id)] = False
 
 
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
@@ -4510,6 +4546,140 @@ def determine_vendor_candidate(form: dict) -> str:
 
 
 # ============================================================
+# 引き継ぎ要否判定
+# ============================================================
+def _int_or_default(value, default: int = 999) -> int:
+    try:
+        return int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _flag_enabled(value) -> bool:
+    return str(value or "").strip() == "1"
+
+
+def infer_handover_call_kind(form: dict) -> str:
+    """UI入力から引き継ぎ判定用の inquiry / repair を推定する。"""
+    raw = " ".join(
+        str(form.get(field) or "")
+        for field in ("call_kind", "call_type", "reception_type", "case_type")
+    )
+    if any(token in raw for token in ("問い合わせ", "問合せ", "問合", "inquiry")):
+        return "inquiry"
+    return "repair"
+
+
+def _handover_no_match(reason: str = "引き継ぎ対象ルールに一致なし") -> dict:
+    return {
+        "required": False,
+        "matched": False,
+        "reason": reason,
+    }
+
+
+def _handover_text_bundle(form: dict, decision: dict | None = None) -> dict:
+    decision = decision or {}
+    working_form = decision.get("working_form") or {}
+    vendor_result = decision.get("vendor_result") or {}
+    store_fields = (
+        "operating_company", "store_company", "store_name", "store_original",
+        "store_name_original", "warranty_plan", "call_line",
+    )
+    case_fields = (
+        "case_keywords", "case_type", "reception_type", "call_type",
+        "symptoms", "symptom", "symptom_detail", "memo", "call_memo",
+        "teams_action", "vendor_result", "repair_type", "product",
+        "manufacturer", "warranty_plan", "extra_condition",
+    )
+    appliance_values = [
+        form.get("appliance_type"),
+        working_form.get("appliance_type"),
+        decision.get("appliance_type"),
+    ]
+    case_values = [form.get(field) for field in case_fields]
+    case_values.extend([
+        decision.get("teams_action"),
+        decision.get("repair_type"),
+        decision.get("vendor"),
+        vendor_result.get("vendor_name"),
+        vendor_result.get("reason"),
+        vendor_result.get("notes"),
+    ])
+    return {
+        "store": " ".join(str(form.get(field) or "") for field in store_fields).strip(),
+        "case": " ".join(str(value or "") for value in case_values).strip(),
+        "appliance_type": " ".join(str(value or "") for value in appliance_values).strip(),
+    }
+
+
+def _handover_match_reason(row, store_matched: bool, case_matched: bool, appliance_matched: bool) -> str:
+    rule_name = (row.get("rule_name") or "").strip()
+    if store_matched:
+        return f"販売店/運営会社が{rule_name}に一致"
+    if case_matched:
+        return f"案件内容が{rule_name}に一致"
+    if appliance_matched:
+        return f"家電/住設が{(row.get('appliance_type') or '').strip()}に一致"
+    return f"{rule_name or '引き継ぎ要否ルール'}に一致"
+
+
+def determine_handover_requirement(form: dict, decision: dict | None = None, call_kind: str = "repair") -> dict:
+    """
+    data/master_handover_rules.csv を使って、WRS/ワランティへの引き継ぎ要否を判定する。
+    - priority 昇順で最初に一致したルールを採用
+    - call_kind="inquiry" は call_type_inquiry=1 のみ対象
+    - call_kind="repair" は call_type_repair=1 のみ対象
+    - 楽テル用テキスト、修理依頼書メモ、Teams報告文には反映しない
+    """
+    normalized_kind = "inquiry" if str(call_kind or "").strip().lower() == "inquiry" else "repair"
+    df = load_handover_rules()
+    if df.empty:
+        return _handover_no_match("引き継ぎ要否マスタが未登録です")
+
+    texts = _handover_text_bundle(form or {}, decision or {})
+    for _, row in df.iterrows():
+        if not _flag_enabled(row.get("active", "1")):
+            continue
+        if normalized_kind == "inquiry" and not _flag_enabled(row.get("call_type_inquiry")):
+            continue
+        if normalized_kind == "repair" and not _flag_enabled(row.get("call_type_repair")):
+            continue
+
+        store_keywords = (row.get("store_keywords") or "").strip()
+        case_keywords = (row.get("case_keywords") or "").strip()
+        required_appliance = (row.get("appliance_type") or "").strip()
+        if not any([store_keywords, case_keywords, required_appliance]):
+            continue
+
+        store_matched = bool(store_keywords) and _kw_any_match(store_keywords, texts["store"])
+        case_matched = bool(case_keywords) and _kw_any_match(case_keywords, texts["case"])
+        appliance_matched = bool(required_appliance) and required_appliance in texts["appliance_type"]
+
+        if store_keywords and not store_matched:
+            continue
+        if case_keywords and not case_matched:
+            continue
+        if required_appliance and not appliance_matched:
+            continue
+
+        return {
+            "required": True,
+            "matched": True,
+            "priority": _int_or_default(row.get("priority")),
+            "rule_name": (row.get("rule_name") or "").strip(),
+            "rakutel_status": (row.get("rakutel_status") or "").strip(),
+            "handover_request_content": (row.get("handover_request_content") or "").strip(),
+            "notes": (row.get("notes") or "").strip(),
+            "exclude_wrong_number": _flag_enabled(row.get("exclude_wrong_number")),
+            "reason": _handover_match_reason(row, store_matched, case_matched, appliance_matched),
+            "csv_name": "master_handover_rules.csv",
+        }
+
+    return _handover_no_match()
+
+
+# ============================================================
 # call_line 属性推定（回線名 + 販売店名）
 # ============================================================
 def infer_call_line_attrs(form: dict) -> dict:
@@ -5683,6 +5853,17 @@ def run_decision(form: dict) -> dict:
         else:
             vendor_result["reason"] = ""
             vendor_result["vendor_missing_reason"] = ""
+    handover_requirement = determine_handover_requirement(
+        working_form,
+        {
+            "repair_type": repair_type,
+            "vendor": vendor,
+            "vendor_result": vendor_result,
+            "teams_action": form.get("teams_action", ""),
+            "working_form": working_form,
+        },
+        infer_handover_call_kind(working_form),
+    )
 
     _result_core = {
         # ── 主要判定結果 ──
@@ -5696,6 +5877,7 @@ def run_decision(form: dict) -> dict:
         "warranty_result":     warranty_result,
         "warranty_status":     warranty_result["warranty_status"],
         "can_accept":          warranty_result["can_accept"],
+        "handover_requirement": handover_requirement,
         # ── 各層の判定詳細 ──
         "alias_result":        alias_result,
         "repair_result":       repair_result,
@@ -5932,6 +6114,31 @@ def render_next_confirmation_sections(next_sections: dict) -> None:
                     st.markdown(f"- {label}")
 
 
+def render_handover_requirement_panel(handover: dict) -> None:
+    st.markdown("##### 🔁 引き継ぎ要否")
+    handover = handover or _handover_no_match()
+    if handover.get("required"):
+        lines = [
+            "必要",
+            f"対象：{handover.get('rule_name') or '未設定'}",
+        ]
+        if handover.get("rakutel_status"):
+            lines.append(f"楽テルステータス：{handover['rakutel_status']}")
+        if handover.get("handover_request_content"):
+            lines.append(f"依頼内容：{handover['handover_request_content']}")
+        if handover.get("notes"):
+            lines.append(f"備考：{handover['notes']}")
+        priority = _int_or_default(handover.get("priority"))
+        if priority <= 2 or "クレーム" in (handover.get("rule_name") or ""):
+            st.error("\n".join(lines))
+        else:
+            st.warning("\n".join(lines))
+        if handover.get("reason"):
+            st.caption(f"理由：{handover['reason']}")
+    else:
+        st.info(f"不要 / 未該当\n\n理由：{handover.get('reason') or '引き継ぎ対象ルールに一致なし'}")
+
+
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     st.markdown("##### 📣 ワランティ報告送信")
     teams_config = load_teams_config()
@@ -5961,6 +6168,9 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     status = warranty_report_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
     st.markdown(f"**送信先：** {chat_name}")
     st.markdown(f"**状態：** {status}")
+    handover = (decision or {}).get("handover_requirement") or {}
+    if not handover.get("required"):
+        st.warning("引き継ぎ対象ルールに一致していません。送信前に確認してください。")
     if incomplete_reasons and not already_sent:
         st.markdown("**送信不可理由：**")
         st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
@@ -7609,43 +7819,45 @@ def render_tab_after_call():
         snippets_df = load_memo_snippets()
         if not snippets_df.empty:
             st.markdown("###### 修理依頼書メモ 追記候補")
-            snippet_options = snippets_df["snippet_id"].tolist()
-            snippet_label_map = {
-                str(row.get("snippet_id") or ""): str(row.get("label") or row.get("snippet_id") or "")
-                for _, row in snippets_df.iterrows()
-            }
-            selected_snippet_ids = st.multiselect(
-                "追記する定型文",
-                snippet_options,
-                format_func=lambda snippet_id: snippet_label_map.get(str(snippet_id), str(snippet_id)),
-                key="attention_memo_snippet_select",
-            )
-            if selected_snippet_ids:
-                preview_bodies = [
-                    str(row.get("body") or "")
-                    for _, row in snippets_df[snippets_df["snippet_id"].isin(selected_snippet_ids)].iterrows()
-                ]
-                st.text_area(
-                    "選択文言プレビュー",
-                    "\n\n".join(preview_bodies),
-                    height=140,
-                    key="attention_memo_snippet_preview",
-                    disabled=True,
-                )
+            st.caption("必要な定型文を選択し、「選択した文言を修理依頼書メモへ追記」を押してください。")
+            if st.button("選択をクリア", key="memo_snippet_clear_selection_button", use_container_width=True):
+                clear_memo_snippet_selection(st.session_state, snippets_df)
+                st.rerun()
+            st.markdown("###### 追記する定型文")
+            for ui_group, group_df in snippets_df.groupby("ui_group", sort=False):
+                group_label = str(ui_group or "").strip() or "その他"
+                with st.expander(f"【{group_label}】", expanded=True):
+                    for _, row in group_df.iterrows():
+                        snippet_id = str(row.get("snippet_id") or "").strip()
+                        if not snippet_id:
+                            continue
+                        key = memo_snippet_checkbox_key(snippet_id)
+                        if key not in st.session_state:
+                            st.session_state[key] = str(row.get("default_checked") or "").strip() == "1"
+                        label = str(row.get("label") or snippet_id).strip()
+                        st.checkbox(label, key=key)
+                        condition_text = str(row.get("condition_text") or "").strip()
+                        if condition_text:
+                            st.caption(f"追記条件：{condition_text}")
+                        with st.expander("本文プレビュー", expanded=False):
+                            st.text(str(row.get("body") or "").strip())
+            selected_snippet_ids = selected_memo_snippet_ids(st.session_state, snippets_df)
             if st.button(
                 "選択した文言を修理依頼書メモへ追記",
-                key="append_attention_memo_snippets",
+                key="memo_snippet_append_button",
                 use_container_width=True,
-                disabled=not bool(selected_snippet_ids),
             ):
-                added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
-                st.session_state[memo_widget_key] = form["attention_memo"]
-                st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-                st.session_state.form = form
-                if added_snippets:
-                    st.success("選択した文言を修理依頼書メモへ追記しました。")
+                if not selected_snippet_ids:
+                    st.warning("追記する定型文を選択してください。")
                 else:
-                    st.info("選択した文言はすでに修理依頼書メモに含まれています。")
+                    added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
+                    st.session_state[memo_widget_key] = form["attention_memo"]
+                    st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+                    st.session_state.form = form
+                    if added_snippets:
+                        st.success("修理依頼書メモへ追記しました。")
+                    else:
+                        st.info("選択した文言はすでに修理依頼書メモに含まれています。")
 
         memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
         if memo_widget_key in st.session_state:
@@ -7940,6 +8152,7 @@ def render_tab_after_call():
                     if log.get("error_message"):
                         st.caption(log["error_message"])
 
+        render_handover_requirement_panel(decision.get("handover_requirement"))
         render_warranty_report_send_panel(form, decision)
     st.divider()
     st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
