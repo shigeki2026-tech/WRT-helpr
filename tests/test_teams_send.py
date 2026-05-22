@@ -224,7 +224,7 @@ def test_after_call_record_area_is_full_width_below_top_columns():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    top_left_index = after_source.index("##### 📋 送付テンプレート・拠点")
+    top_left_index = after_source.index("##### 案件サマリー")
     top_right_index = after_source.index("##### 補助情報")
     record_heading_index = after_source.index("##### 📝 記録文")
     memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
@@ -237,6 +237,23 @@ def test_after_call_record_area_is_full_width_below_top_columns():
     assert after_source.index("memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
     assert after_source.index("rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
     assert after_source.index("teams_text_col, teams_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
+
+
+def test_after_call_top_summary_keeps_details_collapsed():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    record_heading_index = after_source.index("##### 📝 記録文")
+
+    assert "##### 案件サマリー" in after_source
+    assert 'st.expander("送付テンプレート・拠点の詳細を開く", expanded=False)' in after_source
+    assert 'st.expander("修理拠点・手配詳細を開く", expanded=False)' in after_source
+    assert 'st.expander("候補テンプレートの詳細を見る", expanded=False)' in after_source
+    assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
+    assert after_source.index("##### 案件サマリー") < record_heading_index
+    assert after_source.index("送付テンプレート・拠点の詳細を開く") < record_heading_index
+    assert after_source.index("修理拠点・手配詳細を開く") < record_heading_index
 
 
 def test_repair_request_template_is_shown_before_memo_regeneration_button():
@@ -257,6 +274,20 @@ def test_repair_request_template_is_shown_before_memo_regeneration_button():
     assert memo_action.index("修理依頼文テンプレ") < memo_action.index('key="regenerate_attention_memo"')
 
 
+def test_after_call_history_template_is_collapsed_as_legacy_format():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    history_index = after_source.index("対応履歴テンプレ（旧形式・必要時のみ）")
+
+    assert "##### 📄 対応履歴テンプレ（コピー用）" not in after_source
+    assert 'st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False)' in after_source
+    assert "通常はラクテル用テキストまたはTeams報告文を使用してください。" in after_source
+    assert "旧形式の履歴貼付が必要な場合のみ使用します。" in after_source
+    assert after_source.index('render_copy_button("📋 コピー", history_tmpl, "copy_history_after_template")') > history_index
+
+
 def test_after_call_contact_method_table_is_collapsed_by_default():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
@@ -273,6 +304,10 @@ def test_after_call_uses_shared_status_card_css_classes():
     assert "wrt-status-card" in source
     assert "wrt-pill" in source
     assert "wrt-memo-snippet-row" in source
+    assert ".wrt-text-section" in source
+    assert ".wrt-action-panel" in source
+    assert "width: 100%;" in source
+    assert "box-sizing: border-box;" in source
     assert "wrt-snippet-group-label" in source
 
 
@@ -1819,7 +1854,8 @@ def test_regenerated_rakutel_text_reflects_late_operator_name():
     assert "MPG大濱" in texts["rakutel_text"]
     assert "【家電回線に入電】" in texts["rakutel_text"]
     assert "【家電業務に入電】" not in texts["rakutel_text"]
-    assert "【修理受付】" in texts["rakutel_text"]
+    assert "【修理受付済み】" in texts["rakutel_text"]
+    assert "【修理受付】" not in texts["rakutel_text"]
     assert "2026/5/4 09:30　販売店" in texts["rakutel_text"]
 
 

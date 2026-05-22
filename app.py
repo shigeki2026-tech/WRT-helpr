@@ -2108,7 +2108,7 @@ def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") ->
     rakutel_text = (
         f"{_rakutel_call_heading(form)}\n"
         f"{extracted_time}　{_rakutel_call_arrow(form, caller_type)}\n\n"
-        f"【修理受付】\n"
+        f"【修理受付済み】\n"
         f"※保証対象外の事例ご案内済\n"
         f"日程調整時の連絡先：{contact}\n"
         f"WRT-NO：{form.get('wrt_no','─')}\n"
@@ -7685,133 +7685,147 @@ def render_tab_after_call():
             else:
                 st.warning("オペレーター名が空のため、既定値も空で保存しました。")
         st.session_state.form = form
-        st.markdown("##### 📋 送付テンプレート・拠点")
-        st.markdown("###### 業者送付コード")
         df_tpl = load_template_codes()
         call_line_val = form.get("call_line", "")
         repair_type_val = decision["repair_type"]
         warranty_plan_val = form.get("warranty_plan", "")
         template_selection = select_template_for_form(
             form, repair_type_val, warranty_plan_val, df_tpl)
-        st.caption("使用する業者送付コード・テンプレートを確認します。")
-        if is_double_protect_plan(warranty_plan_val):
-            st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
-
-        if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
-            template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
-                form, repair_type_val, warranty_plan_val, df_tpl, template_selection
-            )
-            if template_candidates:
-                option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
-                auto_option = _template_option_label({
-                    "template_code": template_selection.get("template_code", ""),
-                    "label": template_selection.get("label", ""),
-                })
-                tpl_labels = [""] + list(option_rows.keys())
-                current_code = normalize_template_code(form.get("template_code"))
-                current_label = form.get("template_label", "") or template_selection.get("label", "")
-                current_option = ""
-                for option_label, candidate in option_rows.items():
-                    if current_code and candidate.get("template_code") == current_code:
-                        current_option = option_label
-                        break
-                    if current_label and candidate.get("label") == current_label:
-                        current_option = option_label
-                        break
-                idx = tpl_labels.index(current_option) if current_option in tpl_labels else 0
-
-                selected_option_val = st.selectbox(
-                    "テンプレートを選択",
-                    tpl_labels,
-                    index=idx,
-                    key="tpl_label_select_after",
-                )
-                if auto_option:
-                    summary = build_after_call_template_vendor_summary(
-                        form, decision, template_selection, selected_option_val or auto_option
-                    )
-                    st.markdown("**テンプレート：**")
-                    st.markdown(summary["template"])
-                    if summary["template_reason"]:
-                        st.caption(f"理由：{summary['template_reason']}")
-                    if summary["template_source_value"]:
-                        st.caption(f"判定根拠：{summary['template_source_label']} {summary['template_source_value']}")
-                    if summary["display_store"]:
-                        st.caption(f"表示販売店：{summary['display_store']}")
-                    st.markdown("**修理拠点：**")
-                    st.markdown(summary["vendor"] or "未確定")
-                    if summary["vendor_reason"]:
-                        st.caption(f"理由：{summary['vendor_reason']}")
-                    st.caption(f"状態：{summary['vendor_status']}")
-                with st.expander("候補テンプレートの詳細を見る", expanded=False):
-                    st.caption("選択可能テンプレート：")
-                    for option_label in option_rows.keys():
-                        st.caption(f"- {option_label}")
-                if selected_option_val:
-                    row = option_rows.get(selected_option_val, {})
-                    selected_code = normalize_template_code(row.get("template_code"))
-                    selected_label_val = row.get("label", "")
-                    selected_notes = (row.get("notes") or "").strip()
-                    if selected_code:
-                        st.code(selected_code, language=None)
-                    if selected_code == "0009":
-                        st.caption("修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
-                    if selected_notes:
-                        st.info(f"📋 備考: {selected_notes}")
-                    if row.get("data_erase_required") == "条件付き":
-                        st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
-                    if row.get("cost_guidance_allowed") == "不可":
-                        st.error("🚫 金額案内不可案件")
-                    form["template_code"] = selected_code
-                    form["template_label"] = selected_label_val
-                    st.session_state.form = form
-                else:
-                    form["template_code"] = ""
-                    form["template_label"] = ""
-            else:
-                st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
-        else:
-            st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
-
-        st.divider()
-
         vr = decision["vendor_result"]
         vendor_card = build_vendor_candidate_card_info(vendor, vr)
-        if vr["matched"] and not vr.get("needs_escalation"):
-            st.markdown("##### 🏭 修理拠点")
-            st.info(format_confirmed_vendor_block(vendor, vendor_card))
-        elif vr["matched"]:
-            st.markdown("##### 🏭 修理拠点候補")
-            st.info(f"{vendor}\n\n状態：終話後エスカ")
-            if vr["needs_escalation"]:
-                esc = vendor_card["escalation"]
-                st.warning(
-                    f"{esc['title']}\n\n"
-                    f"理由：{esc['reason']}\n\n"
-                    f"次アクション：{esc['next_action']}"
-                )
-        else:
-            st.markdown("##### 🏭 修理拠点候補")
-            st.info(vendor)
-
         request_folder = vendor_card["request_folder"]
-        if request_folder.get("required"):
-            if vendor_card.get("arrangement_method"):
-                st.caption(f"手配方法：{vendor_card['arrangement_method']}")
-            st.markdown("###### Drive格納先リンク")
-            st.caption("依頼書PDF格納先：")
-            st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
 
-        with st.expander("手配方法・連絡先の詳細", expanded=False):
-            st.markdown(
-                """| 拠点 | 手配方法 | 連絡先 |
+        st.markdown("##### 案件サマリー")
+        summary_template_code = normalize_template_code(form.get("template_code") or template_selection.get("template_code"))
+        summary_template_label = form.get("template_label") or template_selection.get("label", "")
+        if summary_template_code or summary_template_label:
+            st.markdown(f"テンプレート：{summary_template_code or '----'} {summary_template_label or '名称未設定'}")
+        else:
+            st.markdown("テンプレート：未確定")
+        st.markdown(f"修理拠点：{vendor or '未確定'}")
+        if vendor_card.get("arrangement_method"):
+            st.caption(f"手配方法：{vendor_card['arrangement_method']}")
+        display_store_summary = form.get("store_name") or form.get("store_company") or form.get("operating_company")
+        if display_store_summary:
+            st.caption(f"販売店：{display_store_summary}")
+
+        with st.expander("送付テンプレート・拠点の詳細を開く", expanded=False):
+            st.markdown("###### 業者送付コード")
+            st.caption("使用する業者送付コード・テンプレートを確認します。")
+            if is_double_protect_plan(warranty_plan_val):
+                st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
+
+            if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
+                template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
+                    form, repair_type_val, warranty_plan_val, df_tpl, template_selection
+                )
+                if template_candidates:
+                    option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
+                    auto_option = _template_option_label({
+                        "template_code": template_selection.get("template_code", ""),
+                        "label": template_selection.get("label", ""),
+                    })
+                    tpl_labels = [""] + list(option_rows.keys())
+                    current_code = normalize_template_code(form.get("template_code"))
+                    current_label = form.get("template_label", "") or template_selection.get("label", "")
+                    current_option = ""
+                    for option_label, candidate in option_rows.items():
+                        if current_code and candidate.get("template_code") == current_code:
+                            current_option = option_label
+                            break
+                        if current_label and candidate.get("label") == current_label:
+                            current_option = option_label
+                            break
+                    idx = tpl_labels.index(current_option) if current_option in tpl_labels else 0
+
+                    selected_option_val = st.selectbox(
+                        "テンプレートを選択",
+                        tpl_labels,
+                        index=idx,
+                        key="tpl_label_select_after",
+                    )
+                    if auto_option:
+                        summary = build_after_call_template_vendor_summary(
+                            form, decision, template_selection, selected_option_val or auto_option
+                        )
+                        st.markdown("**テンプレート：**")
+                        st.markdown(summary["template"])
+                        if summary["template_reason"]:
+                            st.caption(f"理由：{summary['template_reason']}")
+                        if summary["template_source_value"]:
+                            st.caption(f"判定根拠：{summary['template_source_label']} {summary['template_source_value']}")
+                        if summary["display_store"]:
+                            st.caption(f"表示販売店：{summary['display_store']}")
+                        st.markdown("**修理拠点：**")
+                        st.markdown(summary["vendor"] or "未確定")
+                        if summary["vendor_reason"]:
+                            st.caption(f"理由：{summary['vendor_reason']}")
+                        st.caption(f"状態：{summary['vendor_status']}")
+                    with st.expander("候補テンプレートの詳細を見る", expanded=False):
+                        st.caption("選択可能テンプレート：")
+                        for option_label in option_rows.keys():
+                            st.caption(f"- {option_label}")
+                    if selected_option_val:
+                        row = option_rows.get(selected_option_val, {})
+                        selected_code = normalize_template_code(row.get("template_code"))
+                        selected_label_val = row.get("label", "")
+                        selected_notes = (row.get("notes") or "").strip()
+                        if selected_code:
+                            st.code(selected_code, language=None)
+                        if selected_code == "0009":
+                            st.caption("修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
+                        if selected_notes:
+                            st.info(f"📋 備考: {selected_notes}")
+                        if row.get("data_erase_required") == "条件付き":
+                            st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
+                        if row.get("cost_guidance_allowed") == "不可":
+                            st.error("🚫 金額案内不可案件")
+                        form["template_code"] = selected_code
+                        form["template_label"] = selected_label_val
+                        st.session_state.form = form
+                    else:
+                        form["template_code"] = ""
+                        form["template_label"] = ""
+                else:
+                    st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
+            else:
+                st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
+
+        with st.expander("修理拠点・手配詳細を開く", expanded=False):
+            if vr["matched"] and not vr.get("needs_escalation"):
+                st.markdown("##### 🏭 修理拠点")
+                st.info(format_confirmed_vendor_block(vendor, vendor_card))
+            elif vr["matched"]:
+                st.markdown("##### 🏭 修理拠点候補")
+                st.info(f"{vendor}\n\n状態：終話後エスカ")
+                if vr["needs_escalation"]:
+                    esc = vendor_card["escalation"]
+                    st.warning(
+                        f"{esc['title']}\n\n"
+                        f"理由：{esc['reason']}\n\n"
+                        f"次アクション：{esc['next_action']}"
+                    )
+            else:
+                st.markdown("##### 🏭 修理拠点候補")
+                st.info(vendor)
+
+            if request_folder.get("required"):
+                if vendor_card.get("arrangement_method"):
+                    st.caption(f"手配方法：{vendor_card['arrangement_method']}")
+                st.markdown("###### Drive格納先リンク")
+                st.caption("依頼書PDF格納先：")
+                st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
+
+            with st.expander("手配方法・連絡先の詳細", expanded=False):
+                st.markdown(
+                    """| 拠点 | 手配方法 | 連絡先 |
 |------|----------|--------|
 | WRT修理センター | 社内システムで手配 | 内線 ─ |
 | ユナイトサービス㈱ | メール依頼 | 担当確認 |
 | ソフマップ修理センター | 所定フォーム | 担当確認 |
 | 宗建リノベーション | 電話依頼 | 担当確認 |
 | CER候補 | 担当エスカ | 担当確認 |"""
-            )
+                )
 
     with col2:
         st.markdown("##### 補助情報")
@@ -8255,13 +8269,15 @@ def render_tab_after_call():
     render_warranty_report_send_panel(form, decision)
 
     st.divider()
-    st.markdown("##### 📄 対応履歴テンプレ（コピー用）")
-    st.text_area(
-        "履歴テンプレ",
-        history_tmpl,
-        height=300,
-        key=f"history_after_{stable_hash_text(history_tmpl, 12)}",
-    )
+    with st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False):
+        st.caption("通常はラクテル用テキストまたはTeams報告文を使用してください。旧形式の履歴貼付が必要な場合のみ使用します。")
+        st.text_area(
+            "履歴テンプレ",
+            history_tmpl,
+            height=220,
+            key=f"history_after_{stable_hash_text(history_tmpl, 12)}",
+        )
+        render_copy_button("📋 コピー", history_tmpl, "copy_history_after_template")
 
 
 # ============================================================
@@ -8742,6 +8758,9 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     st.markdown("""
 <style>
 .wrt-status-card {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
     border-radius: 10px;
     padding: 12px 14px;
     margin: 8px 0;
@@ -8774,6 +8793,13 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
 .wrt-status-card-body {
     font-size: 0.92rem;
     line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+.wrt-text-section,
+.wrt-action-panel {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
 }
 .wrt-pill {
     display: inline-block;
