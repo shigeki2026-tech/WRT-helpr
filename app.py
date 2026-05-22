@@ -7662,13 +7662,21 @@ def render_tab_after_call():
     col1, col2 = st.columns(2)
 
     with col1:
-        form["operator_name"] = st.text_input(
-            "オペレーター名",
-            form.get("operator_name", ""),
-            placeholder="例: 大濱",
-            key="operator_name_input",
-        )
-        if st.button("この名前を既定値として保存", key="save_default_operator_name"):
+        name_col, save_col, spacer_col = st.columns([2, 1.6, 2.4])
+        with name_col:
+            form["operator_name"] = st.text_input(
+                "オペレーター名",
+                form.get("operator_name", ""),
+                placeholder="例: 大濱",
+                key="operator_name_input",
+            )
+        with save_col:
+            st.markdown("<div style='height: 1.75rem;'></div>", unsafe_allow_html=True)
+            save_default_operator_clicked = st.button(
+                "この名前を既定値として保存",
+                key="save_default_operator_name",
+            )
+        if save_default_operator_clicked:
             saved = save_local_user_settings({
                 "default_operator_name": form.get("operator_name", "")
             })
@@ -7825,62 +7833,26 @@ def render_tab_after_call():
         attention_hash = get_after_call_regeneration_hash(
             form, "attention_memo", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
-        if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
-            st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
         memo_widget_key = "memo_after_widget"
-        if st.button("修理依頼書メモを再生成", key="regenerate_attention_memo", use_container_width=True):
+
+        if st.session_state.pop("_pending_regenerate_attention_memo", False):
             form["attention_memo"] = sanitize_generated_body_text(generated_attention_memo)
             st.session_state[memo_widget_key] = form["attention_memo"]
             st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
             mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
             st.session_state.form = form
-        st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
+            st.session_state["_attention_memo_regenerate_message"] = "修理依頼書メモを再生成しました。"
 
-        if memo_widget_key in st.session_state:
-            widget_value = sanitize_generated_body_text(st.session_state.get(memo_widget_key, ""))
-            if widget_value != st.session_state.get("_memo_after_widget_synced"):
-                form["attention_memo"] = widget_value
-
-        snippets_df = load_memo_snippets()
-        if not snippets_df.empty:
-            st.markdown("###### 修理依頼書メモ 追記候補")
-            st.caption("必要な定型文を選択して、修理依頼書メモへ追記できます。")
-            snippet_options = [""] + [
-                str(row.get("snippet_id") or "").strip()
-                for _, row in snippets_df.iterrows()
-                if str(row.get("snippet_id") or "").strip()
-            ]
-            selected_snippet_id = st.selectbox(
-                "追記する定型文を選択",
-                snippet_options,
-                format_func=lambda snippet_id: (
-                    "選択してください"
-                    if not snippet_id
-                    else memo_snippet_option_label(memo_snippet_row_by_id(snippets_df, snippet_id))
-                ),
-                key="memo_snippet_selectbox",
+        pending_snippet_id = str(st.session_state.pop("_pending_append_memo_snippet_id", "") or "").strip()
+        if pending_snippet_id:
+            added_snippets = append_attention_memo_snippets(form, [pending_snippet_id])
+            st.session_state[memo_widget_key] = form["attention_memo"]
+            st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+            st.session_state.form = form
+            st.session_state["_memo_snippet_append_message"] = (
+                "修理依頼書メモへ追記しました。"
+                if added_snippets else "この文言はすでに修理依頼書メモに含まれています。"
             )
-            selected_row = memo_snippet_row_by_id(snippets_df, selected_snippet_id)
-            if selected_row:
-                condition_text = str(selected_row.get("condition_text") or "").strip()
-                body = sanitize_generated_body_text(selected_row.get("body") or "").strip()
-                if condition_text:
-                    st.caption(f"追記条件：{condition_text}")
-                if "\n" in body:
-                    st.caption("追記内容：")
-                    st.code(body, language=None)
-            if st.button("この文言を修理依頼書メモへ追記", key="memo_snippet_append_current_button"):
-                if selected_snippet_id:
-                    added_snippets = append_attention_memo_snippets(form, [selected_snippet_id])
-                    st.session_state[memo_widget_key] = form["attention_memo"]
-                    st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-                    st.session_state.form = form
-                    if added_snippets:
-                        st.success("修理依頼書メモへ追記しました。")
-                    else:
-                        st.info("この文言はすでに修理依頼書メモに含まれています。")
-                else:
-                    st.warning("追記する定型文を選択してください。")
 
         memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
         if memo_widget_key in st.session_state:
@@ -7893,44 +7865,108 @@ def render_tab_after_call():
         else:
             st.session_state[memo_widget_key] = memo_value
         st.session_state["_memo_after_widget_synced"] = memo_value
-        memo_display = st.text_area(
-            "修理依頼書メモ",
-            memo_value,
-            height=260,
-            key=memo_widget_key,
-        )
-        form["attention_memo"] = sanitize_generated_body_text(memo_display)
-        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-        render_copy_button("📋 修理依頼書メモをコピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
+
+        memo_col, memo_action_col = st.columns([5, 2], gap="large")
+        with memo_col:
+            memo_display = st.text_area(
+                "修理依頼書メモ",
+                memo_value,
+                height=260,
+                key=memo_widget_key,
+            )
+            form["attention_memo"] = sanitize_generated_body_text(memo_display)
+            st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+
+        with memo_action_col:
+            st.markdown("###### 修理依頼書メモ 操作")
+            regen_message = str(st.session_state.pop("_attention_memo_regenerate_message", "") or "").strip()
+            if regen_message:
+                st.success(regen_message)
+            if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
+                st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
+            if st.button("再生成", key="regenerate_attention_memo"):
+                st.session_state["_pending_regenerate_attention_memo"] = True
+                st.rerun()
+            st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
+            render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
+
+            snippets_df = load_memo_snippets()
+            if not snippets_df.empty:
+                st.markdown("###### 追記候補")
+                st.caption("必要な定型文を選択して、現在の修理依頼書メモへ追記できます。")
+                snippet_message = str(st.session_state.pop("_memo_snippet_append_message", "") or "").strip()
+                if snippet_message:
+                    if snippet_message == "修理依頼書メモへ追記しました。":
+                        st.success(snippet_message)
+                    else:
+                        st.info(snippet_message)
+                snippet_options = [""] + [
+                    str(row.get("snippet_id") or "").strip()
+                    for _, row in snippets_df.iterrows()
+                    if str(row.get("snippet_id") or "").strip()
+                ]
+                selected_snippet_id = st.selectbox(
+                    "追記する定型文を選択",
+                    snippet_options,
+                    format_func=lambda snippet_id: (
+                        "選択してください"
+                        if not snippet_id
+                        else memo_snippet_option_label(memo_snippet_row_by_id(snippets_df, snippet_id))
+                    ),
+                    key="memo_snippet_selectbox",
+                )
+                selected_row = memo_snippet_row_by_id(snippets_df, selected_snippet_id)
+                if selected_row:
+                    condition_text = str(selected_row.get("condition_text") or "").strip()
+                    body = sanitize_generated_body_text(selected_row.get("body") or "").strip()
+                    if condition_text:
+                        st.caption(f"追記条件：{condition_text}")
+                    if "\n" in body:
+                        st.caption("追記内容：")
+                        st.code(body, language=None)
+                if st.button("この文言を追記", key="memo_snippet_append_current_button"):
+                    if selected_snippet_id:
+                        st.session_state["_pending_append_memo_snippet_id"] = selected_snippet_id
+                        st.rerun()
+                    else:
+                        st.warning("追記する定型文を選択してください。")
 
         # ── ラクテル用テキスト ──
         st.markdown("##### 📝 ラクテル用テキスト")
-        call_direction_options = ["受電", "架電"]
-        call_direction = st.selectbox(
-            "通話方向",
-            call_direction_options,
-            index=call_direction_options.index(form.get("call_direction", "受電"))
-            if form.get("call_direction", "受電") in call_direction_options else 0,
-            key="call_direction_select",
-        )
-        counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
-        default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
-        counterparty_type = st.selectbox(
-            "相手区分",
-            counterparty_options,
-            index=counterparty_options.index(default_counterparty)
-            if default_counterparty in counterparty_options else 0,
-            key="counterparty_type_select",
-        )
+        rakutel_text_col, rakutel_action_col = st.columns([5, 2], gap="large")
+        with rakutel_action_col:
+            st.markdown("###### ラクテル用テキスト 操作")
+            rakutel_regen_message_slot = st.empty()
+            if st.button("再生成", key="regenerate_rakutel_text"):
+                st.session_state["_pending_regenerate_rakutel_text"] = True
+                st.rerun()
+            rakutel_copy_slot = st.empty()
+            call_direction_options = ["受電", "架電"]
+            call_direction = st.selectbox(
+                "通話方向",
+                call_direction_options,
+                index=call_direction_options.index(form.get("call_direction", "受電"))
+                if form.get("call_direction", "受電") in call_direction_options else 0,
+                key="call_direction_select",
+            )
+            counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
+            default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
+            counterparty_type = st.selectbox(
+                "相手区分",
+                counterparty_options,
+                index=counterparty_options.index(default_counterparty)
+                if default_counterparty in counterparty_options else 0,
+                key="counterparty_type_select",
+            )
+            contact_phone = st.text_input(
+                "日程調整時の連絡先",
+                value=form.get("contact_phone", "") or form.get("phone_number", ""),
+                key="contact_phone_input",
+                placeholder="電話番号（デフォルトはフォームの電話番号）",
+            )
         form["call_direction"] = call_direction
         form["counterparty_type"] = counterparty_type
         form["caller_type"] = counterparty_type
-        contact_phone = st.text_input(
-            "日程調整時の連絡先",
-            value=form.get("contact_phone", "") or form.get("phone_number", ""),
-            key="contact_phone_input",
-            placeholder="電話番号（デフォルトはフォームの電話番号）",
-        )
         form["contact_phone"] = contact_phone
         st.session_state.form = form
         caller_type = counterparty_type
@@ -7946,234 +7982,254 @@ def render_tab_after_call():
             ]
             if not (form.get(field) or "").strip()
         ]
-        if missing_rakutel_fields:
-            st.warning("未入力の基本項目があります: " + " / ".join(missing_rakutel_fields))
-        if after_call_section_needs_regeneration(st.session_state, "rakutel_text", rakutel_hash):
-            st.warning("基本項目が変更されています。ラクテル用テキストを再生成してください。")
-        if st.button("ラクテル用テキストを再生成", key="regenerate_rakutel_text", use_container_width=True):
+        if st.session_state.pop("_pending_regenerate_rakutel_text", False):
             form["rakutel_text"] = generated_rakutel_text
             st.session_state["rakutel_text_display"] = form["rakutel_text"]
             mark_after_call_section_regenerated(st.session_state, "rakutel_text", rakutel_hash)
             st.session_state.form = form
-        rakutel_text_display = st.text_area(
-            "ラクテル用テキスト",
-            form.get("rakutel_text") or generated_rakutel_text,
-            height=180,
-            key="rakutel_text_display",
-        )
+            with rakutel_regen_message_slot:
+                st.success("ラクテル用テキストを再生成しました。")
+        with rakutel_action_col:
+            if missing_rakutel_fields:
+                st.warning("未入力の基本項目があります: " + " / ".join(missing_rakutel_fields))
+            if after_call_section_needs_regeneration(st.session_state, "rakutel_text", rakutel_hash):
+                st.warning("基本項目が変更されています。ラクテル用テキストを再生成してください。")
+        with rakutel_text_col:
+            rakutel_text_display = st.text_area(
+                "ラクテル用テキスト",
+                form.get("rakutel_text") or generated_rakutel_text,
+                height=180,
+                key="rakutel_text_display",
+            )
         form["rakutel_text"] = rakutel_text_display
-        render_copy_button("📋 ラクテル用テキストをコピー", form["rakutel_text"], "copy_rakutel_text")
+        with rakutel_copy_slot.container():
+            render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")
 
         # ── Teams報告文 ──
-        st.markdown("##### 💬 Teams 報告文")
-        rakuteru_val = st.text_input(
-            "楽テルNO",
-            value=form.get("rakuteru_no", ""),
-            key="rakuteru_no_input",
-            placeholder="楽テル登録後に入力",
-        )
-        form["rakuteru_no"] = rakuteru_val
-        auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        auto_teams_action_display = f"{vendor}へ{auto_teams_action}" if vendor or auto_teams_action else ""
-        form["teams_action"] = st.text_input(
-            "Teams報告文に入れる対応内容",
-            value=form.get("teams_action", ""),
-            placeholder=auto_teams_action,
-            key="teams_action_input",
-            help="自動判定と異なる場合のみ変更",
-        )
-        if auto_teams_action_display:
-            st.caption(f"自動判定：{auto_teams_action_display}")
-        st.caption("自動判定と異なる場合のみ変更")
+        st.markdown("##### 💬 Teams報告文")
+        teams_text_col, teams_action_col = st.columns([5, 2], gap="large")
+        with teams_action_col:
+            st.markdown("###### Teams報告文 操作")
+            teams_regen_message_slot = st.empty()
+            if st.button("再生成", key="regenerate_teams_chat_message"):
+                st.session_state["_pending_regenerate_teams_chat_message"] = True
+                st.rerun()
+            teams_copy_slot = st.empty()
+            rakuteru_val = st.text_input(
+                "楽テルNO",
+                value=form.get("rakuteru_no", ""),
+                key="rakuteru_no_input",
+                placeholder="楽テル登録後に入力",
+            )
+            form["rakuteru_no"] = rakuteru_val
+            auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+            auto_teams_action_display = f"{vendor}へ{auto_teams_action}" if vendor or auto_teams_action else ""
+            form["teams_action"] = st.text_input(
+                "Teams報告文に入れる対応内容",
+                value=form.get("teams_action", ""),
+                placeholder=auto_teams_action,
+                key="teams_action_input",
+                help="自動判定と異なる場合のみ変更",
+            )
+            if auto_teams_action_display:
+                st.caption(f"自動判定：{auto_teams_action_display}")
+            st.caption("自動判定と異なる場合のみ変更")
         st.session_state.form = form
         teams_generation_form = form_for_current_teams_generation(form, vendor, contact_type)
         generated_teams_message = _build_teams_chat_message(teams_generation_form, vendor, contact_type)
         teams_hash = get_after_call_regeneration_hash(
             teams_generation_form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
             notes_filled=notes_filled, repair_type=repair_type)
-        if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
-            st.warning("基本項目が変更されています。Teams報告文を再生成してください。")
-        if st.button("Teams報告文を再生成", key="regenerate_teams_chat_message", use_container_width=True):
+        if st.session_state.pop("_pending_regenerate_teams_chat_message", False):
             form["teams_chat_message"] = generated_teams_message
             st.session_state["teams_chat_message_display"] = form["teams_chat_message"]
             mark_after_call_section_regenerated(st.session_state, "teams_chat_message", teams_hash)
             st.session_state.form = form
-        teams_chat_message = st.text_area(
-            "Teams報告文",
-            form.get("teams_chat_message") or generated_teams_message,
-            height=160,
-            key="teams_chat_message_display",
-        )
+            with teams_regen_message_slot:
+                st.success("Teams報告文を再生成しました。")
+        with teams_action_col:
+            if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
+                st.warning("基本項目が変更されています。Teams報告文を再生成してください。")
+        with teams_text_col:
+            teams_chat_message = st.text_area(
+                "Teams報告文",
+                form.get("teams_chat_message") or generated_teams_message,
+                height=160,
+                key="teams_chat_message_display",
+            )
         form["teams_chat_message"] = teams_chat_message
         teams_preview_lines = build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))
-        if teams_preview_lines:
-            st.markdown("送信内容プレビュー：")
-            st.info("\n".join(teams_preview_lines))
-        render_copy_button("📋 Teams報告文をコピー", teams_chat_message, "copy_teams_chat_message")
+        with teams_copy_slot.container():
+            render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")
         st.session_state.form = form
 
-        st.markdown("##### 🚀 Teams自動送信")
-        request_folder = get_request_pdf_folder_info(vendor)
-        teams_config = load_teams_config()
-        teams_send_mode = (teams_config.get("send_mode") or "").strip()
-        teams_enabled = bool(
-            teams_config.get("enabled")
-            and teams_config.get("chat_id")
-            and teams_send_mode in SUPPORTED_TEAMS_SEND_MODES
-        )
-        chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
-        config_reasons = teams_config_unavailable_reasons(teams_config)
-
-        pdf_storage_confirmed = True
-        if request_folder.get("required"):
-            pdf_storage_confirmed = bool(st.session_state.get("request_pdf_storage_confirmed", False))
-        confirmed = bool(st.session_state.get("teams_send_confirmed", False))
-        action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
-        effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        _clear_stale_teams_send_transient_state(st.session_state, form)
-        already_sent = _teams_case_already_sent(st.session_state, form)
-        in_progress = _teams_send_in_progress(st.session_state, form)
-        send_failed = _teams_last_send_failed(st.session_state, form)
-        incomplete_reasons = build_teams_send_incomplete_reasons(
-            form,
-            teams_config,
-            confirmed,
-            action_confirmed,
-            pdf_storage_confirmed,
-            vendor,
-            contact_type,
-            already_sent,
-        )
-        send_status = teams_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
-        st.markdown(f"**送信先：** {chat_name}")
-        st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
-        if config_reasons:
-            st.markdown("**理由：**")
-            st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
-        if send_status == "送信可能":
-            st.success(f"状態：{send_status}")
-        elif send_status == "送信処理中":
-            st.info(f"状態：{send_status}")
-        elif send_status == "送信済み":
-            st.info(f"状態：{send_status}")
-        elif send_status == "送信失敗":
-            st.error(f"状態：{send_status}")
-        else:
-            st.warning(f"状態：{send_status}")
-        if in_progress:
-            st.markdown("**未完了：なし**")
-        elif already_sent:
-            st.markdown("**未完了：なし**")
-        elif incomplete_reasons:
-            st.markdown("**未完了：**")
-            st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
-        else:
-            st.markdown("**未完了：なし**")
-        if not teams_enabled:
-            st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
-        if in_progress:
-            started_at = st.session_state.get("teams_send_started_at") or "日時不明"
-            st.info(
-                f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
-                f"送信先：{chat_name}\n"
-                f"開始時刻：{started_at}"
+        with teams_action_col:
+            if teams_preview_lines:
+                st.markdown("送信内容プレビュー：")
+                st.info("\n".join(teams_preview_lines))
+            st.markdown("###### Teams送信")
+            st.caption("送信前チェックと送信状態")
+            request_folder = get_request_pdf_folder_info(vendor)
+            teams_config = load_teams_config()
+            teams_send_mode = (teams_config.get("send_mode") or "").strip()
+            teams_enabled = bool(
+                teams_config.get("enabled")
+                and teams_config.get("chat_id")
+                and teams_send_mode in SUPPORTED_TEAMS_SEND_MODES
             )
-        elif already_sent:
-            sent_at = st.session_state.get("teams_sent_at") or "日時不明"
-            st.success(f"Teamsへ送信しました。\n送信先：{chat_name}\n送信日時：{sent_at}")
-            with st.expander("送信済み本文（確認用）", expanded=False):
-                st.code(st.session_state.get("teams_sent_message", "") or "（なし）", language=None)
-        elif send_failed:
-            error_message = st.session_state.get("teams_send_error_message") or "エラー内容を取得できませんでした"
-            st.error(f"Teams送信に失敗しました：{error_message}")
-        st.markdown("**送信前チェック：**")
-        if request_folder.get("required"):
-            pdf_storage_confirmed = st.checkbox(
-                "依頼書PDFを指定フォルダへ格納しました",
-                key="request_pdf_storage_confirmed",
-            )
-        confirmed = st.checkbox(
-            "送信内容と送信先を確認しました",
-            key="teams_send_confirmed",
-        )
-        action_confirmed = st.checkbox(
-            "Teams報告アクションを確定しました",
-            key="teams_action_confirmed",
-        )
+            chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
+            config_reasons = teams_config_unavailable_reasons(teams_config)
 
-        def request_teams_send(allow_resend: bool = False):
-            validation_errors = validate_teams_send_request(
+            pdf_storage_confirmed = True
+            if request_folder.get("required"):
+                pdf_storage_confirmed = bool(st.session_state.get("request_pdf_storage_confirmed", False))
+            confirmed = bool(st.session_state.get("teams_send_confirmed", False))
+            action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
+            effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
+            _clear_stale_teams_send_transient_state(st.session_state, form)
+            already_sent = _teams_case_already_sent(st.session_state, form)
+            in_progress = _teams_send_in_progress(st.session_state, form)
+            send_failed = _teams_last_send_failed(st.session_state, form)
+            incomplete_reasons = build_teams_send_incomplete_reasons(
                 form,
-                teams_enabled,
+                teams_config,
                 confirmed,
                 action_confirmed,
                 pdf_storage_confirmed,
                 vendor,
                 contact_type,
+                already_sent,
             )
-            if validation_errors:
-                st.warning("未完了項目があります。Teams自動送信パネルの未完了一覧を確認してください。")
-                return
-            if already_sent and not allow_resend:
-                st.warning("すでに送信済みです。再送する場合のみ実行してください。")
-                return
-            if in_progress:
-                st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
-                return
-
-            _mark_teams_send_requested(st.session_state, form, allow_resend=allow_resend)
-            st.rerun()
-
-        def execute_requested_teams_send():
-            teams_send_body = _get_teams_send_body(form)
-            with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
-                result = send_teams_message_via_powershell(teams_send_body)
-            append_teams_send_log(
-                result,
-                teams_chat_message,
-                chat_name,
-                form=form,
-                vendor=vendor,
-                teams_action=effective_teams_action,
-            )
-            if result.get("ok"):
-                _mark_teams_message_sent(st.session_state, form, result=result)
-                st.rerun()
+            send_status = teams_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
+            st.markdown(f"**送信先：** {chat_name}")
+            st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
+            if config_reasons:
+                st.markdown("**理由：**")
+                st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
+            if send_status == "送信可能":
+                st.success(f"状態：{send_status}")
+            elif send_status == "送信処理中":
+                st.info(f"状態：{send_status}")
+            elif send_status == "送信済み":
+                st.info(f"状態：{send_status}")
+            elif send_status == "送信失敗":
+                st.error(f"状態：{send_status}")
             else:
-                _mark_teams_message_send_failed(st.session_state, form, result)
+                st.warning(f"状態：{send_status}")
+            if in_progress:
+                st.markdown("**未完了：なし**")
+            elif already_sent:
+                st.markdown("**未完了：なし**")
+            elif incomplete_reasons:
+                st.markdown("**未完了：**")
+                st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
+            else:
+                st.markdown("**未完了：なし**")
+            if not teams_enabled:
+                st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
+            if in_progress:
+                started_at = st.session_state.get("teams_send_started_at") or "日時不明"
+                st.info(
+                    f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
+                    f"送信先：{chat_name}\n"
+                    f"開始時刻：{started_at}"
+                )
+            elif already_sent:
+                sent_at = st.session_state.get("teams_sent_at") or "日時不明"
+                st.success(f"Teamsへ送信しました。\n送信先：{chat_name}\n送信日時：{sent_at}")
+                with st.expander("送信済み本文（確認用）", expanded=False):
+                    st.code(st.session_state.get("teams_sent_message", "") or "（なし）", language=None)
+            elif send_failed:
+                error_message = st.session_state.get("teams_send_error_message") or "エラー内容を取得できませんでした"
+                st.error(f"Teams送信に失敗しました：{error_message}")
+            st.markdown("**送信前チェック：**")
+            if request_folder.get("required"):
+                pdf_storage_confirmed = st.checkbox(
+                    "依頼書PDFを指定フォルダへ格納しました",
+                    key="request_pdf_storage_confirmed",
+                )
+            confirmed = st.checkbox(
+                "送信内容と送信先を確認しました",
+                key="teams_send_confirmed",
+            )
+            action_confirmed = st.checkbox(
+                "Teams報告アクションを確定しました",
+                key="teams_action_confirmed",
+            )
+
+            def request_teams_send(allow_resend: bool = False):
+                validation_errors = validate_teams_send_request(
+                    form,
+                    teams_enabled,
+                    confirmed,
+                    action_confirmed,
+                    pdf_storage_confirmed,
+                    vendor,
+                    contact_type,
+                )
+                if validation_errors:
+                    st.warning("未完了項目があります。Teams自動送信パネルの未完了一覧を確認してください。")
+                    return
+                if already_sent and not allow_resend:
+                    st.warning("すでに送信済みです。再送する場合のみ実行してください。")
+                    return
+                if in_progress:
+                    st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
+                    return
+
+                _mark_teams_send_requested(st.session_state, form, allow_resend=allow_resend)
                 st.rerun()
-            with st.expander("PowerShell実行結果", expanded=not result.get("ok")):
-                st.text("stdout")
-                st.code(result.get("stdout", "") or "（なし）", language=None)
-                st.text("stderr")
-                st.code(result.get("stderr", "") or "（なし）", language=None)
 
-        if in_progress:
-            st.button("送信処理中...", disabled=True, use_container_width=True)
-        elif already_sent:
-            st.button("送信済み", disabled=True, use_container_width=True)
-            if st.button("同じ内容を再送する", disabled=not teams_enabled, use_container_width=True):
-                request_teams_send(allow_resend=True)
-        elif incomplete_reasons:
-            st.button("未完了項目があります", disabled=True, use_container_width=True)
-        else:
-            if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
-                request_teams_send(allow_resend=False)
+            def execute_requested_teams_send():
+                teams_send_body = _get_teams_send_body(form)
+                with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
+                    result = send_teams_message_via_powershell(teams_send_body)
+                append_teams_send_log(
+                    result,
+                    teams_chat_message,
+                    chat_name,
+                    form=form,
+                    vendor=vendor,
+                    teams_action=effective_teams_action,
+                )
+                if result.get("ok"):
+                    _mark_teams_message_sent(st.session_state, form, result=result)
+                    st.rerun()
+                else:
+                    _mark_teams_message_send_failed(st.session_state, form, result)
+                    st.rerun()
+                with st.expander("PowerShell実行結果", expanded=not result.get("ok")):
+                    st.text("stdout")
+                    st.code(result.get("stdout", "") or "（なし）", language=None)
+                    st.text("stderr")
+                    st.code(result.get("stderr", "") or "（なし）", language=None)
 
-        if _teams_send_requested(st.session_state, form):
-            execute_requested_teams_send()
+            if in_progress:
+                st.button("送信処理中...", disabled=True, use_container_width=True)
+            elif already_sent:
+                st.button("送信済み", disabled=True, use_container_width=True)
+                if st.button("同じ内容を再送する", disabled=not teams_enabled, use_container_width=True):
+                    request_teams_send(allow_resend=True)
+            elif incomplete_reasons:
+                st.button("未完了項目があります", disabled=True, use_container_width=True)
+            else:
+                if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
+                    request_teams_send(allow_resend=False)
 
-        recent_logs = st.session_state.get("teams_send_log", [])[:3]
-        if recent_logs:
-            with st.expander("Teams送信ログ（直近3件）", expanded=False):
-                for log in recent_logs:
-                    status = "成功" if log.get("ok") else "失敗"
-                    st.markdown(
-                        f"- {log.get('sent_at', '─')} / {status} / "
-                        f"{log.get('chat_name', '─')} / {log.get('message_preview', '')}"
-                    )
-                    if log.get("error_message"):
-                        st.caption(log["error_message"])
+            if _teams_send_requested(st.session_state, form):
+                execute_requested_teams_send()
+
+            recent_logs = st.session_state.get("teams_send_log", [])[:3]
+            if recent_logs:
+                with st.expander("Teams送信ログ（直近3件）", expanded=False):
+                    for log in recent_logs:
+                        status = "成功" if log.get("ok") else "失敗"
+                        st.markdown(
+                            f"- {log.get('sent_at', '─')} / {status} / "
+                            f"{log.get('chat_name', '─')} / {log.get('message_preview', '')}"
+                        )
+                        if log.get("error_message"):
+                            st.caption(log["error_message"])
 
         render_handover_requirement_panel(decision.get("handover_requirement"))
         render_warranty_report_send_panel(form, decision)
