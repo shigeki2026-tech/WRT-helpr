@@ -128,9 +128,45 @@ def test_memo_snippet_ui_uses_japanese_checkboxes_not_multiselect():
     assert "修理依頼書メモ 追記候補" in snippet_source
     assert "追記する定型文" in snippet_source
     assert "追記条件" in snippet_source
-    assert "本文プレビュー" in snippet_source
+    assert "選択中の本文プレビュー" in snippet_source
+    assert "with st.expander(\"本文プレビュー\"" not in snippet_source
     assert "memo_snippet_append_button" in snippet_source
     assert "memo_snippet_clear_selection_button" in snippet_source
+
+
+def test_after_call_contact_method_table_is_collapsed_by_default():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "###### 手配方法・連絡先" not in after_source
+    assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
+
+
+def test_after_call_uses_shared_status_card_css_classes():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "wrt-status-card" in source
+    assert "wrt-pill" in source
+    assert "wrt-memo-snippet-row" in source
+    assert "wrt-snippet-group-label" in source
+
+
+def test_handover_and_warranty_panels_use_cards_for_status_display():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    handover_start = source.index("def render_handover_requirement_panel")
+    warranty_start = source.index("def render_warranty_report_send_panel")
+    handover_source = source[handover_start:warranty_start]
+    warranty_end = source.index("\ndef render_decision_tags_panel", warranty_start)
+    warranty_source = source[warranty_start:warranty_end]
+
+    assert "_status_card_html" in handover_source
+    assert "st.error(" not in handover_source
+    assert "st.warning(" not in handover_source
+    assert "_status_card_html" in warranty_source
+    assert warranty_source.index("_status_card_html") < warranty_source.index("st.text_area(")
+    assert "送信不可理由をすべて表示" in warranty_source
 
 
 def test_memo_snippet_checkbox_keys_are_unique_and_snippet_id_based():

@@ -2011,6 +2011,17 @@ def clear_memo_snippet_selection(session_state, snippets_df: pd.DataFrame) -> No
             session_state[memo_snippet_checkbox_key(snippet_id)] = False
 
 
+def memo_snippet_preview_text(snippets_df: pd.DataFrame, snippet_ids: list[str]) -> str:
+    selected = {str(snippet_id or "").strip() for snippet_id in snippet_ids}
+    bodies: list[str] = []
+    for _, row in snippets_df.iterrows():
+        snippet_id = str(row.get("snippet_id") or "").strip()
+        body = sanitize_generated_body_text(row.get("body") or "").strip()
+        if snippet_id in selected and body:
+            bodies.append(body)
+    return "\n\n---\n\n".join(bodies)
+
+
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
     df = load_vendor_send_templates()
     if df.empty:
@@ -6114,29 +6125,43 @@ def render_next_confirmation_sections(next_sections: dict) -> None:
                     st.markdown(f"- {label}")
 
 
+def _html_lines(lines: list[str]) -> str:
+    return "".join(f"<div>{html.escape(str(line))}</div>" for line in lines if str(line or "").strip())
+
+
+def _status_card_html(tone: str, pill: str, title: str, lines: list[str] | None = None) -> str:
+    tone = tone if tone in {"warning", "error", "info", "success"} else "info"
+    body = _html_lines(lines or [])
+    return (
+        f'<div class="wrt-status-card {tone}">'
+        '<div class="wrt-status-card-head">'
+        f'<span class="wrt-pill {tone}">{html.escape(str(pill or ""))}</span>'
+        f'<strong>{html.escape(str(title or ""))}</strong>'
+        '</div>'
+        f'<div class="wrt-status-card-body">{body}</div>'
+        '</div>'
+    )
+
+
 def render_handover_requirement_panel(handover: dict) -> None:
     st.markdown("##### 🔁 引き継ぎ要否")
     handover = handover or _handover_no_match()
     if handover.get("required"):
-        lines = [
-            "必要",
-            f"対象：{handover.get('rule_name') or '未設定'}",
-        ]
-        if handover.get("rakutel_status"):
-            lines.append(f"楽テルステータス：{handover['rakutel_status']}")
-        if handover.get("handover_request_content"):
-            lines.append(f"依頼内容：{handover['handover_request_content']}")
-        if handover.get("notes"):
-            lines.append(f"備考：{handover['notes']}")
         priority = _int_or_default(handover.get("priority"))
-        if priority <= 2 or "クレーム" in (handover.get("rule_name") or ""):
-            st.error("\n".join(lines))
-        else:
-            st.warning("\n".join(lines))
-        if handover.get("reason"):
-            st.caption(f"理由：{handover['reason']}")
+        tone = "error" if priority <= 2 or "クレーム" in (handover.get("rule_name") or "") else "warning"
+        lines = [
+            f"楽テルステータス：{handover['rakutel_status']}" if handover.get("rakutel_status") else "",
+            f"依頼内容：{handover['handover_request_content']}" if handover.get("handover_request_content") else "",
+            f"備考：{handover['notes']}" if handover.get("notes") else "",
+            f"理由：{handover['reason']}" if handover.get("reason") else "",
+        ]
+        st.markdown(
+            _status_card_html(tone, "必要", handover.get("rule_name") or "未設定", lines),
+            unsafe_allow_html=True,
+        )
     else:
-        st.info(f"不要 / 未該当\n\n理由：{handover.get('reason') or '引き継ぎ対象ルールに一致なし'}")
+        reason = handover.get("reason") or "引き継ぎ対象ルールに一致なし"
+        st.markdown(_status_card_html("info", "不要", reason), unsafe_allow_html=True)
 
 
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
@@ -6147,6 +6172,49 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     preview_value = st.session_state.get("warranty_report_message_display", generated_message)
     if not str(preview_value or "").strip() and generated_message:
         preview_value = generated_message
+    message_for_status = str(preview_value or "")
+    _clear_stale_warranty_report_send_transient_state(st.session_state, message_for_status)
+    already_sent = _warranty_report_already_sent(st.session_state, message_for_status)
+    in_progress = _warranty_report_send_in_progress(st.session_state, message_for_status)
+    send_failed = _warranty_report_last_send_failed(st.session_state, message_for_status)
+    incomplete_reasons = validate_warranty_report_send_request(
+        form,
+        decision,
+        teams_config,
+        message_for_status,
+        already_sent=already_sent,
+    )
+    handover = (decision or {}).get("handover_requirement") or {}
+    status_lines: list[str] = []
+    if not handover.get("required"):
+        status_lines.append("引き継ぎ対象ルールに一致していません。送信前に確認してください。")
+    if incomplete_reasons and not already_sent:
+        status_lines.extend(["理由："] + [f"- {reason}" for reason in incomplete_reasons[:5]])
+        tone = "warning"
+        pill = "送信不可"
+    elif already_sent:
+        sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
+        status_lines.append(f"送信日時：{sent_at}")
+        tone = "info"
+        pill = "送信済み"
+    elif send_failed:
+        error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
+        status_lines.append(f"ワランティ送信に失敗しました：{error_message}")
+        tone = "error"
+        pill = "送信失敗"
+    elif in_progress:
+        started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
+        status_lines.extend(["ワランティへ送信しています。完了まで画面を閉じないでください。", f"開始時刻：{started_at}"])
+        tone = "info"
+        pill = "送信処理中"
+    else:
+        tone = "success"
+        pill = "送信可能"
+    st.markdown(_status_card_html(tone, pill, chat_name, status_lines), unsafe_allow_html=True)
+    if len(incomplete_reasons) > 5 and not already_sent:
+        with st.expander("送信不可理由をすべて表示", expanded=False):
+            st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons[5:]))
+
     message = st.text_area(
         "送信文プレビュー",
         value=preview_value,
@@ -6154,37 +6222,6 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         key="warranty_report_message_display",
         help="ワランティ報告専用の送信文です。ラクテル用テキスト、修理依頼書メモ、既存Teams報告文には反映されません。",
     )
-    _clear_stale_warranty_report_send_transient_state(st.session_state, message)
-    already_sent = _warranty_report_already_sent(st.session_state, message)
-    in_progress = _warranty_report_send_in_progress(st.session_state, message)
-    send_failed = _warranty_report_last_send_failed(st.session_state, message)
-    incomplete_reasons = validate_warranty_report_send_request(
-        form,
-        decision,
-        teams_config,
-        message,
-        already_sent=already_sent,
-    )
-    status = warranty_report_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
-    st.markdown(f"**送信先：** {chat_name}")
-    st.markdown(f"**状態：** {status}")
-    handover = (decision or {}).get("handover_requirement") or {}
-    if not handover.get("required"):
-        st.warning("引き継ぎ対象ルールに一致していません。送信前に確認してください。")
-    if incomplete_reasons and not already_sent:
-        st.markdown("**送信不可理由：**")
-        st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
-    elif already_sent:
-        sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
-        st.success(f"ワランティへ送信済みです。\n送信日時：{sent_at}")
-    elif send_failed:
-        error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
-        st.error(f"ワランティ送信に失敗しました：{error_message}")
-    elif in_progress:
-        started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
-        st.info(f"ワランティへ送信しています。完了まで画面を閉じないでください。\n開始時刻：{started_at}")
-    else:
-        st.success("送信可能です")
 
     def request_warranty_report_send(allow_resend: bool = False):
         current_already_sent = _warranty_report_already_sent(st.session_state, message)
@@ -7769,16 +7806,16 @@ def render_tab_after_call():
             st.caption("依頼書PDF格納先：")
             st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
 
-        st.markdown("###### 手配方法・連絡先")
-        st.markdown(
-            """| 拠点 | 手配方法 | 連絡先 |
+        with st.expander("手配方法・連絡先の詳細", expanded=False):
+            st.markdown(
+                """| 拠点 | 手配方法 | 連絡先 |
 |------|----------|--------|
 | WRT修理センター | 社内システムで手配 | 内線 ─ |
 | ユナイトサービス㈱ | メール依頼 | 担当確認 |
 | ソフマップ修理センター | 所定フォーム | 担当確認 |
 | 宗建リノベーション | 電話依頼 | 担当確認 |
 | CER候補 | 担当エスカ | 担当確認 |"""
-        )
+            )
 
     with col2:
         caller_type = form.get("counterparty_type") or form.get("caller_type", "加入者")
@@ -7819,45 +7856,50 @@ def render_tab_after_call():
         snippets_df = load_memo_snippets()
         if not snippets_df.empty:
             st.markdown("###### 修理依頼書メモ 追記候補")
-            st.caption("必要な定型文を選択し、「選択した文言を修理依頼書メモへ追記」を押してください。")
-            if st.button("選択をクリア", key="memo_snippet_clear_selection_button", use_container_width=True):
-                clear_memo_snippet_selection(st.session_state, snippets_df)
-                st.rerun()
+            st.caption("必要な定型文を選択して、修理依頼書メモへ追記できます。")
             st.markdown("###### 追記する定型文")
             for ui_group, group_df in snippets_df.groupby("ui_group", sort=False):
                 group_label = str(ui_group or "").strip() or "その他"
-                with st.expander(f"【{group_label}】", expanded=True):
-                    for _, row in group_df.iterrows():
-                        snippet_id = str(row.get("snippet_id") or "").strip()
-                        if not snippet_id:
-                            continue
-                        key = memo_snippet_checkbox_key(snippet_id)
-                        if key not in st.session_state:
-                            st.session_state[key] = str(row.get("default_checked") or "").strip() == "1"
-                        label = str(row.get("label") or snippet_id).strip()
+                st.markdown(f'<div class="wrt-snippet-group-label">{html.escape(group_label)}</div>', unsafe_allow_html=True)
+                for _, row in group_df.iterrows():
+                    snippet_id = str(row.get("snippet_id") or "").strip()
+                    if not snippet_id:
+                        continue
+                    key = memo_snippet_checkbox_key(snippet_id)
+                    if key not in st.session_state:
+                        st.session_state[key] = str(row.get("default_checked") or "").strip() == "1"
+                    label = str(row.get("label") or snippet_id).strip()
+                    condition_text = str(row.get("condition_text") or "").strip()
+                    with st.container(border=True):
                         st.checkbox(label, key=key)
-                        condition_text = str(row.get("condition_text") or "").strip()
                         if condition_text:
                             st.caption(f"追記条件：{condition_text}")
-                        with st.expander("本文プレビュー", expanded=False):
-                            st.text(str(row.get("body") or "").strip())
             selected_snippet_ids = selected_memo_snippet_ids(st.session_state, snippets_df)
-            if st.button(
-                "選択した文言を修理依頼書メモへ追記",
-                key="memo_snippet_append_button",
-                use_container_width=True,
-            ):
-                if not selected_snippet_ids:
-                    st.warning("追記する定型文を選択してください。")
-                else:
-                    added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
-                    st.session_state[memo_widget_key] = form["attention_memo"]
-                    st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-                    st.session_state.form = form
-                    if added_snippets:
-                        st.success("修理依頼書メモへ追記しました。")
+            preview_text = memo_snippet_preview_text(snippets_df, selected_snippet_ids)
+            if preview_text:
+                st.markdown("###### 選択中の本文プレビュー")
+                st.code(preview_text, language=None)
+            append_col, clear_col = st.columns([2, 1])
+            with append_col:
+                if st.button(
+                    "選択した文言を修理依頼書メモへ追記",
+                    key="memo_snippet_append_button",
+                ):
+                    if not selected_snippet_ids:
+                        st.warning("追記する定型文を選択してください。")
                     else:
-                        st.info("選択した文言はすでに修理依頼書メモに含まれています。")
+                        added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
+                        st.session_state[memo_widget_key] = form["attention_memo"]
+                        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+                        st.session_state.form = form
+                        if added_snippets:
+                            st.success("修理依頼書メモへ追記しました。")
+                        else:
+                            st.info("選択した文言はすでに修理依頼書メモに含まれています。")
+            with clear_col:
+                if st.button("選択をクリア", key="memo_snippet_clear_selection_button"):
+                    clear_memo_snippet_selection(st.session_state, snippets_df)
+                    st.rerun()
 
         memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
         if memo_widget_key in st.session_state:
@@ -8636,6 +8678,85 @@ div[data-baseweb="tab-highlight"] {
 button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: #475569;
     background-color: #F8FAFC;
+}
+</style>
+""", unsafe_allow_html=True)
+    st.markdown("""
+<style>
+.wrt-status-card {
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 8px 0;
+    min-height: 72px;
+    border: 1px solid #e5e7eb;
+    color: #1f2937;
+}
+.wrt-status-card.warning {
+    background: #fff7ed;
+    border-color: #fdba74;
+}
+.wrt-status-card.error {
+    background: #fef2f2;
+    border-color: #fca5a5;
+}
+.wrt-status-card.info {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+}
+.wrt-status-card.success {
+    background: #f0fdf4;
+    border-color: #86efac;
+}
+.wrt-status-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.wrt-status-card-body {
+    font-size: 0.92rem;
+    line-height: 1.55;
+}
+.wrt-pill {
+    display: inline-block;
+    min-width: 88px;
+    text-align: center;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid transparent;
+}
+.wrt-pill.warning {
+    background: #fed7aa;
+    color: #7c2d12;
+}
+.wrt-pill.error {
+    background: #fecaca;
+    color: #7f1d1d;
+}
+.wrt-pill.info {
+    background: #e2e8f0;
+    color: #334155;
+}
+.wrt-pill.success {
+    background: #bbf7d0;
+    color: #14532d;
+}
+.wrt-snippet-group-label {
+    display: inline-block;
+    margin-top: 8px;
+    margin-bottom: 2px;
+    color: #334155;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+.wrt-memo-snippet-row {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
+    background: #ffffff;
 }
 </style>
 """, unsafe_allow_html=True)
