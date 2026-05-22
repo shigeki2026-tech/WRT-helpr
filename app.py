@@ -1991,9 +1991,8 @@ def append_attention_memo_snippets(form: dict, snippet_ids: list[str]) -> list[d
 
 
 def memo_snippet_option_label(row) -> str:
-    ui_group = str(row.get("ui_group") or "その他").strip() or "その他"
     label = str(row.get("label") or row.get("snippet_id") or "").strip()
-    return f"{ui_group}｜{label}"
+    return label
 
 
 def memo_snippet_row_by_id(snippets_df: pd.DataFrame, snippet_id: str) -> dict:
@@ -2004,42 +2003,6 @@ def memo_snippet_row_by_id(snippets_df: pd.DataFrame, snippet_id: str) -> dict:
     if matched.empty:
         return {}
     return matched.iloc[0].to_dict()
-
-
-def add_selected_memo_snippet(session_state, snippet_id: str) -> list[str]:
-    snippet_id = str(snippet_id or "").strip()
-    selected = [
-        str(item or "").strip()
-        for item in session_state.get("memo_snippet_selected_ids", [])
-        if str(item or "").strip()
-    ]
-    if snippet_id and snippet_id not in selected:
-        selected.append(snippet_id)
-    session_state["memo_snippet_selected_ids"] = selected
-    return selected
-
-
-def clear_selected_memo_snippets(session_state) -> None:
-    session_state["memo_snippet_selected_ids"] = []
-
-
-def selected_memo_snippet_rows(snippets_df: pd.DataFrame, selected_ids: list[str]) -> list[dict]:
-    selected = [str(snippet_id or "").strip() for snippet_id in selected_ids if str(snippet_id or "").strip()]
-    rows: list[dict] = []
-    for snippet_id in selected:
-        row = memo_snippet_row_by_id(snippets_df, snippet_id)
-        if row:
-            rows.append(row)
-    return rows
-
-
-def memo_snippet_preview_text(snippets_df: pd.DataFrame, snippet_ids: list[str]) -> str:
-    bodies: list[str] = []
-    for row in selected_memo_snippet_rows(snippets_df, snippet_ids):
-        body = sanitize_generated_body_text(row.get("body") or "").strip()
-        if body:
-            bodies.append(body)
-    return "\n\n---\n\n".join(bodies)
 
 
 def get_vendor_send_template_for_form(form: dict, repair_type: str = "", warranty_type: str = "") -> dict:
@@ -6041,12 +6004,11 @@ def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
     body_parts = []
     for i, (label, value) in enumerate(lines):
         if compact and i == 0:
-            # primary 行は compact でも大きく太字で強調
+            # primary 行は必ず省略せず表示する
             body_parts.append(
-                f'<div class="wrt-decision-tag-primary" style="font-size:1.15em;font-weight:800;">'
-                f'{_ui_v3_escape(value)}</div>'
+                f'<div class="wrt-decision-tag-primary">{_ui_v3_escape(value)}</div>'
             )
-        elif compact:
+        elif i == 1:
             body_parts.append(
                 f'<div class="wrt-decision-tag-secondary">'
                 f'{_ui_v3_escape(value)}</div>'
@@ -6058,7 +6020,7 @@ def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
             )
         else:
             body_parts.append(
-                f'<div class="wrt-decision-tag-secondary">'
+                f'<div class="wrt-decision-tag-tertiary">'
                 f'{_ui_v3_escape(value)}</div>'
             )
     if link is not None:
@@ -7901,51 +7863,24 @@ def render_tab_after_call():
             selected_row = memo_snippet_row_by_id(snippets_df, selected_snippet_id)
             if selected_row:
                 condition_text = str(selected_row.get("condition_text") or "").strip()
-                body_preview = sanitize_generated_body_text(selected_row.get("body") or "").strip()
+                body = sanitize_generated_body_text(selected_row.get("body") or "").strip()
                 if condition_text:
                     st.caption(f"追記条件：{condition_text}")
-                if body_preview:
-                    st.markdown("###### 本文プレビュー")
-                    st.code(body_preview, language=None)
-            if st.button("追加候補に入れる", key="memo_snippet_add_to_selection_button"):
+                if "\n" in body:
+                    st.caption("追記内容：")
+                    st.code(body, language=None)
+            if st.button("この文言を修理依頼書メモへ追記", key="memo_snippet_append_current_button"):
                 if selected_snippet_id:
-                    before = list(st.session_state.get("memo_snippet_selected_ids", []))
-                    after = add_selected_memo_snippet(st.session_state, selected_snippet_id)
-                    if len(after) == len(before):
-                        st.info("選択中リストに追加済みです。")
+                    added_snippets = append_attention_memo_snippets(form, [selected_snippet_id])
+                    st.session_state[memo_widget_key] = form["attention_memo"]
+                    st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+                    st.session_state.form = form
+                    if added_snippets:
+                        st.success("修理依頼書メモへ追記しました。")
                     else:
-                        st.success("選択中リストに追加しました。")
+                        st.info("この文言はすでに修理依頼書メモに含まれています。")
                 else:
                     st.warning("追記する定型文を選択してください。")
-            selected_snippet_ids = list(st.session_state.get("memo_snippet_selected_ids", []))
-            selected_rows = selected_memo_snippet_rows(snippets_df, selected_snippet_ids)
-            if selected_rows:
-                st.markdown("###### 選択中の定型文")
-                for row in selected_rows:
-                    st.markdown(f"- {str(row.get('label') or row.get('snippet_id') or '').strip()}")
-                with st.expander("選択中本文プレビュー", expanded=False):
-                    st.code(memo_snippet_preview_text(snippets_df, selected_snippet_ids), language=None)
-            append_col, clear_col = st.columns([2, 1])
-            with append_col:
-                if st.button(
-                    "選択中の文言を修理依頼書メモへ追記",
-                    key="memo_snippet_append_selected_button",
-                ):
-                    if not selected_snippet_ids:
-                        st.warning("追記する定型文を選択してください。")
-                    else:
-                        added_snippets = append_attention_memo_snippets(form, selected_snippet_ids)
-                        st.session_state[memo_widget_key] = form["attention_memo"]
-                        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-                        st.session_state.form = form
-                        if added_snippets:
-                            st.success("修理依頼書メモへ追記しました。")
-                        else:
-                            st.info("選択した文言はすでに修理依頼書メモに含まれています。")
-            with clear_col:
-                if st.button("選択中リストをクリア", key="memo_snippet_clear_selected_button"):
-                    clear_selected_memo_snippets(st.session_state)
-                    st.rerun()
 
         memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
         if memo_widget_key in st.session_state:
@@ -8790,39 +8725,44 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: #14532d;
 }
 .wrt-decision-tag {
-    min-height: 96px;
-    height: 96px;
+    min-height: 124px;
+    height: 124px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
+    gap: 4px;
     overflow: hidden;
     border-radius: 8px;
-    padding: 10px 12px;
+    padding: 11px 12px;
     margin-bottom: 8px;
     font-size: 0.92em;
 }
 .wrt-decision-tag-title {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     font-weight: 700;
-    margin-bottom: 4px;
+    line-height: 1.25;
+    white-space: nowrap;
     opacity: 0.82;
 }
 .wrt-decision-tag-primary {
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     font-weight: 800;
-    line-height: 1.2;
-    margin-bottom: 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.25;
     white-space: nowrap;
 }
 .wrt-decision-tag-secondary {
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     line-height: 1.35;
+    max-height: 3.0em;
     opacity: 0.9;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.wrt-decision-tag-tertiary {
+    font-size: 0.72rem;
+    line-height: 1.3;
+    max-height: 2.6em;
+    opacity: 0.9;
     overflow: hidden;
 }
 .wrt-snippet-group-label {

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -129,14 +130,21 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "修理依頼書メモ 追記候補" in snippet_source
     assert "追記する定型文を選択" in snippet_source
     assert "追記条件" in snippet_source
-    assert "本文プレビュー" in snippet_source
-    assert "選択中の定型文" in snippet_source
-    assert "選択中本文プレビュー" in snippet_source
+    assert "追記内容" in snippet_source
+    assert '"\\n" in body' in snippet_source
+    assert "本文プレビュー" not in snippet_source
+    assert "追加候補に入れる" not in source
+    assert "選択中の定型文" not in source
+    assert "選択中リストをクリア" not in source
+    assert "選択中の文言を修理依頼書メモへ追記" not in source
     assert "memo_snippet_selectbox" in snippet_source
-    assert "memo_snippet_add_to_selection_button" in snippet_source
-    assert "memo_snippet_selected_ids" in snippet_source
-    assert "memo_snippet_append_selected_button" in snippet_source
-    assert "memo_snippet_clear_selected_button" in snippet_source
+    assert "この文言を修理依頼書メモへ追記" in snippet_source
+    assert "memo_snippet_append_current_button" in snippet_source
+    assert "memo_snippet_selected_ids" not in source
+    assert "memo_snippet_add_to_selection_button" not in source
+    assert "memo_snippet_append_selected_button" not in source
+    assert "memo_snippet_clear_selected_button" not in source
+    assert "append_attention_memo_snippets(form, [selected_snippet_id])" in snippet_source
 
 
 def test_after_call_contact_method_table_is_collapsed_by_default():
@@ -158,14 +166,28 @@ def test_after_call_uses_shared_status_card_css_classes():
     assert "wrt-snippet-group-label" in source
 
 
-def test_decision_tags_have_fixed_height_and_clamped_secondary_css():
+def test_decision_tags_have_fixed_height_and_secondary_tertiary_overflow_css():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
+    primary_css = source[source.index(".wrt-decision-tag-primary {"):source.index(".wrt-decision-tag-secondary {")]
+    secondary_css = source[source.index(".wrt-decision-tag-secondary {"):source.index(".wrt-decision-tag-tertiary {")]
+    tertiary_css = source[source.index(".wrt-decision-tag-tertiary {"):source.index(".wrt-snippet-group-label {")]
+    tag_css = source[source.index(".wrt-decision-tag {"):source.index(".wrt-decision-tag-title {")]
+    tag_height = int(re.search(r"height:\s*(\d+)px", tag_css).group(1))
 
     assert "wrt-decision-tag" in source
-    assert "height: 96px" in source
-    assert "overflow: hidden" in source
-    assert "-webkit-line-clamp: 2" in source
+    assert tag_height >= 120
+    assert "height: 96px" not in tag_css
+    assert "box-sizing: border-box" in source
+    assert "gap: 4px" in source
+    assert "white-space: nowrap" in primary_css
+    assert "-webkit-line-clamp" not in primary_css
+    assert "overflow: hidden" in secondary_css
+    assert "max-height: 3.0em" in secondary_css
+    assert "font-size: 0.76rem" in secondary_css
+    assert "overflow: hidden" in tertiary_css
+    assert "max-height: 2.6em" in tertiary_css
     assert "wrt-decision-tag-secondary" in source
+    assert "wrt-decision-tag-tertiary" in source
     assert "_decision_tag_short_note" in source
 
 
@@ -191,17 +213,35 @@ def test_handover_and_warranty_panels_use_cards_for_status_display():
     assert "送信不可理由をすべて表示" in warranty_source
 
 
-def test_memo_snippet_selectbox_labels_and_selection_helpers():
+def test_memo_snippet_selectbox_labels_are_template_text_only():
     df = app.load_memo_snippets()
     row = app.memo_snippet_row_by_id(df, "manufacturer_warranty")
-    state = {}
+    visit_row = app.memo_snippet_row_by_id(df, "visit_complete_share")
 
-    assert app.memo_snippet_option_label(row) == "保証関連｜メーカー保証期間中"
-    assert app.add_selected_memo_snippet(state, "manufacturer_warranty") == ["manufacturer_warranty"]
-    assert app.add_selected_memo_snippet(state, "manufacturer_warranty") == ["manufacturer_warranty"]
-    assert [r["snippet_id"] for r in app.selected_memo_snippet_rows(df, state["memo_snippet_selected_ids"])] == ["manufacturer_warranty"]
-    app.clear_selected_memo_snippets(state)
-    assert state["memo_snippet_selected_ids"] == []
+    assert app.memo_snippet_option_label(row) == "【メーカー保証期間中の為、メーカー保証に準じる】"
+    assert app.memo_snippet_option_label(visit_row) == "※訪問日・完了内容は弊社へ共有をお願いいたします。"
+    assert "｜" not in app.memo_snippet_option_label(row)
+
+
+def test_memo_snippet_csv_labels_are_body_based_templates():
+    csv_text = (ROOT / "data" / "master_memo_snippets.csv").read_text(encoding="utf-8")
+    app_text = (ROOT / "app.py").read_text(encoding="utf-8")
+    df = app.load_memo_snippets()
+    manufacturer = app.memo_snippet_row_by_id(df, "manufacturer_warranty")
+    store_request = app.memo_snippet_row_by_id(df, "store_request")
+    out_of_scope = app.memo_snippet_row_by_id(df, "out_of_scope_store_contact")
+
+    assert "保証関連｜メーカー保証期間中" not in csv_text
+    assert "販売店連絡｜訪問日・完了内容の共有希望" not in csv_text
+    assert "保証関連｜" not in app_text
+    assert "販売店連絡｜" not in app_text
+    assert "依頼元変更｜" not in app_text
+    assert manufacturer["label"] == "【メーカー保証期間中の為、メーカー保証に準じる】"
+    assert manufacturer["body"] == "【メーカー保証期間中の為、メーカー保証に準じる】"
+    assert manufacturer["condition_text"] == "メーカー保証期間中の受付"
+    assert store_request["label"] == "【○○店/○○様より修理依頼】"
+    assert out_of_scope["label"] == "保証対象外時：販売店へ連絡要"
+    assert out_of_scope["body"].startswith("保証対象外時：販売店へ連絡要")
 
 
 class SessionState(dict):

@@ -2815,19 +2815,19 @@ def test_tc_acceptance_tag_compact_flag_is_set():
     assert tag.get("compact") is True
 
 
-def test_tc_acceptance_tag_compact_primary_is_large_bold():
-    """compact=True でも primary 行は 1.1em 以上 + font-weight:800 で強調される"""
+def test_tc_acceptance_tag_compact_primary_uses_shared_css():
+    """compact=True でも primary 行は共通CSSで太字かつ見切れない"""
     source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
-    # compact and i == 0 のブランチに大きい font-size が設定されているか確認
     compact_block_start = source.index("if compact and i == 0:")
-    compact_block_end = source.index("elif compact:", compact_block_start)
-    compact_primary_css = source[compact_block_start:compact_block_end]
-    assert "font-weight:800" in compact_primary_css
-    # font-size が 1.1em 以上であることを簡易確認（"1." で始まる em 値が含まれる）
-    import re
-    sizes = re.findall(r"font-size:([\d.]+)em", compact_primary_css)
-    assert sizes, "compact primary に font-size が設定されていない"
-    assert float(sizes[0]) >= 1.1, f"compact primary の font-size が小さすぎる: {sizes[0]}em"
+    compact_block_end = source.index("elif i == 1:", compact_block_start)
+    compact_primary_block = source[compact_block_start:compact_block_end]
+    primary_css = source[source.index(".wrt-decision-tag-primary {"):source.index(".wrt-decision-tag-secondary {")]
+
+    assert 'class="wrt-decision-tag-primary"' in compact_primary_block
+    assert "font-weight: 800" in primary_css
+    assert "font-size: 1.1rem" in primary_css
+    assert "white-space: nowrap" in primary_css
+    assert "-webkit-line-clamp" not in primary_css
 
 
 # ── 今聞くことの根拠表示テスト ──
