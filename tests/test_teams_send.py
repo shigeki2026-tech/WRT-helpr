@@ -111,7 +111,7 @@ def test_appended_attention_memo_snippet_stays_out_of_warranty_report():
     assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
 
 
-def test_memo_snippet_ui_uses_japanese_checkboxes_not_multiselect():
+def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
@@ -124,14 +124,19 @@ def test_memo_snippet_ui_uses_japanese_checkboxes_not_multiselect():
     assert "Choose options" not in source
     assert "Select all" not in source
     assert "st.multiselect" not in snippet_source
-    assert "st.checkbox" in snippet_source
+    assert "st.checkbox" not in snippet_source
+    assert "st.selectbox" in snippet_source
     assert "修理依頼書メモ 追記候補" in snippet_source
-    assert "追記する定型文" in snippet_source
+    assert "追記する定型文を選択" in snippet_source
     assert "追記条件" in snippet_source
-    assert "選択中の本文プレビュー" in snippet_source
-    assert "with st.expander(\"本文プレビュー\"" not in snippet_source
-    assert "memo_snippet_append_button" in snippet_source
-    assert "memo_snippet_clear_selection_button" in snippet_source
+    assert "本文プレビュー" in snippet_source
+    assert "選択中の定型文" in snippet_source
+    assert "選択中本文プレビュー" in snippet_source
+    assert "memo_snippet_selectbox" in snippet_source
+    assert "memo_snippet_add_to_selection_button" in snippet_source
+    assert "memo_snippet_selected_ids" in snippet_source
+    assert "memo_snippet_append_selected_button" in snippet_source
+    assert "memo_snippet_clear_selected_button" in snippet_source
 
 
 def test_after_call_contact_method_table_is_collapsed_by_default():
@@ -153,6 +158,23 @@ def test_after_call_uses_shared_status_card_css_classes():
     assert "wrt-snippet-group-label" in source
 
 
+def test_decision_tags_have_fixed_height_and_clamped_secondary_css():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert "wrt-decision-tag" in source
+    assert "height: 96px" in source
+    assert "overflow: hidden" in source
+    assert "-webkit-line-clamp: 2" in source
+    assert "wrt-decision-tag-secondary" in source
+    assert "_decision_tag_short_note" in source
+
+
+def test_decision_tag_long_reason_is_summarized():
+    text = "CSVに明確な出張/持込ルールがないため要確認"
+
+    assert app._decision_tag_short_note("確認：", text) == "確認：要確認"
+
+
 def test_handover_and_warranty_panels_use_cards_for_status_display():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     handover_start = source.index("def render_handover_requirement_panel")
@@ -169,13 +191,17 @@ def test_handover_and_warranty_panels_use_cards_for_status_display():
     assert "送信不可理由をすべて表示" in warranty_source
 
 
-def test_memo_snippet_checkbox_keys_are_unique_and_snippet_id_based():
+def test_memo_snippet_selectbox_labels_and_selection_helpers():
     df = app.load_memo_snippets()
-    keys = [app.memo_snippet_checkbox_key(snippet_id) for snippet_id in df["snippet_id"].tolist()]
+    row = app.memo_snippet_row_by_id(df, "manufacturer_warranty")
+    state = {}
 
-    assert len(keys) == len(set(keys))
-    assert "memo_snippet_select_manufacturer_warranty" in keys
-    assert all(key.startswith("memo_snippet_select_") for key in keys)
+    assert app.memo_snippet_option_label(row) == "保証関連｜メーカー保証期間中"
+    assert app.add_selected_memo_snippet(state, "manufacturer_warranty") == ["manufacturer_warranty"]
+    assert app.add_selected_memo_snippet(state, "manufacturer_warranty") == ["manufacturer_warranty"]
+    assert [r["snippet_id"] for r in app.selected_memo_snippet_rows(df, state["memo_snippet_selected_ids"])] == ["manufacturer_warranty"]
+    app.clear_selected_memo_snippets(state)
+    assert state["memo_snippet_selected_ids"] == []
 
 
 class SessionState(dict):
