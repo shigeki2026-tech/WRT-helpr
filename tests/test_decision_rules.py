@@ -2035,7 +2035,7 @@ def test_call_line_rakutel_header_uses_rakutel_line_name_not_display_sentence():
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
     assert app.build_rakutel_call_header("家電業務", "受電") == "【家電回線に入電】"
     assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
-    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線に架電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線から架電】"
     assert app.build_rakutel_call_header("コーナン商事（家電）", "受電") == "【コーナン（家電）回線に入電】"
 
 

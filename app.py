@@ -33,7 +33,7 @@ DEFAULT_TEAMS_CONFIG = {
     "chat_id": "",
     "chat_name": "WRT報告用チャット",
     "send_mode": "powershell_graph",
-    "warranty_enabled": False,
+    "warranty_enabled": True,
     "warranty_chat_id": "",
     "warranty_chat_name": "ワランティ報告用チャット",
 }
@@ -2486,7 +2486,7 @@ def teams_config_unavailable_reasons(config: dict) -> list[str]:
 
 def warranty_teams_config_unavailable_reasons(config: dict) -> list[str]:
     reasons = []
-    if not config.get("warranty_enabled"):
+    if config.get("warranty_enabled") is False:
         reasons.append("ワランティ送信設定が無効です")
     if not (config.get("warranty_chat_id") or "").strip():
         reasons.append("ワランティ送信先 chat_id が未設定です")
@@ -3556,8 +3556,9 @@ def build_rakutel_call_header(call_line: str, call_direction: str = "受電") ->
     if not rakutel_line_name:
         rakutel_line_name = "未選択"
     direction = call_direction if call_direction in ("受電", "架電") else "受電"
-    verb = "架電" if direction == "架電" else "入電"
-    return f"【{rakutel_line_name}回線に{verb}】"
+    if direction == "架電":
+        return f"【{rakutel_line_name}回線から架電】"
+    return f"【{rakutel_line_name}回線に入電】"
 
 
 def call_line_master_values_match(master_value: str, call_line: str) -> bool:
@@ -6174,10 +6175,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         message_for_status,
         already_sent=already_sent,
     )
-    handover = (decision or {}).get("handover_requirement") or {}
     status_lines: list[str] = []
-    if not handover.get("required"):
-        status_lines.append("引き継ぎ対象ルールに一致していません。送信前に確認してください。")
     if incomplete_reasons and not already_sent:
         status_lines.extend(["理由："] + [f"- {reason}" for reason in incomplete_reasons[:5]])
         tone = "warning"
@@ -6198,6 +6196,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         tone = "info"
         pill = "送信処理中"
     else:
+        status_lines.append("全案件、ワランティ報告チャットへ送信してください。")
         tone = "success"
         pill = "送信可能"
     st.markdown(_status_card_html(tone, pill, chat_name, status_lines), unsafe_allow_html=True)

@@ -427,7 +427,7 @@ def test_teams_config_example_exists():
         "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
         "chat_name": "WRT報告用チャット",
         "send_mode": "powershell_graph",
-        "warranty_enabled": False,
+        "warranty_enabled": True,
         "warranty_chat_id": "",
         "warranty_chat_name": "ワランティ報告用チャット",
     }
@@ -586,6 +586,9 @@ def test_warranty_report_validation_blocks_config_and_duplicate():
 
     disabled = app.validate_warranty_report_send_request(form, decision, warranty_config(enabled=False))
     no_chat = app.validate_warranty_report_send_request(form, decision, warranty_config(chat_id=""))
+    implicit_enabled_config = warranty_config()
+    implicit_enabled_config.pop("warranty_enabled")
+    implicit_enabled = app.validate_warranty_report_send_request(form, decision, implicit_enabled_config)
     duplicate = app.validate_warranty_report_send_request(
         form,
         decision,
@@ -596,7 +599,30 @@ def test_warranty_report_validation_blocks_config_and_duplicate():
 
     assert "ワランティ送信設定が無効です" in disabled
     assert "ワランティ送信先 chat_id が未設定です" in no_chat
+    assert "ワランティ送信設定が無効です" not in implicit_enabled
     assert "同じ内容は送信済みです" in duplicate
+
+
+def test_warranty_report_send_is_independent_from_handover_requirement():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_start = source.index("def render_warranty_report_send_panel")
+    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
+    panel_source = source[panel_start:panel_end]
+    form = warranty_form()
+    decision = {
+        **warranty_decision(send_method="FAX"),
+        "handover_requirement": {
+            "required": False,
+            "matched": False,
+            "reason": "引き継ぎ対象ルールに一致なし",
+        },
+    }
+    errors = app.validate_warranty_report_send_request(form, decision, warranty_config())
+
+    assert errors == []
+    assert "引き継ぎ対象ルールに一致していません" not in source
+    assert "全案件、ワランティ報告チャットへ送信してください。" in panel_source
+    assert "handover_requirement" not in panel_source
 
 
 def test_warranty_report_message_stays_out_of_rakutel_memo_and_existing_teams():
@@ -981,6 +1007,9 @@ def test_rakutel_header_never_generates_blank_line_name():
     assert app.build_rakutel_call_header("", "受電") == "【未選択回線に入電】"
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
     assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線から架電】"
+    assert app.build_rakutel_call_header("住設業務", "架電") == "【住設回線から架電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") != "【家電回線に架電】"
 
 
 def test_rakutel_text_does_not_generate_blank_line_header():
@@ -1942,7 +1971,8 @@ def test_rakutel_text_outbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電回線に架電】" in text
+    assert "【家電回線から架電】" in text
+    assert "【家電回線に架電】" not in text
     assert "MPG大濱→加入者" in text
 
 
