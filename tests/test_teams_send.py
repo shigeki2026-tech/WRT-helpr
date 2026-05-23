@@ -1736,7 +1736,7 @@ def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
     state = SessionState({
         "case_basic_revision": revision,
         app.case_basic_widget_key("call_line", revision): "家電保証対応業務（24時間）",
-        app.case_basic_widget_key("appliance_type", revision): "家電",
+        app.case_basic_widget_key("appliance_category", revision): "家電",
         app.case_basic_widget_key("product", revision): "食器洗い乾燥機",
         app.case_basic_widget_key("manufacturer", revision): "三菱電機",
         app.case_basic_widget_key("store_name", revision): "ライフデザイン・カバヤ",
@@ -1764,7 +1764,7 @@ def test_case_basic_revision_initializes_and_bumps_on_refresh_and_clear():
 
 def test_case_basic_widget_keys_include_revision():
     assert app.case_basic_widget_key("call_line", 7) == "case_basic_call_line_7"
-    assert app.case_basic_widget_key("appliance_type", 7) == "case_basic_appliance_type_7"
+    assert app.case_basic_widget_key("appliance_category", 7) == "case_basic_appliance_category_7"
     assert app.case_basic_widget_key("product", 7) == "case_basic_product_7"
     assert app.case_basic_widget_key("manufacturer", 7) == "case_basic_manufacturer_7"
     assert app.case_basic_widget_key("store_name", 7) == "case_basic_store_name_7"
@@ -2549,7 +2549,7 @@ def test_global_case_basic_widget_keys_are_single_global_set():
 
     for key in [
         'case_basic_widget_key("call_line", revision)',
-        'case_basic_widget_key("appliance_type", revision)',
+        'case_basic_widget_key("appliance_category", revision)',
         'case_basic_widget_key("product", revision)',
         'case_basic_widget_key("manufacturer", revision)',
         'case_basic_widget_key("store_name", revision)',
@@ -2568,8 +2568,12 @@ def test_global_case_basic_panel_updates_shared_form_fields():
     panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
-    for field in ["call_line", "appliance_type", "product", "manufacturer", "store_name", "product_price"]:
+    for field in ["call_line", "appliance_category", "appliance_type", "product", "manufacturer", "store_name", "product_price"]:
         assert f'form["{field}"]' in panel_source
+    assert '"案件分類"' in panel_source
+    assert "APPLIANCE_CATEGORY_OPTIONS" in panel_source
+    assert '"住設（新築）"' in source
+    assert '"住設（既築）"' in source
     assert "st.session_state.form = form" in panel_source
 
 
@@ -2582,6 +2586,7 @@ def test_call_tab_does_not_render_duplicate_case_basic_fields():
     assert "受付補足情報" in call_source
     assert 'st.selectbox("回線名"' not in call_source
     assert 'st.selectbox("家電/住設"' not in call_source
+    assert 'st.selectbox("案件分類"' not in call_source
     assert 'st.selectbox(\n            "製品"' not in call_source
     assert 'st.selectbox(\n            "メーカー"' not in call_source
 

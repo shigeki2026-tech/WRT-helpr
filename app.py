@@ -65,6 +65,8 @@ FIELD_LABELS = {
     "call_type": "入電種別",
     "call_line": "回線名",
     "appliance_type": "家電/住設",
+    "appliance_category": "案件分類",
+    "housing_phase": "住設区分",
     "prefecture": "都道府県",
     "address": "お客様住所",
     "product": "製品",
@@ -682,7 +684,9 @@ AREA_GROUPS: dict = {
 _ALIAS_COLS        = ["priority", "enabled", "keyword", "normalized_product", "product_group", "notes"]
 _REPAIR_TYPE_COLS  = [
     "priority", "enabled", "product_keyword", "manufacturer_keyword",
-    "model_keyword", "condition_keyword", "repair_type", "needs_confirmation", "notes",
+    "model_keyword", "condition_keyword", "repair_type",
+    "manufacturer_required", "model_required", "manual_required",
+    "needs_confirmation", "notes",
     "certainty", "reason", "memo_note", "rakutel_repair_type_override", "active",
 ]
 _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
@@ -1531,6 +1535,39 @@ def infer_appliance_type_from_form(form: dict, current_value: str = "") -> str:
     if any(keyword in evidence_text for keyword in RESIDENTIAL_APPLIANCE_KEYWORDS):
         return "住設"
     return current
+
+
+def normalize_appliance_category(value: str, appliance_type: str = "", housing_phase: str = "") -> str:
+    category = (value or "").strip()
+    if category in APPLIANCE_CATEGORY_OPTIONS:
+        return category
+    base_type = (appliance_type or "").strip()
+    phase = (housing_phase or "").strip()
+    if base_type == "家電":
+        return "家電"
+    if base_type == "住設":
+        return "住設（新築）" if phase == "新築" else "住設（既築）"
+    return ""
+
+
+def apply_appliance_category_to_form(form: dict) -> dict:
+    """新しい案件分類を、既存の appliance_type / housing_phase へ互換反映する。"""
+    category = normalize_appliance_category(
+        form.get("appliance_category", ""),
+        form.get("appliance_type", ""),
+        form.get("housing_phase", ""),
+    )
+    form["appliance_category"] = category
+    if category == "家電":
+        form["appliance_type"] = "家電"
+        form["housing_phase"] = ""
+    elif category == "住設（新築）":
+        form["appliance_type"] = "住設"
+        form["housing_phase"] = "新築"
+    elif category == "住設（既築）":
+        form["appliance_type"] = "住設"
+        form["housing_phase"] = "既築"
+    return form
 
 
 DEFAULT_HOME_CALL_LINE_VALUES = {
@@ -2968,11 +3005,13 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
 CASE_BASIC_WIDGET_PREFIXES = (
     "case_basic_call_line_",
     "case_basic_appliance_type_",
+    "case_basic_appliance_category_",
     "case_basic_product_",
     "case_basic_manufacturer_",
     "case_basic_store_name_",
     "call_line_input_",
     "appliance_type_input_",
+    "appliance_category_input_",
     "product_input_",
     "manufacturer_input_",
     "store_name_input_",
@@ -2981,12 +3020,14 @@ CASE_BASIC_WIDGET_PREFIXES = (
 
 CASE_BASIC_FIELD_TO_WIDGET_STEM = {
     "call_line": "case_basic_call_line",
-    "appliance_type": "case_basic_appliance_type",
+    "appliance_category": "case_basic_appliance_category",
     "product": "case_basic_product",
     "manufacturer": "case_basic_manufacturer",
     "store_name": "case_basic_store_name",
     "product_price": "case_basic_product_price",
 }
+
+APPLIANCE_CATEGORY_OPTIONS = ["", "家電", "住設（新築）", "住設（既築）"]
 
 
 def get_case_basic_revision(session_state) -> int:
@@ -3491,7 +3532,8 @@ def get_product_options() -> list:
                 options.append(product)
                 seen.add(product)
     fallback = [
-        "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "IH",
+        "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "多機能便座",
+        "温水洗浄便座", "シャワートイレ", "ウォシュレット", "IH",
         "レンジフード", "食器洗い乾燥機", "ドライヤー", "パソコン",
         "タブレット", "掃除機", "炊飯器", "トースター", "カーナビ",
         "ゲーム機", "Airdog", "テレビ", "プリンター", "サウンドバー",
@@ -3836,6 +3878,14 @@ def _repair_rule_reason(row) -> str:
     )
 
 
+def _rule_flag(row, field: str) -> bool:
+    return str(row.get(field, "") or "").strip() == "1"
+
+
+def is_missing_manufacturer_value(value: str) -> bool:
+    return not (value or "").strip() or (value or "").strip() in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
+
+
 # ============================================================
 # テキスト抽出
 # ============================================================
@@ -3999,7 +4049,9 @@ def normalize_product(series: str, product: str = "") -> str:
         "石油給湯器": "石油給湯器", "ハイブリッド給湯器": "ハイブリッド給湯器",
         "エネファーム": "エネファーム", "電気温水器": "電気温水器",
         "電気暖房温水ボイラー": "電気暖房温水ボイラー",
-        "給湯器": "給湯器", "温水便座": "温水便座", "掃除機": "掃除機",
+        "給湯器": "給湯器", "温水便座": "温水便座", "多機能便座": "多機能便座",
+        "温水洗浄便座": "温水洗浄便座", "シャワートイレ": "シャワートイレ",
+        "ウォシュレット": "ウォシュレット", "掃除機": "掃除機",
         "炊飯器": "炊飯器", "トースター": "トースター", "ゲーム機": "ゲーム機",
         "テレビ": "テレビ", "タブレット": "タブレット",
         "腕時計（クォーツ）": "腕時計", "腕時計": "腕時計",
@@ -4096,6 +4148,7 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     genre = extracted.get("genre", "")
     if genre or extracted.get("category") or extracted.get("plan"):
         form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
+        form = apply_appliance_category_to_form(form)
     return form
 
 
@@ -4157,7 +4210,9 @@ def determine_repair_type_from_rules(form: dict) -> dict:
     model        = (form.get("model_number") or "").strip()
     condition    = " ".join([
         (form.get("extra_condition") or "").strip(),
+        (form.get("appliance_category") or "").strip(),
         (form.get("appliance_type") or "").strip(),
+        (form.get("housing_phase") or "").strip(),
         (form.get("prefecture") or "").strip(),
         (form.get("area_group") or "").strip(),
     ]).strip()
@@ -4178,26 +4233,48 @@ def determine_repair_type_from_rules(form: dict) -> dict:
 
             matched_kw = pk or mk or mok or ck or "(条件なし)"
             certainty = (row.get("certainty") or "").strip()
+            manufacturer_required = _rule_flag(row, "manufacturer_required")
+            model_required = _rule_flag(row, "model_required")
+            manual_required = _rule_flag(row, "manual_required")
+            missing_fields = []
+            if manufacturer_required and is_missing_manufacturer_value(manufacturer):
+                missing_fields.append("manufacturer")
+            if model_required and not model:
+                missing_fields.append("model_number")
             needs_confirmation = (
                 str(row.get("needs_confirmation", "0")).strip() == "1"
                 or certainty == "needs_check"
+                or bool(missing_fields)
             )
+            repair_type = (row.get("repair_type") or "要確認").strip()
+            if missing_fields and repair_type != "要確認":
+                repair_type = "要確認"
+            reason = _repair_rule_reason(row)
+            if missing_fields:
+                missing_labels = "・".join(field_label(field) for field in missing_fields)
+                reason = f"{reason}（{missing_labels}確認が必要）"
             return {
                 "matched":           True,
-                "repair_type":       (row.get("repair_type") or "要確認").strip(),
+                "repair_type":       repair_type,
                 "needs_confirmation": needs_confirmation,
+                "manufacturer_required": manufacturer_required,
+                "model_required": model_required,
+                "manual_required": manual_required,
+                "missing_fields": missing_fields,
                 "keyword":           matched_kw,
                 "priority":          int(row.get("priority", 999)),
                 "csv_name":          "master_repair_type_rules.csv",
                 "notes":             (row.get("notes") or "").strip(),
                 "certainty":         certainty,
-                "reason":            _repair_rule_reason(row),
+                "reason":            reason,
                 "memo_note":         (row.get("memo_note") or "").strip(),
                 "rakutel_repair_type_override": (row.get("rakutel_repair_type_override") or "").strip(),
             }
 
     return {
         "matched": False, "repair_type": "", "needs_confirmation": False,
+        "manufacturer_required": False, "model_required": False, "manual_required": False,
+        "missing_fields": [],
         "keyword": "", "priority": None, "csv_name": "", "notes": "",
         "certainty": "", "reason": "", "memo_note": "", "rakutel_repair_type_override": "",
     }
@@ -4205,7 +4282,8 @@ def determine_repair_type_from_rules(form: dict) -> dict:
 
 # ── 既存ロジック（フォールバック・削除しない） ──
 VISIT_REPAIR_PRODUCTS  = {
-    "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "食器洗い乾燥機",
+    "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "多機能便座",
+    "温水洗浄便座", "シャワートイレ", "ウォシュレット", "食器洗い乾燥機",
     "エコキュート", "ガス給湯器", "石油給湯器", "ハイブリッド給湯器",
     "エネファーム", "電気温水器", "電気暖房温水ボイラー",
 }
@@ -4478,6 +4556,9 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
     """
     df = load_vendor_rules()
     call_line    = (form.get("call_line") or "").strip()
+    appliance_category = (form.get("appliance_category") or "").strip()
+    appliance_type = (form.get("appliance_type") or "").strip()
+    housing_phase = (form.get("housing_phase") or "").strip()
     prefecture   = (form.get("prefecture") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
     product      = (form.get("product") or "").strip()
@@ -4721,7 +4802,9 @@ def infer_call_line_attrs(form: dict) -> dict:
 # ============================================================
 def determine_script_route(form: dict, repair_type: str) -> dict:
     call_line      = form.get("call_line", "")
+    form = apply_appliance_category_to_form(form.copy())
     appliance_type = form.get("appliance_type", "")
+    appliance_category = form.get("appliance_category", "")
     is_dp = is_double_protect_plan(form.get("warranty_plan", ""))
     result = {
         "sheet_name": "", "part": "", "price_guidance_allowed": True,
@@ -4735,32 +4818,44 @@ def determine_script_route(form: dict, repair_type: str) -> dict:
                       notes=["保証対象外時の概算費用・上限金額などの金額案内はしない"],
                       reason="ビックカメラ/ソフマップ回線のため金額案内不可")
         return result
-    if get_line_group(call_line) == "住設":
+    line_group = get_line_group(call_line)
+    if line_group == "住設" and appliance_category == "住設（新築）":
+        result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
+                      display_name="住設新築受付",
+                      reason="住設回線＋住設（新築）")
+        return result
+    if line_group == "住設" and appliance_category == "住設（既築）":
         result.update(sheet_name="住設【既築／中古のみ】", part="既築・中古住設受付",
                       display_name="住設・出張修理" if repair_type == "出張修理" else "住設受付",
+                      reason="住設回線＋住設（既築）")
+        return result
+    if line_group == "住設":
+        result.update(sheet_name="住設【既築／中古のみ】", part="住設受付",
+                      display_name="住設受付",
                       reason="住設回線")
         return result
-    if appliance_type == "住設":
+    if appliance_category == "住設（新築）":
+        result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
+                      display_name="住設新築受付",
+                      reason="住設（新築）")
+        return result
+    if appliance_category == "住設（既築）" or appliance_type == "住設":
         result.update(sheet_name="住設【既築／中古のみ】", part="住設受付",
                       display_name="住設・出張修理" if repair_type == "出張修理" else "住設受付",
-                      reason="住設製品")
+                      reason="住設（既築）")
         return result
-    if appliance_type == "家電" and repair_type == "出張修理":
-        result.update(sheet_name="家電出張・持込・新築住設", part="家電・出張修理",
-                      reason="家電＋出張修理")
+    if appliance_category == "家電" or appliance_type == "家電":
+        part = "家電・持込修理" if repair_type == "持込修理" else "家電・出張修理"
+        display_repair = "持込修理" if repair_type == "持込修理" else "出張修理"
+        result.update(sheet_name="家電出張・持込・新築住設", part=part,
+                      reason=f"家電＋{display_repair}",
+                      display_name=f"家電・{display_repair}")
         if is_dp:
-            result.update(display_name="ダブルプロテクト / 出張修理",
-                          reason="家電＋出張修理＋ダブルプロテクト")
-        return result
-    if appliance_type == "家電" and repair_type == "持込修理":
-        result.update(sheet_name="家電出張・持込・新築住設", part="家電・持込修理",
-                      reason="家電＋持込修理")
-        if is_dp:
-            result.update(display_name="ダブルプロテクト / 持込修理",
-                          reason="家電＋持込修理＋ダブルプロテクト")
+            result.update(display_name=f"ダブルプロテクト / {display_repair}",
+                          reason=f"家電＋{display_repair}＋ダブルプロテクト")
         return result
     result.update(sheet_name="要確認", part="SV/担当確認",
-                  escalation_needed=True, reason="家電/住設区分または修理形態が未確定")
+                  escalation_needed=True, reason="回線名または案件分類が未確定")
     return result
 
 
@@ -4975,6 +5070,7 @@ MISSING_FIELD_SHORT_LABELS = {
     "repair_type": "修理方針",
     "call_line": "回線名",
     "appliance_type": "家電/住設",
+    "appliance_category": "案件分類",
 }
 
 
@@ -5004,8 +5100,16 @@ def is_initial_case_state(form: dict | None) -> bool:
 
 
 def _repair_type_needs_model(repair_result: dict) -> bool:
+    if repair_result.get("model_required"):
+        return True
     text = " ".join(str(repair_result.get(field) or "") for field in ("reason", "notes", "memo_note"))
     return "型番" in text
+
+
+def _repair_type_needs_manufacturer(repair_result: dict) -> bool:
+    if repair_result.get("manufacturer_required"):
+        return True
+    return "manufacturer" in (repair_result.get("missing_fields") or [])
 
 
 def decision_tag_missing_fields(decision: dict, form: dict | None = None) -> dict[str, list[str]]:
@@ -5030,7 +5134,7 @@ def decision_tag_missing_fields(decision: dict, form: dict | None = None) -> dic
     if not product or product == PRODUCT_OTHER:
         repair_missing.extend(["product", "manufacturer", "model_number"])
     else:
-        if not manufacturer or manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
+        if _repair_type_needs_manufacturer(repair_result) and is_missing_manufacturer_value(manufacturer):
             repair_missing.append("manufacturer")
         if _repair_type_needs_model(repair_result) and not model:
             repair_missing.append("model_number")
@@ -5046,10 +5150,9 @@ def decision_tag_missing_fields(decision: dict, form: dict | None = None) -> dic
     script_missing: list[str] = []
     if not (working_form.get("call_line") or form.get("call_line") or "").strip():
         script_missing.append("call_line")
-    if not (working_form.get("appliance_type") or form.get("appliance_type") or "").strip():
-        script_missing.append("appliance_type")
-    if not repair_type or repair_type == "要確認":
-        script_missing.append("repair_type")
+    if not (working_form.get("appliance_category") or form.get("appliance_category")
+            or working_form.get("appliance_type") or form.get("appliance_type") or "").strip():
+        script_missing.append("appliance_category")
 
     return {
         "受付可否": _dedupe_preserve_order(warranty_missing),
@@ -5112,8 +5215,8 @@ def _normalize_confirmation_action(action: str, timing: str = "call") -> str:
         return "製品を確認"
     if "回線名" in text:
         return "回線名を選択"
-    if "家電/住設" in text or "家電・住設" in text:
-        return "家電/住設を確認"
+    if "案件分類" in text or "家電/住設" in text or "家電・住設" in text:
+        return "案件分類を確認"
     if "修理方針" in text or "修理形態" in text or "取説" in text or "過去履歴" in text:
         return "修理形態を確認"
     if "Excel" in text or "正式" in text or "URL未登録" in text:
@@ -5136,7 +5239,7 @@ def _confirmation_priority(action: str) -> int:
         "住所/都道府県を確認": 60,
         "修理形態を確認": 70,
         "回線名を選択": 80,
-        "家電/住設を確認": 90,
+        "案件分類を確認": 90,
         "正式Excelを参照": 120,
         "終話後に拠点確認": 130,
     }
@@ -5176,7 +5279,8 @@ def build_next_confirmation_sections(decision: dict, form: dict | None = None) -
         "prefecture": "住所/都道府県を確認",
         "address": "住所/都道府県を確認",
         "product": "製品を確認",
-        "appliance_type": "家電/住設を確認",
+        "appliance_type": "案件分類を確認",
+        "appliance_category": "案件分類を確認",
         "repair_type": "修理形態を確認",
     }
     for fields in missing.values():
@@ -5522,9 +5626,9 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
         if not (form.get("product") or "").strip():
             missing_for_script.append("product")
             reasons.append("製品が未選択")
-        if not (form.get("appliance_type") or "").strip():
-            missing_for_script.append("appliance_type")
-            reasons.append("家電/住設が未選択")
+        if not (form.get("appliance_category") or form.get("appliance_type") or "").strip():
+            missing_for_script.append("appliance_category")
+            reasons.append("案件分類が未選択")
         if "product" in missing_for_script:
             items.append(_item(
                 "参照スクリプト判定", "warning", "製品未入力",
@@ -5533,12 +5637,12 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
                 next_action="製品を入力してください",
                 impact="call_time_required",
             ))
-        if "appliance_type" in missing_for_script:
+        if "appliance_category" in missing_for_script:
             items.append(_item(
-                "参照スクリプト判定", "warning", "家電/住設区分未入力",
-                "家電/住設区分が未選択のため参照スクリプトを確定できません。",
-                missing_fields=["appliance_type"],
-                next_action="家電/住設区分を入力してください",
+                "参照スクリプト判定", "warning", "案件分類未入力",
+                "案件分類が未選択のため参照スクリプトを確定できません。",
+                missing_fields=["appliance_category"],
+                next_action="案件分類を入力してください",
                 impact="call_time_required",
             ))
         script_next_action = "SV/担当に確認"
@@ -5548,10 +5652,10 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
                 reasons.append("腕時計案件の修理形態はSV/担当確認")
                 script_next_action = "腕時計案件の修理形態をSV/担当へ確認"
             else:
-                reasons.append("修理形態が要確認または未確定")
+                reasons.append("修理形態別案内は要確認")
         if escalation_needed:
             reasons.append("エスカレーションが必要")
-        non_missing_reasons = [r for r in reasons if r not in ("製品が未選択", "家電/住設が未選択")]
+        non_missing_reasons = [r for r in reasons if r not in ("製品が未選択", "案件分類が未選択")]
         if non_missing_reasons or not missing_for_script:
             reason_str = " / ".join(non_missing_reasons) if non_missing_reasons else "スクリプト参照先が確定していません"
             items.append(_item(
@@ -5654,6 +5758,9 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
             missing_repair.append("product")
         if mfr_val in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN):
             reasons.append("メーカーが「その他・要確認」または「不明」")
+        for field in repair_result.get("missing_fields", []) or []:
+            if field not in missing_repair:
+                missing_repair.append(field)
         if repair_result.get("needs_confirmation"):
             note = (repair_result.get("notes") or "型番・詳細確認要").strip()
             reasons.append(f"確認要: {note}")
@@ -5662,6 +5769,8 @@ def build_decision_diagnostics(form: dict, result: dict) -> dict:
         repair_next_action = (
             "腕時計案件の修理形態をSV/担当へ確認"
             if product_val == "腕時計"
+            else "製品を入力してください"
+            if "product" in missing_repair
             else "SV/担当に確認"
         )
         items.append(_item(
@@ -5813,6 +5922,7 @@ def run_decision(form: dict) -> dict:
         working_form,
         working_form.get("appliance_type", ""),
     )
+    working_form = apply_appliance_category_to_form(working_form)
     area_group = get_area_group(working_form.get("prefecture", ""))
     working_form["area_group"] = area_group
     warranty_result = determine_warranty_status(working_form)
@@ -5978,8 +6088,8 @@ def render_field_attention(field_name: str, missing_fields: set, invalid_fields:
         elif field_name == "product":
             msg = "⚠️ 必須確認：製品を入力してください"
             action_text = ""
-        elif field_name == "appliance_type":
-            msg = "⚠️ 必須確認：家電/住設区分を入力してください"
+        elif field_name in ("appliance_type", "appliance_category"):
+            msg = "⚠️ 必須確認：案件分類を入力してください"
             action_text = ""
         else:
             msg = "⚠️ 必須確認"
@@ -6468,6 +6578,7 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
             else:
                 session_state[widget_key] = form_value
         next_synced[widget_key] = form.get(field, "")
+    form = apply_appliance_category_to_form(form)
     session_state["_case_basic_widget_synced_values"] = next_synced
     session_state["form"] = form
     return form
@@ -6821,15 +6932,16 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     call_line_opts = get_call_line_options()
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
-    appliance_type_opts = ["", "家電", "住設"]
+    form = apply_appliance_category_to_form(form)
 
     revision = get_case_basic_revision(st.session_state)
     inferred_appliance_type = infer_appliance_type_from_form(form, form.get("appliance_type", ""))
-    if inferred_appliance_type != form.get("appliance_type", ""):
+    if not form.get("appliance_category") and inferred_appliance_type != form.get("appliance_type", ""):
         form["appliance_type"] = inferred_appliance_type
-        appliance_widget_key = case_basic_widget_key("appliance_type", revision)
+        form = apply_appliance_category_to_form(form)
+        appliance_widget_key = case_basic_widget_key("appliance_category", revision)
         if appliance_widget_key in st.session_state:
-            st.session_state[appliance_widget_key] = inferred_appliance_type
+            st.session_state[appliance_widget_key] = form.get("appliance_category", "")
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
     col_a, col_b, col_c = st.columns(3)
@@ -6847,13 +6959,14 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             key=case_basic_widget_key("product", revision),
         )
     with col_b:
-        form["appliance_type"] = st.selectbox(
-            "家電/住設",
-            appliance_type_opts,
-            index=appliance_type_opts.index(form.get("appliance_type", ""))
-            if form.get("appliance_type", "") in appliance_type_opts else 0,
-            key=case_basic_widget_key("appliance_type", revision),
+        form["appliance_category"] = st.selectbox(
+            "案件分類",
+            APPLIANCE_CATEGORY_OPTIONS,
+            index=APPLIANCE_CATEGORY_OPTIONS.index(form.get("appliance_category", ""))
+            if form.get("appliance_category", "") in APPLIANCE_CATEGORY_OPTIONS else 0,
+            key=case_basic_widget_key("appliance_category", revision),
         )
+        form = apply_appliance_category_to_form(form)
         manufacturer_opts = get_manufacturer_options()
         current_manufacturer = form.get("manufacturer", "")
         if current_manufacturer and current_manufacturer not in manufacturer_opts:
@@ -8423,6 +8536,9 @@ def _render_repair_type_append_ui() -> None:
     repair_options = ["", "出張修理", "持込修理", "要確認"]
     repair_index = repair_options.index(repair_default) if repair_default in repair_options else 0
     needs_default = _candidate_field("repair_type_rule", "needs_confirmation", "1")
+    manufacturer_required_default = _candidate_field("repair_type_rule", "manufacturer_required", "0")
+    model_required_default = _candidate_field("repair_type_rule", "model_required", "0")
+    manual_required_default = _candidate_field("repair_type_rule", "manual_required", "0")
     row = {
         "priority": "10",
         "enabled": "1",
@@ -8431,6 +8547,9 @@ def _render_repair_type_append_ui() -> None:
         "model_keyword": st.text_input("型番キーワード model_keyword", value=_candidate_field("repair_type_rule", "model_keyword"), key="master_repair_model_keyword"),
         "condition_keyword": st.text_input("条件キーワード condition_keyword", value=_candidate_field("repair_type_rule", "condition_keyword"), key="master_repair_condition_keyword"),
         "repair_type": st.selectbox("修理形態 repair_type", repair_options, index=repair_index, key="master_repair_type"),
+        "manufacturer_required": st.radio("メーカー必須 manufacturer_required", ["0", "1"], index=0 if manufacturer_required_default == "0" else 1, horizontal=True, key="master_repair_manufacturer_required"),
+        "model_required": st.radio("型番必須 model_required", ["0", "1"], index=0 if model_required_default == "0" else 1, horizontal=True, key="master_repair_model_required"),
+        "manual_required": st.radio("取説確認 manual_required", ["0", "1"], index=0 if manual_required_default == "0" else 1, horizontal=True, key="master_repair_manual_required"),
         "needs_confirmation": st.radio("確認要否 needs_confirmation", ["0", "1"], index=0 if needs_default == "0" else 1, horizontal=True, key="master_repair_needs_confirmation"),
         "notes": st.text_input("備考 notes", value=_candidate_field("repair_type_rule", "notes"), key="master_repair_notes"),
     }

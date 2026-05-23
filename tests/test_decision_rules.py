@@ -37,7 +37,7 @@ import app  # noqa: E402  (must come after sys.modules patch)
 
 def make_form(
     product="", series="", manufacturer="", model_number="",
-    prefecture="", call_line="", appliance_type="",
+    prefecture="", call_line="", appliance_type="", appliance_category="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
     is_over_10years=False, manufacturer_original="", pc_manufacturer_type="",
     warranty_plan="", symptom="",
@@ -52,6 +52,7 @@ def make_form(
         prefecture=prefecture,
         call_line=call_line,
         appliance_type=appliance_type,
+        appliance_category=appliance_category,
         extra_condition=extra_condition,
         store_name=store_name,
         warranty_start_date=warranty_start_date,
@@ -122,6 +123,41 @@ def test_appendix_repair_policy_needs_check_and_notes():
     assert "引取修理" in purifier["repair_result"]["notes"]
 
 
+def test_toilet_seat_visit_repair_does_not_require_manufacturer():
+    for product in ["多機能便座", "温水便座", "温水洗浄便座", "シャワートイレ", "ウォシュレット"]:
+        decision = app.run_decision(make_form(product=product, manufacturer="", appliance_category="住設（既築）"))
+        assert decision["repair_type"] == "出張修理"
+        assert decision["repair_result"]["manufacturer_required"] is False
+        assert "manufacturer" not in decision["repair_result"].get("missing_fields", [])
+        assert "manufacturer" not in app.decision_tag_missing_fields(decision)["修理方針"]
+
+
+def test_maker_dependent_products_request_manufacturer_or_model_only_when_needed():
+    microwave = app.run_decision(make_form(product="電子レンジ", manufacturer="", appliance_category="家電"))
+    assert microwave["repair_type"] == "要確認"
+    assert microwave["repair_result"]["manufacturer_required"] is True
+    assert "manufacturer" in microwave["repair_result"]["missing_fields"]
+    assert "manufacturer" in app.decision_tag_missing_fields(microwave)["修理方針"]
+
+    printer = app.run_decision(make_form(product="プリンター", manufacturer="", model_number="", appliance_category="家電"))
+    assert printer["repair_type"] == "要確認"
+    assert printer["repair_result"]["manufacturer_required"] is True
+    assert printer["repair_result"]["model_required"] is True
+    assert set(printer["repair_result"]["missing_fields"]) >= {"manufacturer", "model_number"}
+
+
+def test_master_repair_type_rules_have_required_flags_and_toilet_seat_aliases():
+    df = app.load_repair_type_rules()
+    for col in ["manufacturer_required", "model_required", "manual_required"]:
+        assert col in df.columns
+
+    aliases = {"温水便座", "多機能便座", "温水洗浄便座", "シャワートイレ", "ウォシュレット"}
+    rows = df[df["product_keyword"].isin(aliases)]
+    assert aliases <= set(rows["product_keyword"])
+    assert set(rows["repair_type"]) == {"出張修理"}
+    assert set(rows["manufacturer_required"]) == {"0"}
+
+
 def test_appendix_repair_policy_manufacturer_and_condition_priority():
     ricoh_projector = app.run_decision(make_form(product="プロジェクター", manufacturer="リコー"))
     assert ricoh_projector["repair_type"] == "出張修理"
@@ -139,6 +175,36 @@ def test_appendix_repair_policy_manufacturer_and_condition_priority():
         extra_condition="取説に出張修理明記なし",
     ))
     assert yamazen_carry_in["repair_type"] == "持込修理"
+
+
+def test_appliance_category_maps_to_legacy_type_and_housing_phase():
+    new_home = app.apply_appliance_category_to_form({"appliance_category": "住設（新築）"})
+    assert new_home["appliance_type"] == "住設"
+    assert new_home["housing_phase"] == "新築"
+
+    existing_home = app.apply_appliance_category_to_form({"appliance_category": "住設（既築）"})
+    assert existing_home["appliance_type"] == "住設"
+    assert existing_home["housing_phase"] == "既築"
+
+    home_appliance = app.apply_appliance_category_to_form({"appliance_category": "家電"})
+    assert home_appliance["appliance_type"] == "家電"
+    assert home_appliance["housing_phase"] == ""
+
+
+def test_script_route_uses_call_line_and_appliance_category_without_repair_type_blocking():
+    appliance = app.run_decision(make_form(call_line="家電", appliance_category="家電", product="電子レンジ"))
+    assert appliance["script_result"]["sheet_name"] == "家電出張・持込・新築住設"
+    assert appliance["script_result"]["part"] == "家電・出張修理"
+    assert appliance["script_result"]["sheet_name"] != "要確認"
+
+    new_home = app.run_decision(make_form(call_line="住設", appliance_category="住設（新築）", product="多機能便座"))
+    assert new_home["script_result"]["display_name"] == "住設新築受付"
+    assert new_home["working_form"]["appliance_type"] == "住設"
+    assert new_home["working_form"]["housing_phase"] == "新築"
+
+    existing_home = app.run_decision(make_form(call_line="住設", appliance_category="住設（既築）", product="多機能便座"))
+    assert existing_home["script_result"]["part"] == "既築・中古住設受付"
+    assert existing_home["working_form"]["housing_phase"] == "既築"
 
 
 def test_initial_decision_tags_are_unjudged_with_missing_items():
@@ -184,8 +250,8 @@ def test_repair_tag_shows_missing_manufacturer_and_model_when_needed():
     ac_decision = app.run_decision(ac_form)
     ac_repair_tag = app.build_decision_tag_items(ac_decision, ac_form)[1]
     assert ac_repair_tag["primary"] == "出張修理"
-    assert "メーカー" in ac_repair_tag["secondary"]
-    assert ac_repair_tag["color"] == app.TAG_COLOR_WARNING
+    assert "メーカー" not in ac_repair_tag["secondary"]
+    assert ac_repair_tag["color"] != app.TAG_COLOR_MISSING
 
     printer_form = make_form(product="プリンター", manufacturer="キヤノン")
     printer_decision = app.run_decision(printer_form)
@@ -279,7 +345,7 @@ def test_next_confirmation_sections_keep_detail_missing_by_area():
     assert "拠点対応" in sections["detail_missing"]
     assert "スクリプト" in sections["detail_missing"]
     assert "warranty_start_date" in sections["detail_missing"]["受付可否"]
-    assert "manufacturer" in sections["detail_missing"]["修理方針"]
+    assert "manufacturer" not in sections["detail_missing"]["修理方針"]
 
 
 def test_missing_text_compacts_related_fields_for_tags():
@@ -2240,7 +2306,7 @@ def test_call_time_warning_product_missing_is_separate():
     steps = app.build_next_action_steps(d["diagnostics"])
 
     assert "製品を入力してください" in steps
-    assert not any("製品・家電/住設区分を入力してSV確認" in step for step in steps)
+    assert not any("製品・案件分類を入力してSV確認" in step for step in steps)
 
 
 def test_call_time_warning_product_missing_disappears_after_product_input():
@@ -2254,15 +2320,15 @@ def test_call_time_warning_appliance_type_missing_is_separate():
     d = app.run_decision(make_form(product="ドライヤー"))
     steps = app.build_next_action_steps(d["diagnostics"])
 
-    assert "家電/住設区分を入力してください" in steps
-    assert not any("製品・家電/住設区分を入力してSV確認" in step for step in steps)
+    assert "案件分類を入力してください" in steps
+    assert not any("製品・案件分類を入力してSV確認" in step for step in steps)
 
 
 def test_call_time_warning_appliance_type_missing_disappears_after_input():
     d = app.run_decision(make_form(product="ドライヤー", appliance_type="家電"))
     steps = app.build_next_action_steps(d["diagnostics"])
 
-    assert "家電/住設区分を入力してください" not in steps
+    assert "案件分類を入力してください" not in steps
 
 
 def test_cer_escalation_remains_separate_from_missing_field_warnings():
@@ -2279,7 +2345,7 @@ def test_cer_escalation_remains_separate_from_missing_field_warnings():
     vendor_item = _diag_area(d["diagnostics"], "修理拠点判定")
 
     assert "製品を入力してください" not in call_steps
-    assert "家電/住設区分を入力してください" not in call_steps
+    assert "案件分類を入力してください" not in call_steps
     assert any("終話後に担当へエスカレーション" in step for step in after_steps)
     assert "CER" in d["vendor"]
     assert vendor_item["status"] == "warning"
@@ -2484,7 +2550,7 @@ def test_missing_core_fields_are_call_required():
     call_required = "\n".join(item["label"] for item in categories["call_required"])
     assert "製品" in call_required
     assert "メーカー" in call_required
-    assert "家電/住設" in call_required
+    assert "案件分類" in call_required
 
 
 def test_script_reference_info_for_independent_display():
@@ -2514,8 +2580,9 @@ def test_script_reference_info_unregistered_url_message():
     ))
     info = app.build_script_reference_info(d)
 
-    assert info["matched"] is False
-    assert "URL未登録（手動で参照）" in info["message"]
+    assert info["matched"] is True
+    assert info["script_type"] == "通常"
+    assert info["url"]
 
 
 def test_script_guidance_for_appliance_visit_repair():
