@@ -176,6 +176,8 @@ def test_after_call_operator_name_input_is_compact_with_save_button():
     assert "with save_col:" in operator_area
     assert 'key="operator_name_input"' in operator_area
     assert 'key="save_default_operator_name"' in operator_area
+    assert "既定値に保存" in operator_area
+    assert "この名前を既定値として保存" not in operator_area
     assert "use_container_width=True" not in operator_area
 
 
@@ -1724,8 +1726,57 @@ def test_case_basic_widget_initial_values_use_current_form_values():
     panel_source = source[panel_index:panel_end]
 
     assert 'value=form.get("product", "")' in panel_source
+    assert 'value=form.get("product_price", "")' in panel_source
     assert 'current_manufacturer = form.get("manufacturer", "")' in panel_source
     assert 'value=form.get("store_name", "")' in panel_source
+
+
+def test_case_basic_fields_do_not_show_required_optional_badges():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
+    panel_source = source[panel_index:panel_end]
+
+    assert "required-badge" not in panel_source
+    assert "optional-badge" not in panel_source
+    assert "conditional-badge" not in panel_source
+    assert "render_field_label(" not in panel_source
+    assert 'st.selectbox(\n            "回線名"' in panel_source
+    assert 'st.text_input(\n            "商品価格"' in panel_source
+
+
+def test_hearing_choice_text_uses_supplemental_input_labels():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    helper_index = source.index("def _choice_text_hearing_value")
+    helper_end = source.index("def render_call_hearing_inputs", helper_index)
+    helper_source = source[helper_index:helper_end]
+    hearing_index = source.index("def render_call_hearing_inputs")
+    hearing_end = source.index("def render_now_action_item", hearing_index)
+    hearing_source = source[hearing_index:hearing_end]
+
+    assert "発生時期（任意入力）" not in source
+    assert "発生頻度（任意入力）" not in source
+    assert "wrt-sub-input-label" in source
+    assert "wrt-sub-input-help" in source
+    assert '"補足入力"' in helper_source
+    assert "選択肢で表せない場合のみ入力してください。" in helper_source
+    assert 'label_visibility="collapsed"' in helper_source
+    assert 'placeholder="例：2〜3日前から"' in hearing_source
+    assert 'placeholder="例：朝だけ、使用中だけ"' in hearing_source
+
+
+def test_case_basic_product_price_is_editable_in_common_basic_panel():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
+    panel_source = source[panel_index:panel_end]
+    aux_index = source.index("with st.expander(\"補助情報を開く\"")
+    aux_source = source[aux_index:source.index("sync_hearing_widget_state_to_form(form)", aux_index)]
+
+    assert 'form["product_price"] = st.text_input(' in panel_source
+    assert 'case_basic_widget_key("product_price", revision)' in panel_source
+    assert '"product_price": "case_basic_product_price"' in source
+    assert "商品価格は「案件基本（共通）」で編集します。" in aux_source
 
 
 def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
@@ -1734,6 +1785,7 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
         "product": "食器洗い乾燥機",
         "manufacturer": "三菱電機",
         "store_name": "ライフデザイン・カバヤ株式会社",
+        "product_price": "36,300円",
     })
     revision = 0
     state = SessionState({
@@ -1741,6 +1793,7 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
         app.case_basic_widget_key("product", revision): "",
         app.case_basic_widget_key("manufacturer", revision): "",
         app.case_basic_widget_key("store_name", revision): "",
+        app.case_basic_widget_key("product_price", revision): "",
     })
 
     synced = app.sync_global_case_basic_widget_state(form, state)
@@ -1748,9 +1801,11 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     assert synced["product"] == "食器洗い乾燥機"
     assert synced["manufacturer"] == "三菱電機"
     assert synced["store_name"] == "ライフデザイン・カバヤ株式会社"
+    assert synced["product_price"] == "36,300円"
     assert state[app.case_basic_widget_key("product", revision)] == "食器洗い乾燥機"
     assert state[app.case_basic_widget_key("manufacturer", revision)] == "三菱電機"
     assert state[app.case_basic_widget_key("store_name", revision)] == "ライフデザイン・カバヤ株式会社"
+    assert state[app.case_basic_widget_key("product_price", revision)] == "36,300円"
 
 
 def test_global_case_basic_manual_widget_edit_updates_form():
@@ -2358,6 +2413,7 @@ def test_global_case_basic_widget_keys_are_single_global_set():
         'case_basic_widget_key("product", revision)',
         'case_basic_widget_key("manufacturer", revision)',
         'case_basic_widget_key("store_name", revision)',
+        'case_basic_widget_key("product_price", revision)',
     ]:
         assert key in panel_source
     assert 'render_shared_case_basic_editor(form, "global"' in source
@@ -2372,7 +2428,7 @@ def test_global_case_basic_panel_updates_shared_form_fields():
     panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
-    for field in ["call_line", "appliance_type", "product", "manufacturer", "store_name"]:
+    for field in ["call_line", "appliance_type", "product", "manufacturer", "store_name", "product_price"]:
         assert f'form["{field}"]' in panel_source
     assert "st.session_state.form = form" in panel_source
 
@@ -2433,6 +2489,23 @@ def test_after_call_template_auto_and_candidate_display_exists():
     assert "選択可能テンプレート：" in after_source
     assert after_source.index("候補テンプレートの詳細を見る") < after_source.index("選択可能テンプレート：")
     assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+
+
+def test_after_call_template_selection_is_not_blocked_by_unconfirmed_vendor():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    detail_source = after_source[
+        after_source.index("送付テンプレート・拠点の詳細を開く"):
+        after_source.index("修理拠点・手配詳細を開く")
+    ]
+
+    assert "テンプレートは選択可能です。修理拠点は別途確認してください。" in after_source
+    assert "テンプレート候補がありません。回線名・製品・保証種別を確認してください。" in after_source
+    assert "if not df_tpl.empty:" in detail_source
+    assert 'if (call_line_val or template_selection.get("label"))' not in detail_source
+    assert "disabled=True" not in detail_source
 
 
 def test_after_call_template_and_vendor_reasons_are_separated_for_ai_koumuten():

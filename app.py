@@ -2958,6 +2958,7 @@ CASE_BASIC_WIDGET_PREFIXES = (
     "product_input_",
     "manufacturer_input_",
     "store_name_input_",
+    "case_basic_product_price_",
 )
 
 CASE_BASIC_FIELD_TO_WIDGET_STEM = {
@@ -2966,6 +2967,7 @@ CASE_BASIC_FIELD_TO_WIDGET_STEM = {
     "product": "case_basic_product",
     "manufacturer": "case_basic_manufacturer",
     "store_name": "case_basic_store_name",
+    "product_price": "case_basic_product_price",
 }
 
 
@@ -6828,6 +6830,11 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             value=form.get("store_name", ""),
             key=case_basic_widget_key("store_name", revision),
         )
+        form["product_price"] = st.text_input(
+            "商品価格",
+            value=form.get("product_price", ""),
+            key=case_basic_widget_key("product_price", revision),
+        )
         if show_template_result:
             preview_decision = run_decision(form)
             template_display = build_case_basic_template_display(
@@ -6880,11 +6887,17 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
         key=choice_key,
     )
     text_initial = current if current and current not in options else ""
+    st.markdown(
+        '<div class="wrt-sub-input-label">補足入力</div>'
+        '<div class="wrt-sub-input-help">選択肢で表せない場合のみ入力してください。</div>',
+        unsafe_allow_html=True,
+    )
     typed = st.text_input(
-        f"{label}（任意入力）",
+        "補足入力",
         value=text_initial,
         key=text_key,
         placeholder=placeholder,
+        label_visibility="collapsed",
     )
     form[f"{field_name}_choice"] = selected
     form[f"{field_name}_text"] = typed
@@ -7255,7 +7268,7 @@ def render_tab_call():
                 )
             else:
                 form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
-            form["product_price"] = st.text_input("商品価格",     form.get("product_price",""))
+            st.caption("商品価格は「案件基本（共通）」で編集します。")
             form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
@@ -7673,7 +7686,7 @@ def render_tab_after_call():
         with save_col:
             st.markdown("<div style='height: 1.75rem;'></div>", unsafe_allow_html=True)
             save_default_operator_clicked = st.button(
-                "この名前を既定値として保存",
+                "既定値に保存",
                 key="save_default_operator_name",
             )
         if save_default_operator_clicked:
@@ -7681,7 +7694,7 @@ def render_tab_after_call():
                 "default_operator_name": form.get("operator_name", "")
             })
             if saved.get("default_operator_name"):
-                st.success(f"既定オペレーター名を保存しました: {saved['default_operator_name']}")
+                st.success("既定値として保存しました。")
             else:
                 st.warning("オペレーター名が空のため、既定値も空で保存しました。")
         st.session_state.form = form
@@ -7715,7 +7728,7 @@ def render_tab_after_call():
             if is_double_protect_plan(warranty_plan_val):
                 st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
-            if (call_line_val or template_selection.get("label")) and not df_tpl.empty:
+            if not df_tpl.empty:
                 template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
                     form, repair_type_val, warranty_plan_val, df_tpl, template_selection
                 )
@@ -7786,10 +7799,12 @@ def render_tab_after_call():
                     else:
                         form["template_code"] = ""
                         form["template_label"] = ""
+                    if not (vr["matched"] and not vr.get("needs_escalation")):
+                        st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
                 else:
-                    st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
+                    st.warning("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
             else:
-                st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
+                st.warning("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
 
         with st.expander("修理拠点・手配詳細を開く", expanded=False):
             if vr["matched"] and not vr.get("needs_escalation"):
@@ -7913,6 +7928,9 @@ def render_tab_after_call():
                 st.caption(f"備考：{selected_notes}")
         else:
             st.info("テンプレート未確定")
+            st.caption("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
+        if not (vr["matched"] and not vr.get("needs_escalation")):
+            st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
         regen_message = str(st.session_state.pop("_attention_memo_regenerate_message", "") or "").strip()
         if regen_message:
             st.success(regen_message)
@@ -8800,6 +8818,17 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     width: 100%;
     box-sizing: border-box;
     overflow-wrap: anywhere;
+}
+.wrt-sub-input-label {
+    font-size: 0.82rem;
+    color: #6b7280;
+    margin-top: -4px;
+    margin-bottom: 2px;
+}
+.wrt-sub-input-help {
+    font-size: 0.78rem;
+    color: #9ca3af;
+    margin-bottom: 2px;
 }
 .wrt-pill {
     display: inline-block;
