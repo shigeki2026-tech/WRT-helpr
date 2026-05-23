@@ -414,7 +414,7 @@ def write_config(path: Path, enabled=True, chat_id="chat-123", send_mode="powers
             "send_mode": send_mode,
             "warranty_enabled": warranty_enabled,
             "warranty_chat_id": warranty_chat_id,
-            "warranty_chat_name": "ワランティ報告用チャット",
+            "warranty_chat_name": "Teamsワランティ送信先チャット",
         }, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -431,7 +431,7 @@ def test_teams_config_example_exists():
         "send_mode": "powershell_graph",
         "warranty_enabled": True,
         "warranty_chat_id": "",
-        "warranty_chat_name": "ワランティ報告用チャット",
+        "warranty_chat_name": "Teamsワランティ送信先チャット",
     }
 
 
@@ -561,13 +561,25 @@ def test_warranty_report_validation_blocks_missing_required_fields():
     base_decision = warranty_decision(send_method="FAX")
     config = warranty_config()
 
-    assert "楽テルNOが未入力です" in app.validate_warranty_report_send_request(
+    assert app.validate_warranty_report_send_request(
+        {**base_form, "rakuteru_no": "", "call_line": "", "warranty_report_content": ""},
+        base_decision,
+        config,
+    ) == []
+    assert app.get_warranty_report_missing_items(
+        {**base_form, "rakuteru_no": "", "call_line": "", "warranty_report_content": ""}
+    ) == [
+        "楽テルNOが未入力です",
+        "回線名が未選択です",
+        "確認内容が未入力です",
+    ]
+    assert "楽テルNOが未入力です" not in app.validate_warranty_report_send_request(
         {**base_form, "rakuteru_no": ""}, base_decision, config
     )
-    assert "回線名が未選択です" in app.validate_warranty_report_send_request(
+    assert "回線名が未選択です" not in app.validate_warranty_report_send_request(
         {**base_form, "call_line": ""}, base_decision, config
     )
-    assert "ワランティ確認内容が未入力です" in app.validate_warranty_report_send_request(
+    assert "確認内容が未入力です" not in app.validate_warranty_report_send_request(
         {**base_form, "warranty_report_content": ""}, base_decision, config
     )
     assert "販売店/運営会社名が未取得です" not in app.validate_warranty_report_send_request(
@@ -626,6 +638,20 @@ def test_warranty_report_send_is_independent_from_handover_requirement():
     assert "handover_requirement" not in panel_source
 
 
+def test_warranty_report_message_uses_placeholders_for_missing_fields():
+    message = app.build_warranty_report_message(
+        warranty_form(rakuteru_no="", call_line="", warranty_report_content=""),
+        warranty_decision(send_method="FAX"),
+    )
+    partial = app.build_warranty_report_message(
+        warranty_form(rakuteru_no="2026_05_1758", call_line="家電", warranty_report_content=""),
+        warranty_decision(send_method="FAX"),
+    )
+
+    assert message == "楽テルNO未入力　●●　○○○○○○　ご確認お願いします"
+    assert partial == "2026_05_1758　家電　○○○○○○　ご確認お願いします"
+
+
 def test_warranty_report_message_stays_out_of_rakutel_memo_and_existing_teams():
     form = warranty_form()
     decision = warranty_decision(send_method="FAX")
@@ -671,9 +697,14 @@ def test_warranty_report_panel_buttons_have_unique_keys():
     panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
     panel_source = source[panel_start:panel_end]
 
-    assert '"ワランティ確認内容"' in panel_source
+    assert "Teamsワランティ送信" in panel_source
+    assert "ワランティ報告送信" not in panel_source
+    assert '"確認内容"' in panel_source
     assert 'key="warranty_report_content_input"' in panel_source
     assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
+    assert "注意：未入力項目があります。内容を確認してから送信してください。" in panel_source
+    assert '"Teamsワランティへ送信"' in panel_source
+    assert '"未完了項目があります"' not in panel_source
     for key in [
         'key="warranty_report_sending_button"',
         'key="warranty_report_sent_button"',
@@ -1008,7 +1039,9 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
 
 def test_rakutel_header_never_generates_blank_line_name():
     assert app.build_rakutel_call_header("", "受電") != "【回線に入電】"
-    assert app.build_rakutel_call_header("", "受電") == "【未選択回線に入電】"
+    assert app.build_rakutel_call_header("", "受電") == "【●●回線に入電】"
+    assert app.build_rakutel_call_header("", "架電") == "【●●回線から架電】"
+    assert "未選択回線" not in app.build_rakutel_call_header("", "受電")
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
     assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線から架電】"

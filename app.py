@@ -35,7 +35,7 @@ DEFAULT_TEAMS_CONFIG = {
     "send_mode": "powershell_graph",
     "warranty_enabled": True,
     "warranty_chat_id": "",
-    "warranty_chat_name": "ワランティ報告用チャット",
+    "warranty_chat_name": "Teamsワランティ送信先チャット",
 }
 SUPPORTED_TEAMS_SEND_MODES = {"powershell_graph"}
 REQUEST_PDF_FOLDERS = {
@@ -91,7 +91,7 @@ FIELD_LABELS = {
     "contact_phone": "日程調整時の連絡先",
     "caller_type": "発信者区分",
     "counterparty_detail": "相手名・担当者名",
-    "warranty_report_content": "ワランティ確認内容",
+    "warranty_report_content": "確認内容",
     "extracted_time": "入電時刻",
     "symptom": "症状",
     "symptom_detail": "具体的な症状",
@@ -2359,17 +2359,26 @@ def warranty_report_send_method_label(vendor_result: dict, vendor: str = "", for
 
 
 def build_warranty_report_message(form: dict, decision: dict) -> str:
-    rakuteru_no = (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip()
-    call_line = get_rakutel_line_name(form.get("call_line", "")) or (form.get("call_line") or "").strip()
-    content = (form.get("warranty_report_content") or "").strip()
-    if not all([rakuteru_no, call_line, content]):
-        return ""
+    rakuteru_no = (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip() or "楽テルNO未入力"
+    call_line = get_rakutel_line_name(form.get("call_line", "")) or (form.get("call_line") or "").strip() or "●●"
+    content = (form.get("warranty_report_content") or "").strip() or "○○○○○○"
     return "　".join([
         rakuteru_no,
         call_line,
         content,
         "ご確認お願いします",
     ])
+
+
+def get_warranty_report_missing_items(form: dict) -> list[str]:
+    missing = []
+    if not (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip():
+        missing.append("楽テルNOが未入力です")
+    if not (form.get("call_line") or "").strip():
+        missing.append("回線名が未選択です")
+    if not (form.get("warranty_report_content") or "").strip():
+        missing.append("確認内容が未入力です")
+    return missing
 
 
 def build_teams_send_preview_lines(teams_chat_message: str, rakuteru_no: str = "") -> list[str]:
@@ -2543,12 +2552,6 @@ def validate_warranty_report_send_request(
     vendor = (vendor_result.get("vendor_name") or (decision or {}).get("vendor") or "").strip()
     errors = []
     errors.extend(warranty_teams_config_unavailable_reasons(teams_config))
-    if not (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip():
-        errors.append("楽テルNOが未入力です")
-    if not (form.get("call_line") or "").strip():
-        errors.append("回線名が未選択です")
-    if not (form.get("warranty_report_content") or "").strip():
-        errors.append("ワランティ確認内容が未入力です")
     if not (message or build_warranty_report_message(form, decision)).strip():
         errors.append("ワランティ送信文を生成できません")
     if already_sent:
@@ -3572,7 +3575,7 @@ def build_rakutel_call_header(call_line: str, call_direction: str = "受電") ->
     if not rakutel_line_name:
         rakutel_line_name = _line_label_for_call_line(call_line).removesuffix("回線")
     if not rakutel_line_name:
-        rakutel_line_name = "未選択"
+        rakutel_line_name = "●●"
     direction = call_direction if call_direction in ("受電", "架電") else "受電"
     if direction == "架電":
         return f"【{rakutel_line_name}回線から架電】"
@@ -6174,13 +6177,13 @@ def render_handover_requirement_panel(handover: dict) -> None:
 
 
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
-    st.markdown("##### 📣 ワランティ報告送信")
+    st.markdown("##### 📣 Teamsワランティ送信")
     teams_config = load_teams_config()
     chat_name = teams_config.get("warranty_chat_name") or DEFAULT_TEAMS_CONFIG["warranty_chat_name"]
     if "warranty_report_content_input" in st.session_state:
         form["warranty_report_content"] = st.session_state.get("warranty_report_content_input", "")
     warranty_report_content = st.text_input(
-        "ワランティ確認内容",
+        "確認内容",
         value=form.get("warranty_report_content", ""),
         key="warranty_report_content_input",
         placeholder="例：ユナイトへFAX送信済 / 担当確認お願いします",
@@ -6209,6 +6212,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         message_for_status,
         already_sent=already_sent,
     )
+    missing_items = get_warranty_report_missing_items(form)
     status_lines: list[str] = []
     if incomplete_reasons and not already_sent:
         status_lines.extend(["理由："] + [f"- {reason}" for reason in incomplete_reasons[:5]])
@@ -6231,7 +6235,14 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         pill = "送信処理中"
     else:
         status_lines.append("全案件、ワランティ報告チャットへ送信してください。")
-        tone = "success"
+        if missing_items:
+            status_lines.extend(
+                ["注意：未入力項目があります。内容を確認してから送信してください。"]
+                + [f"- {reason}" for reason in missing_items]
+            )
+            tone = "warning"
+        else:
+            tone = "success"
         pill = "送信可能"
     st.markdown(_status_card_html(tone, pill, chat_name, status_lines), unsafe_allow_html=True)
     if len(incomplete_reasons) > 5 and not already_sent:
@@ -6256,7 +6267,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
             already_sent=(current_already_sent and not allow_resend),
         )
         if validation_errors:
-            st.warning("未完了項目があります。ワランティ報告送信パネルの送信不可理由を確認してください。")
+            st.warning("送信できない設定があります。Teamsワランティ送信パネルの送信不可理由を確認してください。")
             return
         if in_progress:
             st.warning("ワランティ送信処理中です。完了まで画面を閉じないでください。")
@@ -6267,7 +6278,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     def execute_requested_warranty_report_send():
         warranty_chat_id = (teams_config.get("warranty_chat_id") or "").strip()
         body = teams_plain_text_to_html(message)
-        with st.spinner("ワランティへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
+        with st.spinner("Teamsワランティへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
             result = send_teams_message_via_powershell(body, chat_id_override=warranty_chat_id)
         vendor_name = ((decision.get("vendor_result") or {}).get("vendor_name") or decision.get("vendor") or "")
         append_teams_send_log(
@@ -6276,7 +6287,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
             chat_name,
             form=form,
             vendor=vendor_name,
-            teams_action="ワランティ報告送信",
+            teams_action="Teamsワランティ送信",
         )
         if result.get("ok"):
             _mark_warranty_report_sent(st.session_state, message, result=result)
@@ -6307,14 +6318,14 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
             request_warranty_report_send(allow_resend=True)
     elif incomplete_reasons:
         st.button(
-            "未完了項目があります",
+            "送信不可",
             key="warranty_report_send_incomplete_button",
             disabled=True,
             use_container_width=True,
         )
     else:
         if st.button(
-            "ワランティへ送信",
+            "Teamsワランティへ送信",
             key="warranty_report_send_button",
             type="primary",
             use_container_width=True,

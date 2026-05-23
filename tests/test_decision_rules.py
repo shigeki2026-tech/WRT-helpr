@@ -306,7 +306,8 @@ def test_next_confirmation_ui_uses_cards_and_collapsed_detail():
 
 def test_rakutel_heading_requires_manual_call_line_selection():
     blank_text = app._build_rakutel_text(app.empty_form(), "加入者", "")
-    assert "【未選択回線に入電】" in blank_text
+    assert "【●●回線に入電】" in blank_text
+    assert "未選択回線" not in blank_text
 
     form = app.empty_form()
     form["call_line"] = "家電保証対応業務（24時間）"
