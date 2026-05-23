@@ -98,6 +98,8 @@ def test_appended_attention_memo_snippet_stays_out_of_warranty_report():
     form = app.empty_form()
     form.update({
         "rakuteru_no": "2026_05_1073",
+        "call_line": "家電",
+        "warranty_report_content": "ユナイトへFAX送信済",
         "store_name": "ヤマダホームズ",
     })
     app.append_attention_memo_snippets(form, ["out_of_scope_store_contact"])
@@ -109,7 +111,7 @@ def test_appended_attention_memo_snippet_stays_out_of_warranty_report():
     message = app.build_warranty_report_message(form, decision)
 
     assert "保証対象外時：販売店へ連絡要" not in message
-    assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
+    assert message == "2026_05_1073　家電　ユナイトへFAX送信済　ご確認お願いします"
 
 
 def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
@@ -511,6 +513,8 @@ def warranty_form(**overrides):
     form = app.empty_form()
     form.update({
         "rakuteru_no": "2026_05_1073",
+        "call_line": "家電",
+        "warranty_report_content": "ユナイトへFAX送信済",
         "store_name": "ヤマダホームズ",
         "rakutel_text": "既存ラクテル",
         "attention_memo": "既存依頼書メモ",
@@ -532,33 +536,24 @@ def warranty_config(enabled=True, chat_id="warranty-chat"):
 
 def test_warranty_report_message_uses_expected_full_width_space_format():
     message = app.build_warranty_report_message(
-        warranty_form(),
+        warranty_form(rakuteru_no="2026_05_1758"),
         warranty_decision(send_method="FAX"),
     )
 
-    assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
+    assert message == "2026_05_1758　家電　ユナイトへFAX送信済　ご確認お願いします"
     assert " " not in message
-    assert message.count("　") == 4
+    assert message.count("　") == 3
+    assert "ご確認お願い致します。" not in message
 
 
-def test_warranty_report_message_shortens_unite_and_maps_methods():
-    fax_message = app.build_warranty_report_message(
-        warranty_form(),
-        warranty_decision(vendor_name="ユナイトサービス㈱", send_method="FAX"),
-    )
-    mail_message = app.build_warranty_report_message(
-        warranty_form(),
-        warranty_decision(vendor_name="ソフマップ修理センター", send_method="メール"),
+def test_warranty_report_message_uses_form_fields_not_vendor_store_or_method():
+    message = app.build_warranty_report_message(
+        warranty_form(store_name="", warranty_report_content="担当確認お願いします"),
+        warranty_decision(vendor_name="担当エスカ（要確認）", send_method=""),
     )
 
-    assert "ユナイトへFAX送信済" in fax_message
-    assert "ソフマップへメール送信済" in mail_message
-
-
-def test_warranty_report_message_uses_existing_auto_send_method_when_explicit_method_blank():
-    message = app.build_warranty_report_message(warranty_form(), warranty_decision("ユナイトサービス㈱"))
-
-    assert "ユナイトへFAX送信済" in message
+    assert message == "2026_05_1073　家電　担当確認お願いします　ご確認お願いします"
+    assert "修理受付済" not in message
 
 
 def test_warranty_report_validation_blocks_missing_required_fields():
@@ -569,13 +564,19 @@ def test_warranty_report_validation_blocks_missing_required_fields():
     assert "楽テルNOが未入力です" in app.validate_warranty_report_send_request(
         {**base_form, "rakuteru_no": ""}, base_decision, config
     )
-    assert "販売店/運営会社名が未取得です" in app.validate_warranty_report_send_request(
+    assert "回線名が未選択です" in app.validate_warranty_report_send_request(
+        {**base_form, "call_line": ""}, base_decision, config
+    )
+    assert "ワランティ確認内容が未入力です" in app.validate_warranty_report_send_request(
+        {**base_form, "warranty_report_content": ""}, base_decision, config
+    )
+    assert "販売店/運営会社名が未取得です" not in app.validate_warranty_report_send_request(
         {**base_form, "store_name": "", "store_original": ""}, base_decision, config
     )
-    assert "修理拠点が未確定です" in app.validate_warranty_report_send_request(
+    assert "修理拠点が未確定です" not in app.validate_warranty_report_send_request(
         base_form, warranty_decision("担当エスカ（要確認）", send_method="FAX"), config
     )
-    assert "送信方法が未確定です" in app.validate_warranty_report_send_request(
+    assert "送信方法が未確定です" not in app.validate_warranty_report_send_request(
         base_form, warranty_decision("WRT修理センター"), config
     )
 
@@ -670,6 +671,9 @@ def test_warranty_report_panel_buttons_have_unique_keys():
     panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
     panel_source = source[panel_start:panel_end]
 
+    assert '"ワランティ確認内容"' in panel_source
+    assert 'key="warranty_report_content_input"' in panel_source
+    assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
     for key in [
         'key="warranty_report_sending_button"',
         'key="warranty_report_sent_button"',
@@ -1956,7 +1960,7 @@ def test_rakutel_text_inbound_subscriber_arrow():
     text = app._build_rakutel_text(form, "加入者", "")
 
     assert "【家電回線に入電】" in text
-    assert "加入者→MPG大濱" in text
+    assert "加入者⇒MPG大濱" in text
 
 
 def test_rakutel_text_outbound_subscriber_arrow():
@@ -1973,7 +1977,80 @@ def test_rakutel_text_outbound_subscriber_arrow():
 
     assert "【家電回線から架電】" in text
     assert "【家電回線に架電】" not in text
-    assert "MPG大濱→加入者" in text
+    assert "MPG大濱⇒加入者" in text
+
+
+def test_rakutel_text_reflects_store_counterparty_detail_contact_and_missing_time():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "call_line": "家電",
+        "extracted_time": "2026/5/23",
+        "call_direction": "受電",
+        "counterparty_type": "販売店",
+        "counterparty_detail": "あかりと空調の専門店 山田様",
+        "contact_phone": "072-950-0880　5/26 12時以降",
+    })
+
+    text = app._build_rakutel_text(form, "販売店", "")
+
+    assert "【家電回線に入電】" in text
+    assert "2026/5/23 ●●：●●　販売店（あかりと空調の専門店 山田様）⇒MPG大濱" in text
+    assert "日程調整時の連絡先：072-950-0880　5/26 12時以降" in text
+    assert "販売店⇒MPG大濱" not in text
+
+
+def test_rakutel_text_prefers_form_counterparty_over_legacy_caller_type_argument():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "call_line": "家電",
+        "call_direction": "受電",
+        "counterparty_type": "販売店",
+        "caller_type": "販売店",
+    })
+
+    text = app._build_rakutel_text(form, "加入者", "")
+
+    assert "販売店⇒MPG大濱" in text
+    assert "加入者⇒MPG大濱" not in text
+
+
+def test_rakutel_action_input_sync_updates_form_before_generation():
+    form = app.empty_form()
+    state = SessionState({
+        "case_basic_revision": 0,
+        app.case_basic_widget_key("call_line", 0): "家電",
+        "call_direction_select": "架電",
+        "counterparty_type_select": "販売店",
+        "counterparty_detail_input": "あかりと空調の専門店 山田様",
+        "contact_phone_input": "072-950-0880　5/26 12時以降",
+        "operator_name_input": "大濱",
+    })
+
+    synced = app.sync_after_call_rakutel_action_inputs(form, state)
+    text = app._build_rakutel_text(synced, "加入者", "")
+
+    assert synced["call_line"] == "家電"
+    assert synced["call_direction"] == "架電"
+    assert synced["counterparty_type"] == "販売店"
+    assert "【家電回線から架電】" in text
+    assert "MPG大濱⇒販売店（あかりと空調の専門店 山田様）" in text
+    assert "日程調整時の連絡先：072-950-0880　5/26 12時以降" in text
+
+
+def test_rakutel_text_missing_datetime_uses_placeholder_time_without_current_time():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "call_line": "家電",
+        "call_direction": "受電",
+        "counterparty_type": "販売店",
+    })
+
+    text = app._build_rakutel_text(form, "販売店", "")
+
+    assert "●●：●●　販売店⇒MPG大濱" in text
 
 
 def test_call_direction_ui_is_near_rakutel_section():
@@ -2777,7 +2854,8 @@ def test_contact_phone_input_is_inside_rakutel_section_only():
     contact_index = after_source.index('"日程調整時の連絡先"')
 
     assert rakutel_heading < contact_index < teams_heading
-    assert '"電話番号（デフォルトはフォームの電話番号）"' in after_source
+    assert '"例：072-950-0880\u30005/26 12時以降"' in after_source
+    assert '"相手名・担当者名（任意）"' in after_source
 
 
 def test_case_basic_template_result_rendered_only_in_basic_panel():

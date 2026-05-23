@@ -90,6 +90,8 @@ FIELD_LABELS = {
     "phone_number": "電話番号",
     "contact_phone": "日程調整時の連絡先",
     "caller_type": "発信者区分",
+    "counterparty_detail": "相手名・担当者名",
+    "warranty_report_content": "ワランティ確認内容",
     "extracted_time": "入電時刻",
     "symptom": "症状",
     "symptom_detail": "具体的な症状",
@@ -2080,28 +2082,43 @@ def _rakutel_counterparty(form: dict, caller_type: str = "") -> str:
     counterparty = (form.get("counterparty_type") or "").strip()
     legacy_caller = (caller_type or "").strip()
     form_caller = (form.get("caller_type") or "").strip()
-    if legacy_caller and counterparty and form_caller and counterparty == form_caller and legacy_caller != form_caller:
-        return legacy_caller
     if counterparty:
         return counterparty
     return (legacy_caller or form_caller or "加入者").strip() or "加入者"
 
 
+def _rakutel_counterparty_display(form: dict, caller_type: str = "") -> str:
+    counterparty = _rakutel_counterparty(form, caller_type)
+    detail = (form.get("counterparty_detail") or form.get("counterparty_free_text") or "").strip()
+    if detail:
+        return f"{counterparty}（{detail}）"
+    return counterparty
+
+
 def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
     operator = (form.get("operator_name") or "").strip() or "●●"
-    counterparty = _rakutel_counterparty(form, caller_type)
+    counterparty = _rakutel_counterparty_display(form, caller_type)
     if _rakutel_call_direction(form) == "架電":
-        return f"MPG{operator}→{counterparty}"
-    return f"{counterparty}→MPG{operator}"
+        return f"MPG{operator}⇒{counterparty}"
+    return f"{counterparty}⇒MPG{operator}"
 
 
 def _rakutel_call_heading(form: dict) -> str:
     return build_rakutel_call_header(effective_call_line_for_form(form), _rakutel_call_direction(form))
 
 
+def _rakutel_timestamp_text(form: dict) -> str:
+    text = (form.get("extracted_time") or "").strip()
+    if not text:
+        return "●●：●●"
+    if re.search(r"\d{1,2}[：:]\d{2}", text):
+        return text
+    return f"{text} ●●：●●"
+
+
 def _build_rakutel_text(form: dict, caller_type: str, notes_filled: str = "") -> str:
     operator = (form.get("operator_name") or "").strip() or "●●"
-    extracted_time = (form.get("extracted_time") or "").strip()
+    extracted_time = _rakutel_timestamp_text(form)
     contact = (form.get("contact_phone") or "").strip() or (form.get("phone_number") or "").strip() or "─"
     rakuteru = (form.get("rakuteru_no") or "").strip()
 
@@ -2342,20 +2359,16 @@ def warranty_report_send_method_label(vendor_result: dict, vendor: str = "", for
 
 
 def build_warranty_report_message(form: dict, decision: dict) -> str:
-    vendor_result = (decision or {}).get("vendor_result", {}) or {}
-    vendor = (vendor_result.get("vendor_name") or (decision or {}).get("vendor") or "").strip()
     rakuteru_no = (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip()
-    store_name = warranty_report_store_name(form)
-    vendor_short = warranty_report_vendor_short_name(vendor)
-    method_label = warranty_report_send_method_label(vendor_result, vendor, form)
-    if not all([rakuteru_no, store_name, vendor_short, method_label]):
+    call_line = get_rakutel_line_name(form.get("call_line", "")) or (form.get("call_line") or "").strip()
+    content = (form.get("warranty_report_content") or "").strip()
+    if not all([rakuteru_no, call_line, content]):
         return ""
     return "　".join([
         rakuteru_no,
-        store_name,
-        "修理受付済",
-        f"{vendor_short}へ{method_label}",
-        "ご確認お願い致します。",
+        call_line,
+        content,
+        "ご確認お願いします",
     ])
 
 
@@ -2376,9 +2389,13 @@ def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
                             vendor: str, caller_type: str, notes_filled: str,
                             contact_type: str = "") -> dict:
     cost_estimate = form.get("cost_estimate", "")
+    rakutel_form = dict(form)
+    if caller_type and rakutel_form.get("counterparty_type") == "加入者" and rakutel_form.get("caller_type") == "加入者":
+        rakutel_form["counterparty_type"] = caller_type
+        rakutel_form["caller_type"] = caller_type
     return {
         "attention_memo": _build_after_call_memo(form, warranty_result, repair_type, vendor, notes_filled, cost_estimate),
-        "rakutel_text": _build_rakutel_text(form, caller_type, notes_filled),
+        "rakutel_text": _build_rakutel_text(rakutel_form, caller_type, notes_filled),
         "teams_chat_message": _build_teams_chat_message(form, vendor, contact_type),
     }
 
@@ -2393,7 +2410,7 @@ AFTER_CALL_REGEN_SECTION_FIELDS = {
         "call_line", "appliance_type", "product", "manufacturer", "store_name",
         "model_number", "wrt_no", "customer_name", "phone_number", "contact_phone",
         "operator_name", "extracted_time", "rakuteru_no", "warranty_plan",
-        "call_direction", "counterparty_type", "caller_type", "template_code", "template_label",
+        "call_direction", "counterparty_type", "counterparty_detail", "caller_type", "template_code", "template_label",
     ),
     "teams_chat_message": (
         "call_line", "product", "operator_name", "rakuteru_no", "teams_action",
@@ -2528,14 +2545,12 @@ def validate_warranty_report_send_request(
     errors.extend(warranty_teams_config_unavailable_reasons(teams_config))
     if not (form.get("rakuteru_no") or form.get("rakutel_no") or "").strip():
         errors.append("楽テルNOが未入力です")
-    if not warranty_report_store_name(form):
-        errors.append("販売店/運営会社名が未取得です")
-    if not warranty_report_vendor_short_name(vendor):
-        errors.append("修理拠点が未確定です")
-    if not warranty_report_send_method_label(vendor_result, vendor, form):
-        errors.append("送信方法が未確定です")
+    if not (form.get("call_line") or "").strip():
+        errors.append("回線名が未選択です")
+    if not (form.get("warranty_report_content") or "").strip():
+        errors.append("ワランティ確認内容が未入力です")
     if not (message or build_warranty_report_message(form, decision)).strip():
-        errors.append("ワランティ送信用文面を生成できません")
+        errors.append("ワランティ送信文を生成できません")
     if already_sent:
         errors.append("同じ内容は送信済みです")
     return list(dict.fromkeys(errors))
@@ -3048,7 +3063,10 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "teams_send_failed_body_hash",
         "teams_send_failed_at",
         "teams_send_error_message",
+        "counterparty_detail_input",
+        "warranty_report_content_input",
         "warranty_report_message_display",
+        "_warranty_report_source_hash",
         "warranty_report_send_requested",
         "warranty_report_send_requested_body_hash",
         "warranty_report_send_in_progress",
@@ -6159,10 +6177,26 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     st.markdown("##### 📣 ワランティ報告送信")
     teams_config = load_teams_config()
     chat_name = teams_config.get("warranty_chat_name") or DEFAULT_TEAMS_CONFIG["warranty_chat_name"]
+    if "warranty_report_content_input" in st.session_state:
+        form["warranty_report_content"] = st.session_state.get("warranty_report_content_input", "")
+    warranty_report_content = st.text_input(
+        "ワランティ確認内容",
+        value=form.get("warranty_report_content", ""),
+        key="warranty_report_content_input",
+        placeholder="例：ユナイトへFAX送信済 / 担当確認お願いします",
+    )
+    form["warranty_report_content"] = warranty_report_content
+    st.session_state.form = form
     generated_message = build_warranty_report_message(form, decision)
+    content_hash = stable_hash_text("|".join([
+        form.get("rakuteru_no") or form.get("rakutel_no") or "",
+        form.get("call_line") or "",
+        form.get("warranty_report_content") or "",
+    ]))
+    if st.session_state.get("_warranty_report_source_hash") != content_hash:
+        st.session_state["_warranty_report_source_hash"] = content_hash
+        st.session_state["warranty_report_message_display"] = generated_message
     preview_value = st.session_state.get("warranty_report_message_display", generated_message)
-    if not str(preview_value or "").strip() and generated_message:
-        preview_value = generated_message
     message_for_status = str(preview_value or "")
     _clear_stale_warranty_report_send_transient_state(st.session_state, message_for_status)
     already_sent = _warranty_report_already_sent(st.session_state, message_for_status)
@@ -6862,6 +6896,26 @@ def render_global_case_basic_panel(form: dict) -> dict:
     return render_shared_case_basic_editor(form, "global", show_template_result=True)
 
 
+def sync_after_call_rakutel_action_inputs(form: dict, session_state) -> dict:
+    revision = get_case_basic_revision(session_state)
+    call_line_key = case_basic_widget_key("call_line", revision)
+    call_line_value = (session_state.get(call_line_key) or "").strip()
+    if call_line_value:
+        form["call_line"] = normalize_call_line_for_display(call_line_value)
+    for widget_key, field_name in [
+        ("call_direction_select", "call_direction"),
+        ("counterparty_type_select", "counterparty_type"),
+        ("counterparty_detail_input", "counterparty_detail"),
+        ("contact_phone_input", "contact_phone"),
+        ("operator_name_input", "operator_name"),
+    ]:
+        if widget_key in session_state:
+            form[field_name] = session_state.get(widget_key, "")
+    form["caller_type"] = form.get("counterparty_type") or form.get("caller_type") or "加入者"
+    session_state.form = form
+    return form
+
+
 def _set_manual_check(item_id: str, value: bool) -> None:
     manual = dict(st.session_state.get("call_check_manual", {}))
     manual[item_id] = bool(value)
@@ -7073,6 +7127,8 @@ def empty_form() -> dict:
     form["caller_type"] = "加入者"
     form["call_direction"] = "受電"
     form["counterparty_type"] = "加入者"
+    form["counterparty_detail"] = ""
+    form["warranty_report_content"] = ""
     form["extracted_time"] = ""
     form["attention_memo"] = ""
     form["rakutel_text"] = ""
@@ -7984,6 +8040,7 @@ def render_tab_after_call():
 
     # ── ラクテル用テキスト ──
     st.markdown("##### 📝 ラクテル用テキスト")
+    form = sync_after_call_rakutel_action_inputs(form, st.session_state)
     rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap="large")
     with rakutel_action_col:
         st.markdown("###### ラクテル用テキスト 操作")
@@ -8009,18 +8066,26 @@ def render_tab_after_call():
             if default_counterparty in counterparty_options else 0,
             key="counterparty_type_select",
         )
+        counterparty_detail = st.text_input(
+            "相手名・担当者名（任意）",
+            value=form.get("counterparty_detail", ""),
+            key="counterparty_detail_input",
+            placeholder="例：あかりと空調の専門店 山田様",
+        )
         contact_phone = st.text_input(
             "日程調整時の連絡先",
-            value=form.get("contact_phone", "") or form.get("phone_number", ""),
+            value=form.get("contact_phone", ""),
             key="contact_phone_input",
-            placeholder="電話番号（デフォルトはフォームの電話番号）",
+            placeholder="例：072-950-0880　5/26 12時以降",
         )
     form["call_direction"] = call_direction
     form["counterparty_type"] = counterparty_type
     form["caller_type"] = counterparty_type
+    form["counterparty_detail"] = counterparty_detail
     form["contact_phone"] = contact_phone
+    form = sync_after_call_rakutel_action_inputs(form, st.session_state)
     st.session_state.form = form
-    caller_type = counterparty_type
+    caller_type = form.get("counterparty_type") or counterparty_type
     generated_rakutel_text = _build_rakutel_text(form, caller_type, notes_filled)
     rakutel_hash = get_after_call_regeneration_hash(
         form, "rakutel_text", vendor=vendor, contact_type=contact_type,

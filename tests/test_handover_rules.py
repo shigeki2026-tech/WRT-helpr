@@ -130,7 +130,9 @@ def test_run_decision_includes_handover_without_auto_filling_call_line():
 def test_handover_does_not_change_existing_warranty_report_format():
     form = make_form(
         rakuteru_no="2026_05_1073",
+        call_line="家電",
         store_name="ヤマダホームズ",
+        warranty_report_content="ユナイトへFAX送信済",
     )
     decision = {
         "vendor": "ユナイトサービス㈱",
@@ -140,7 +142,7 @@ def test_handover_does_not_change_existing_warranty_report_format():
 
     message = app.build_warranty_report_message(form, decision)
 
-    assert message == "2026_05_1073　ヤマダホームズ　修理受付済　ユナイトへFAX送信済　ご確認お願い致します。"
+    assert message == "2026_05_1073　家電　ユナイトへFAX送信済　ご確認お願いします"
 
 
 def test_handover_text_stays_out_of_rakutel_teams_and_repair_request_memo():
