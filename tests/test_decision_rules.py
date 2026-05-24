@@ -146,6 +146,18 @@ def test_maker_dependent_products_request_manufacturer_or_model_only_when_needed
     assert set(printer["repair_result"]["missing_fields"]) >= {"manufacturer", "model_number"}
 
 
+def test_repair_policy_missing_display_is_product_first_then_conditional_fields():
+    initial = app.run_decision(make_form())
+    assert app.decision_tag_missing_fields(initial)["修理方針"] == ["product"]
+    assert app._missing_text(app.decision_tag_missing_fields(initial)["修理方針"]) == "不足：製品"
+
+    toilet = app.run_decision(make_form(product="多機能便座", manufacturer="", appliance_category="住設（既築）"))
+    assert "manufacturer" not in app.decision_tag_missing_fields(toilet)["修理方針"]
+
+    microwave = app.run_decision(make_form(product="電子レンジ", manufacturer="", appliance_category="家電"))
+    assert "manufacturer" in app.decision_tag_missing_fields(microwave)["修理方針"]
+
+
 def test_master_repair_type_rules_have_required_flags_and_toilet_seat_aliases():
     df = app.load_repair_type_rules()
     for col in ["manufacturer_required", "model_required", "manual_required"]:

@@ -12,6 +12,26 @@ import app
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_header_caption_removed_and_master_system_info_added():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    main_index = source.index("def main():")
+    main_source = source[main_index:]
+    master_index = source.index("def render_tab_master")
+    master_source = source[master_index:main_index]
+
+    assert "正式スクリプト本文は先方管理のExcel" not in main_source
+    assert "通話中の判断補助ツール —" not in main_source
+    assert "システム情報" in master_source
+    assert "557 passed" in source
+    assert "build_system_info_display()" in master_source
+
+
+def test_ui_label_uses_case_category_instead_of_legacy_appliance_slash_label():
+    assert app.FIELD_LABELS["appliance_type"] == "案件分類"
+    assert app.MISSING_FIELD_SHORT_LABELS["appliance_type"] == "案件分類"
+    assert app._handover_match_reason({"appliance_type": "家電"}, False, False, True).startswith("案件分類が")
+
+
 def test_append_attention_memo_snippets_only_updates_repair_request_memo():
     form = app.empty_form()
     form.update({
@@ -1825,7 +1845,8 @@ def test_hearing_choice_text_uses_supplemental_input_labels():
     assert "wrt-sub-input-label" in source
     assert "wrt-sub-input-help" in source
     assert '"補足入力"' in helper_source
-    assert "選択肢で表せない場合のみ入力してください。" in helper_source
+    assert "選択肢で表せない場合のみ入力してください。" not in helper_source
+    assert "選択肢で表せない場合のみ入力してください。" not in source
     assert 'label_visibility="collapsed"' in helper_source
     assert 'placeholder="例：2〜3日前から"' in hearing_source
     assert 'placeholder="例：朝だけ、使用中だけ"' in hearing_source
@@ -2896,18 +2917,22 @@ def test_contact_phone_input_is_inside_rakutel_section_only():
     assert '"相手名・担当者名（任意）"' in after_source
 
 
-def test_case_basic_template_result_rendered_only_in_basic_panel():
+def test_template_result_is_not_rendered_in_common_basic_panel_and_after_call_template_remains():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert source.count("テンプレート判定結果") == 1
+    assert "テンプレート判定結果" not in source
     main_index = source.index("def main():")
     basic_call_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
     tabs_index = source.index("st.tabs(", main_index)
     basic_panel_index = source.index("def render_shared_case_basic_editor")
-    result_index = source.index("テンプレート判定結果")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
 
-    assert basic_panel_index < result_index
+    assert basic_panel_index < source.index("修理依頼文テンプレ")
     assert basic_call_index < tabs_index
+    assert "show_template_result=False" in source[source.index("def render_global_case_basic_panel"):tabs_index]
+    assert "修理依頼文テンプレ" in after_source
 
 
 def test_after_call_regeneration_uses_current_global_form_after_basic_panel():

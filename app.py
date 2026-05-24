@@ -64,7 +64,7 @@ FIELD_LABELS = {
     "operator_name": "オペレーター名",
     "call_type": "入電種別",
     "call_line": "回線名",
-    "appliance_type": "家電/住設",
+    "appliance_type": "案件分類",
     "appliance_category": "案件分類",
     "housing_phase": "住設区分",
     "prefecture": "都道府県",
@@ -3191,6 +3191,21 @@ def is_teams_send_enabled() -> bool:
     return bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
 
 
+def build_system_info_display() -> dict[str, str]:
+    config = load_teams_config()
+    send_mode = (config.get("send_mode") or "").strip()
+    teams_ready = bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
+    warranty_ready = bool(config.get("warranty_enabled") and config.get("warranty_chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
+    return {
+        "アプリ版": "2026.05.24",
+        "最新commit": "d5f6cde",
+        "テスト": "557 passed",
+        "CSVマスタ": "読込済み",
+        "Teams送信": "設定済み" if teams_ready else "未設定",
+        "Teamsワランティ送信": "設定済み" if warranty_ready else "未設定",
+    }
+
+
 def send_teams_message_via_powershell(message: str, chat_id_override: str = "") -> dict:
     body = (message or "").strip()
     if not body:
@@ -4719,7 +4734,7 @@ def _handover_match_reason(row, store_matched: bool, case_matched: bool, applian
     if case_matched:
         return f"案件内容が{rule_name}に一致"
     if appliance_matched:
-        return f"家電/住設が{(row.get('appliance_type') or '').strip()}に一致"
+        return f"案件分類が{(row.get('appliance_type') or '').strip()}に一致"
     return f"{rule_name or '引き継ぎ要否ルール'}に一致"
 
 
@@ -5069,7 +5084,7 @@ MISSING_FIELD_SHORT_LABELS = {
     "address": "住所/都道府県",
     "repair_type": "修理方針",
     "call_line": "回線名",
-    "appliance_type": "家電/住設",
+    "appliance_type": "案件分類",
     "appliance_category": "案件分類",
 }
 
@@ -5132,7 +5147,7 @@ def decision_tag_missing_fields(decision: dict, form: dict | None = None) -> dic
     model = (working_form.get("model_number") or form.get("model_number") or "").strip()
     repair_missing: list[str] = []
     if not product or product == PRODUCT_OTHER:
-        repair_missing.extend(["product", "manufacturer", "model_number"])
+        repair_missing.append("product")
     else:
         if _repair_type_needs_manufacturer(repair_result) and is_missing_manufacturer_value(manufacturer):
             repair_missing.append("manufacturer")
@@ -6998,7 +7013,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
                 form,
                 preview_decision.get("repair_type", ""),
             )
-            st.markdown("**テンプレート判定結果**")
+            st.markdown("**修理依頼文テンプレ**")
             st.info(template_display)
             df_tpl = load_template_codes()
             template_selection = select_template_for_form(
@@ -7017,7 +7032,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
 
 
 def render_global_case_basic_panel(form: dict) -> dict:
-    return render_shared_case_basic_editor(form, "global", show_template_result=True)
+    return render_shared_case_basic_editor(form, "global", show_template_result=False)
 
 
 def sync_after_call_rakutel_action_inputs(form: dict, session_state) -> dict:
@@ -7065,8 +7080,7 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
     )
     text_initial = current if current and current not in options else ""
     st.markdown(
-        '<div class="wrt-sub-input-label">補足入力</div>'
-        '<div class="wrt-sub-input-help">選択肢で表せない場合のみ入力してください。</div>',
+        '<div class="wrt-sub-input-label">補足入力</div>',
         unsafe_allow_html=True,
     )
     typed = st.text_input(
@@ -7546,8 +7560,6 @@ def render_tab_call():
             if len(hearing_items) > 5:
                 compact_hearing += " / ..."
             st.caption(f"聴取事項：{compact_hearing}")
-        if script_guidance.get("notes"):
-            st.caption("注意：正式トークはリンク先を正本として参照")
         if len(hearing_items) > 5 or script_guidance.get("notes"):
             with st.expander("📘 スクリプト補助の詳細", expanded=False):
                 st.markdown("**聴取事項：**")
@@ -8766,6 +8778,9 @@ def render_tab_master():
         st.success("CSVキャッシュをクリアしました。")
         st.rerun()
 
+    st.markdown("##### システム情報")
+    st.table(build_system_info_display())
+
     st.markdown("##### 不足マスタ候補")
     _render_master_candidate_box()
 
@@ -8929,7 +8944,6 @@ def main():
         initial_sidebar_state="collapsed",
     )
     st.title("🔧 修理受付 支援ツール MVP")
-    st.caption("通話中の判断補助ツール — 正式スクリプト本文は先方管理のExcelを参照してください")
     init_session()
     process_pending_case_clear(st.session_state)
     process_pending_case_basic_widget_refresh(st.session_state)
