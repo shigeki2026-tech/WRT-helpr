@@ -272,6 +272,64 @@ def test_script_reference_for_japannext_greenhouse_keeps_url_unconfirmed_candida
     assert "URL未確認" in info["message"]
 
 
+def _script_tag_for_form(form: dict) -> tuple[dict, dict]:
+    decision = app.run_decision(form)
+    script_reference = app.build_script_reference_info(decision)
+    tags = app.build_decision_tag_items(decision, form, script_reference)
+    return tags[3], script_reference
+
+
+def test_script_tag_uses_reference_route_for_kaden_lines():
+    for call_line in ("家電", "家電回線"):
+        script_tag, script_reference = _script_tag_for_form(make_form(call_line=call_line))
+
+        assert script_reference["display"] == "0099回線（家電/新築）"
+        assert script_tag["primary"] == "参照スクリプト"
+        assert script_tag["secondary"] == "0099回線（家電/新築）"
+        assert script_tag["secondary"] == script_reference["display"]
+        assert script_tag["matched"] is True
+        assert script_tag["color"] != app.TAG_COLOR_MISSING
+        assert "根拠：回線名" in script_tag["tertiary"]
+        assert script_tag["quaternary"] == "confidence: high"
+
+
+def test_script_tag_uses_reference_route_for_jusetsu_lines_with_url_unconfirmed():
+    for call_line in ("住設", "住設回線"):
+        script_tag, script_reference = _script_tag_for_form(make_form(call_line=call_line))
+
+        assert script_reference["display"] == "0099回線（住設）"
+        assert script_reference["confidence"] == "needs_url"
+        assert script_tag["primary"] == "参照スクリプト"
+        assert script_tag["secondary"] == "0099回線（住設）"
+        assert script_tag["secondary"] == script_reference["display"]
+        assert script_tag["matched"] is False
+        assert script_tag["url"] == ""
+        assert script_tag["color"] == app.TAG_COLOR_WARNING
+        assert "URL未確認" in script_tag["quaternary"]
+
+
+def test_script_tag_does_not_fall_back_to_missing_when_line_route_exists_without_category():
+    script_tag, script_reference = _script_tag_for_form(make_form(call_line="家電"))
+
+    assert script_reference["confidence"] == "high"
+    assert script_tag["primary"] == "参照スクリプト"
+    assert script_tag["secondary"] == "0099回線（家電/新築）"
+    assert script_tag["primary"] != "未判定"
+
+
+def test_script_tag_missing_only_when_script_reference_confidence_none():
+    decision = app.run_decision(make_form())
+    script_reference = app.build_script_reference_info(decision)
+    assert script_reference["confidence"] == "none"
+
+    tags = app.build_decision_tag_items(decision, {}, script_reference)
+    script_tag = tags[3]
+
+    assert script_tag["title"] == "スクリプト"
+    assert script_tag["primary"] == "未判定"
+    assert script_tag["color"] == app.TAG_COLOR_MISSING
+
+
 def test_appendix_repair_policy_manufacturer_and_condition_priority():
     ricoh_projector = app.run_decision(make_form(product="プロジェクター", manufacturer="リコー"))
     assert ricoh_projector["repair_type"] == "出張修理"
@@ -324,7 +382,8 @@ def test_script_route_uses_call_line_and_appliance_category_without_repair_type_
 def test_initial_decision_tags_are_unjudged_with_missing_items():
     form = app.empty_form()
     decision = app.run_decision(form)
-    tags = app.build_decision_tag_items(decision, form)
+    script_reference = app.build_script_reference_info(decision)
+    tags = app.build_decision_tag_items(decision, form, script_reference)
 
     assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定"]
     assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags)
@@ -347,7 +406,8 @@ def test_decision_tags_confirm_only_when_required_information_is_present():
         warranty_end_date="2031/12/31",
     )
     decision = app.run_decision(form)
-    tags = app.build_decision_tag_items(decision, form)
+    script_reference = app.build_script_reference_info(decision)
+    tags = app.build_decision_tag_items(decision, form, script_reference)
 
     assert tags[0]["primary"] == "保証期間内"
     assert tags[0]["color"] != app.TAG_COLOR_MISSING
@@ -355,7 +415,8 @@ def test_decision_tags_confirm_only_when_required_information_is_present():
     assert tags[1]["color"] != app.TAG_COLOR_MISSING
     assert tags[2]["primary"]
     assert tags[2]["color"] != app.TAG_COLOR_MISSING
-    assert tags[3]["primary"] == "通常"
+    assert tags[3]["primary"] == "参照スクリプト"
+    assert tags[3]["secondary"] == "0099回線（家電/新築）"
     assert tags[3]["color"] != app.TAG_COLOR_MISSING
 
 
@@ -1922,7 +1983,8 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
         decision["vendor"],
         cost_estimate=decision["cost_estimate"],
     )
-    tags = app.build_decision_tag_items(decision, form)
+    script_reference = app.build_script_reference_info(decision)
+    tags = app.build_decision_tag_items(decision, form, script_reference)
     repair_tag = next(tag for tag in tags if tag["title"] == "修理方針")
     vendor_tag = next(tag for tag in tags if tag["title"] == "拠点対応")
     script_tag = next(tag for tag in tags if tag["title"] == "スクリプト")
@@ -1957,8 +2019,8 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
     check("AI工務店 vendor tag primary", vendor_tag["primary"], "ユナイトサービス㈱")
     check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "確定")
-    check("AI工務店 script type", script_tag["primary"], "未判定")
-    assert "回線名" in script_tag["secondary"]
+    check("AI工務店 script tag primary", script_tag["primary"], "参照スクリプト")
+    check("AI工務店 script tag matches reference", script_tag["secondary"], script_reference["display"])
     assert "ユナイトサービス㈱へFAX済み" in teams_message
     assert "担当確認依頼済み" not in teams_message
     assert "0058 【出張修理】上位5社" in display
@@ -2858,6 +2920,12 @@ def test_tc_script_tag_includes_url_and_link_text():
         "warranty_plan": "",
     }
     script_reference = app.build_script_reference_info(decision)
+    script_reference.update({
+        "matched": True,
+        "url": "https://example.com/script",
+        "confidence": "high",
+        "display": "家電出張修理",
+    })
     tags = app.build_decision_tag_items(decision, {}, script_reference)
 
     script_tag = tags[3]
@@ -2882,6 +2950,7 @@ def test_tc_script_tag_matched_url_builds_open_link():
     script_reference["matched"] = True
     script_reference["url"] = "https://example.com/script"
     script_reference["link_text"] = "家電出張修理"
+    script_reference["confidence"] = "high"
 
     from unittest.mock import patch
     with patch("app.build_script_reference_info", return_value=script_reference):
@@ -2910,8 +2979,8 @@ def test_tc_script_tag_unmatched_shows_url_unregistered():
     tags = app.build_decision_tag_items(decision, {}, script_reference)
 
     script_tag = tags[3]
-    assert script_tag["matched"] is False
-    assert "URL未登録" in script_tag["link_text"]
+    assert script_tag["primary"] == "未判定"
+    assert script_tag["color"] == app.TAG_COLOR_MISSING
 
 
 def _make_acceptance_tag(product="洗濯機", warranty_plan="A3_E2_一般家電延長保証【5年】",

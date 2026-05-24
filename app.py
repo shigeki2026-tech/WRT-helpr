@@ -5417,6 +5417,14 @@ def _attention_tag(title: str, primary: str, fields: list[str], reason: str = ""
     return tag
 
 
+def _script_reference_has_candidate(script_reference: dict) -> bool:
+    confidence = (script_reference.get("confidence") or "").strip()
+    display = (script_reference.get("display") or "").strip()
+    if script_reference.get("matched") and script_reference.get("url") and display:
+        return True
+    return confidence in ("high", "medium", "needs_url") and bool(display) and display != "未判定"
+
+
 def _decision_tag_short_note(prefix: str, text: str) -> str:
     text = str(text or "").strip()
     if not text:
@@ -5648,20 +5656,22 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "color": TAG_COLOR_WARNING if vendor_card.get("needs_escalation") else TAG_COLOR_OK,
         }
 
-    if missing["スクリプト"]:
-        script_tag = _missing_tag("スクリプト", missing["スクリプト"])
+    script_has_candidate = _script_reference_has_candidate(script_reference)
+    if not script_has_candidate:
+        script_tag = _missing_tag("スクリプト", missing["スクリプト"] or ["call_line"])
     else:
         script_tertiary = f"根拠：{script_reference.get('basis', '')}" if script_reference.get("basis") else ""
         script_quaternary = f"confidence: {script_reference.get('confidence', '')}" if script_reference.get("confidence") else ""
         if script_reference.get("message") and not script_reference.get("matched"):
             script_quaternary = script_reference.get("message", "").splitlines()[0]
+        script_color = TAG_COLOR_WARNING if script_reference.get("confidence") == "needs_url" else TAG_COLOR_OK
         script_tag = {
             "title": "スクリプト",
-            "primary": script_reference.get("script_type", ""),
+            "primary": "参照スクリプト",
             "secondary": script_reference.get("display", ""),
             "tertiary": script_tertiary,
             "quaternary": script_quaternary,
-            "color": TAG_COLOR_DP if summary.get("is_double_protect") else TAG_COLOR_ACTION,
+            "color": script_color,
             "url": script_reference.get("url", ""),
             "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
                          if script_reference.get("matched")
