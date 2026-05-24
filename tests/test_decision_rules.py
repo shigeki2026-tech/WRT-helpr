@@ -175,15 +175,12 @@ def test_master_script_routes_csv_exists_and_japannext_url_is_unconfirmed():
                         "data", "master_script_routes.csv")
     assert os.path.exists(path)
     df = app.load_script_routes()
-    assert len(df) == 25
+    assert len(df) == 24
     row = df[df["script_key"] == "japannext_greenhouse"].iloc[0]
     assert row["display_name"] == "ジャパンネクストorグリーンハウス"
     assert row["url"] == ""
     assert row["confidence"] == "needs_url"
-    jusetsu = df[df["script_key"] == "0099_jusetsu"].iloc[0]
-    assert jusetsu["display_name"] == "0099回線（住設）"
-    assert jusetsu["url"] == ""
-    assert jusetsu["confidence"] == "needs_url"
+    assert df[df["script_key"] == "0099_jusetsu"].empty
 
 
 def test_judge_script_route_store_and_plan_priority_cases():
@@ -211,10 +208,8 @@ def test_judge_script_route_line_first_basic_and_store_overrides():
     cases = [
         (make_form(call_line="家電"), "0099回線（家電/新築）", "high", True),
         (make_form(call_line="家電回線"), "0099回線（家電/新築）", "high", True),
-        (make_form(call_line="住設"), "0099回線（住設）", "needs_url", False),
-        (make_form(call_line="住設回線"), "0099回線（住設）", "needs_url", False),
         (make_form(call_line="0099", appliance_category="家電"), "0099回線（家電/新築）", "high", True),
-        (make_form(call_line="0099", appliance_category="住設（既築）"), "0099回線（住設）", "needs_url", False),
+        (make_form(call_line="0099", appliance_category="住設（既築）"), "0099回線（住設既築）", "high", True),
         (make_form(call_line="住設", store_name="コーナン"), "コーナン住設", "high", True),
         (make_form(call_line="家電", store_name="コーナン"), "コーナン家電", "high", True),
         (make_form(call_line="家電", store_name="ビックカメラ"), "ビックカメラ・ソフマップ", "high", True),
@@ -227,6 +222,53 @@ def test_judge_script_route_line_first_basic_and_store_overrides():
         assert bool(result["url"]) is has_url
         assert result["initial_line"]
         assert "回線名" in result["matched_by"]
+
+
+def test_judge_script_route_jusetsu_line_waits_for_category_selection():
+    for call_line in ("住設", "住設回線"):
+        result = app.judge_script_route(make_form(call_line=call_line))
+
+        assert result["script_key"] == "needs_jusetsu_type"
+        assert result["display_name"] == "住設区分を選択してください"
+        assert result["confidence"] == "needs_selection"
+        assert result["url"] == ""
+        assert result["matched_by"] == ["回線名"]
+        assert "住設新築" in result["memo"]
+        assert "URL未確認" not in result["memo"]
+
+
+def test_judge_script_route_jusetsu_category_confirms_new_or_existing_script():
+    cases = [
+        ("住設新築", "0099回線（住設新築）"),
+        ("住設（新築）", "0099回線（住設新築）"),
+        ("住設既築", "0099回線（住設既築）"),
+        ("住設（既築）", "0099回線（住設既築）"),
+    ]
+    for category, display_name in cases:
+        result = app.judge_script_route(make_form(call_line="住設", appliance_category=category))
+
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
+        assert result["url"]
+        assert result["matched_by"] == ["回線名", "案件分類"]
+        assert "URLは0099回線" in result["memo"]
+
+
+def test_judge_script_route_jusetsu_kaketsuke_plan_overrides_base_script_with_reason():
+    cases = ["駆けつけ", "24h", "24時間"]
+    for warranty_plan in cases:
+        result = app.judge_script_route(make_form(
+            call_line="住設",
+            appliance_category="住設（既築）",
+            warranty_plan=warranty_plan,
+        ))
+
+        assert result["display_name"] == "0099回線（駆けつけ）"
+        assert result["confidence"] == "high"
+        assert result["matched_by"] == ["回線名", "保証プラン"]
+        assert "駆けつけ条件" in result["correction_reason"]
+        assert result["script_changed"] is True
+        assert result["previous_script_display"] == "0099回線（住設既築）"
 
 
 def test_judge_script_route_plan_only_is_medium_candidate_not_high():
@@ -293,19 +335,72 @@ def test_script_tag_uses_reference_route_for_kaden_lines():
         assert script_tag["quaternary"] == "confidence: high"
 
 
-def test_script_tag_uses_reference_route_for_jusetsu_lines_with_url_unconfirmed():
+def test_script_tag_uses_reference_route_for_jusetsu_lines_with_selection_waiting():
     for call_line in ("住設", "住設回線"):
         script_tag, script_reference = _script_tag_for_form(make_form(call_line=call_line))
 
-        assert script_reference["display"] == "0099回線（住設）"
-        assert script_reference["confidence"] == "needs_url"
+        assert script_reference["display"] == "住設区分を選択してください"
+        assert script_reference["confidence"] == "needs_selection"
         assert script_tag["primary"] == "参照スクリプト"
-        assert script_tag["secondary"] == "0099回線（住設）"
+        assert script_tag["secondary"] == "住設区分を選択してください"
         assert script_tag["secondary"] == script_reference["display"]
         assert script_tag["matched"] is False
         assert script_tag["url"] == ""
         assert script_tag["color"] == app.TAG_COLOR_WARNING
-        assert "URL未確認" in script_tag["quaternary"]
+        assert "住設新築 / 住設既築" in script_tag["quaternary"]
+        assert "URL未確認" not in script_tag["quaternary"]
+
+
+def test_jusetsu_selection_waiting_keeps_upper_and_lower_script_display_in_sync():
+    script_tag, script_reference = _script_tag_for_form(make_form(call_line="住設"))
+
+    assert script_reference["display"] == "住設区分を選択してください"
+    assert script_reference["current_script_display"] == "住設区分を選択してください"
+    assert script_reference["confidence"] == "needs_selection"
+    assert script_tag["secondary"] == script_reference["display"]
+    assert script_tag["primary"] == "参照スクリプト"
+    assert script_tag["primary"] != "未判定"
+    assert script_tag["matched"] is False
+    assert script_tag["color"] == app.TAG_COLOR_WARNING
+
+
+def test_next_confirmation_prompts_jusetsu_category_selection():
+    form = make_form(call_line="住設")
+    decision = app.run_decision(form)
+    sections = app.build_next_confirmation_sections(decision, form)
+
+    assert "案件分類で「住設新築 / 住設既築」を選択" in sections["call_required"]
+
+
+def test_script_reference_marks_jusetsu_kaketsuke_script_change():
+    decision = app.run_decision(make_form(
+        call_line="住設",
+        appliance_category="住設（既築）",
+        warranty_plan="駆けつけ",
+    ))
+    info = app.build_script_reference_info(decision)
+
+    assert info["display"] == "0099回線（駆けつけ）"
+    assert info["current_script_display"] == "0099回線（駆けつけ）"
+    assert info["previous_script_display"] == "0099回線（住設既築）"
+    assert info["script_changed"] is True
+    assert "駆けつけ条件" in info["correction_reason"]
+
+
+def test_script_tag_shows_jusetsu_kaketsuke_correction_and_matches_reference_display():
+    script_tag, script_reference = _script_tag_for_form(make_form(
+        call_line="住設",
+        appliance_category="住設（既築）",
+        warranty_plan="駆けつけ",
+    ))
+
+    assert script_reference["display"] == "0099回線（駆けつけ）"
+    assert script_tag["secondary"] == script_reference["display"]
+    assert script_tag["secondary"] == "0099回線（駆けつけ）"
+    assert "根拠：回線名 / 保証プラン" in script_tag["tertiary"]
+    assert "補正理由：" in script_tag["quaternary"]
+    assert "駆けつけ条件" in script_tag["quaternary"]
+    assert script_tag["quinary"] == "confidence: high"
 
 
 def test_script_tag_does_not_fall_back_to_missing_when_line_route_exists_without_category():
