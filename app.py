@@ -697,6 +697,12 @@ _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_ke
 _MFR_GROUP_COLS    = ["group_name", "manufacturers", "notes"]
 _AREA_GROUP_COLS   = ["area_group", "prefectures", "notes"]
 _SCRIPT_LINK_COLS   = ["script_sheet", "script_part", "display_name", "url", "notes"]
+_SCRIPT_ROUTE_COLS = [
+    "priority", "enabled", "script_key", "display_name", "site_section", "url",
+    "match_line", "match_kaden_jusetsu", "match_plan_keywords",
+    "match_store_keywords", "match_company_keywords", "match_product_keywords",
+    "match_repair_type", "confidence", "memo", "source_cell",
+]
 _SCRIPT_GUIDANCE_COLS = [
     "priority", "enabled", "script_key", "repair_type", "appliance_type",
     "product_keyword", "manufacturer_keyword", "title", "hearing_items",
@@ -853,6 +859,11 @@ def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def _load_script_routes_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_script_routes.csv", _SCRIPT_ROUTE_COLS)
+
+
+@st.cache_data
 def _load_memo_snippets_cached(mtime: float) -> pd.DataFrame:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "master_memo_snippets.csv")
     if not os.path.exists(path):
@@ -920,6 +931,10 @@ def load_handover_rules() -> pd.DataFrame:
 
 def load_script_guidance_csv() -> pd.DataFrame:
     return _load_script_guidance_cached(_csv_mtime("master_script_guidance.csv"))
+
+
+def load_script_routes() -> pd.DataFrame:
+    return _load_script_routes_cached(_csv_mtime("master_script_routes.csv"))
 
 
 def load_memo_snippets() -> pd.DataFrame:
@@ -3376,6 +3391,122 @@ def lookup_script_link(script_result: dict) -> dict:
     return {"matched": False, "display_name": "", "url": "", "notes": ""}
 
 
+def split_keywords(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[;；\n\r]+", text) if part.strip()]
+
+
+def _route_text_matches(text: str, keywords: list[str]) -> bool:
+    if not keywords:
+        return True
+    target = str(text or "").casefold()
+    return any(keyword.casefold() in target for keyword in keywords)
+
+
+def _append_route_match(matched_by: list[str], label: str) -> None:
+    if label not in matched_by:
+        matched_by.append(label)
+
+
+def _script_route_no_match() -> dict:
+    return {
+        "script_key": "",
+        "display_name": "未判定",
+        "url": "",
+        "confidence": "none",
+        "matched_by": [],
+        "memo": "該当するトークスクリプト入口が未登録、または判定条件不足",
+    }
+
+
+def judge_script_route(form: dict) -> dict:
+    """Google Site / Sheets のトークスクリプト入口をマスタから判定する。"""
+    form = apply_appliance_category_to_form((form or {}).copy())
+    df = load_script_routes()
+    if df.empty:
+        return _script_route_no_match()
+
+    call_line = " ".join(str(form.get(field) or "") for field in (
+        "call_line", "call_line_original", "line_name",
+    ))
+    appliance_text = " ".join(str(form.get(field) or "") for field in (
+        "appliance_category", "appliance_type", "housing_phase",
+    ))
+    plan_text = " ".join(str(form.get(field) or "") for field in (
+        "warranty_plan", "warranty_type", "store_name", "company_name",
+        "case_memo", "call_memo", "symptom_detail", "notes",
+    ))
+    store_text = " ".join(str(form.get(field) or "") for field in (
+        "store_name", "store_name_original", "dealer_name",
+    ))
+    company_text = " ".join(str(form.get(field) or "") for field in (
+        "company_name", "store_name", "manufacturer", "manufacturer_original",
+        "warranty_plan", "product", "product_original",
+    ))
+    product_text = " ".join(str(form.get(field) or "") for field in (
+        "product", "product_original", "series", "symptom_detail",
+    ))
+    repair_type = str(form.get("repair_type") or "").strip()
+
+    for _, row in df.iterrows():
+        matched_by: list[str] = []
+
+        line_keywords = split_keywords(row.get("match_line", ""))
+        if line_keywords and call_line.strip():
+            if not _route_text_matches(call_line, line_keywords):
+                continue
+            _append_route_match(matched_by, "回線名")
+
+        category_keywords = split_keywords(row.get("match_kaden_jusetsu", ""))
+        if category_keywords:
+            if not _route_text_matches(appliance_text, category_keywords):
+                continue
+            _append_route_match(matched_by, "案件分類")
+
+        plan_keywords = split_keywords(row.get("match_plan_keywords", ""))
+        if plan_keywords:
+            if not _route_text_matches(plan_text, plan_keywords):
+                continue
+            _append_route_match(matched_by, "保証プラン")
+
+        store_keywords = split_keywords(row.get("match_store_keywords", ""))
+        if store_keywords:
+            if not _route_text_matches(store_text, store_keywords):
+                continue
+            _append_route_match(matched_by, "販売店")
+
+        company_keywords = split_keywords(row.get("match_company_keywords", ""))
+        if company_keywords:
+            if not _route_text_matches(company_text, company_keywords):
+                continue
+            _append_route_match(matched_by, "メーカー")
+
+        product_keywords = split_keywords(row.get("match_product_keywords", ""))
+        if product_keywords:
+            if not _route_text_matches(product_text, product_keywords):
+                continue
+            _append_route_match(matched_by, "製品")
+
+        repair_keywords = split_keywords(row.get("match_repair_type", ""))
+        if repair_keywords:
+            if not _route_text_matches(repair_type, repair_keywords):
+                continue
+            _append_route_match(matched_by, "修理方針")
+
+        return {
+            "script_key": (row.get("script_key") or "").strip(),
+            "display_name": (row.get("display_name") or "").strip() or "未判定",
+            "url": (row.get("url") or "").strip(),
+            "confidence": (row.get("confidence") or "").strip() or "medium",
+            "matched_by": matched_by,
+            "memo": (row.get("memo") or "").strip(),
+        }
+
+    return _script_route_no_match()
+
+
 def _script_guidance_keyword_matches(value: str, keyword: str) -> bool:
     keyword = (keyword or "").strip()
     if not keyword:
@@ -5033,6 +5164,33 @@ def build_summary_card_display(decision: dict) -> dict:
 def build_script_reference_info(decision: dict) -> dict:
     summary = build_summary_card_display(decision)
     script_result = decision.get("script_result", {})
+    route_form = (decision.get("working_form", {}) or {}).copy()
+    route_form["repair_type"] = decision.get("repair_type", "")
+    script_route = judge_script_route(route_form)
+    if script_route.get("script_key"):
+        url = script_route.get("url", "")
+        confidence = script_route.get("confidence", "")
+        matched = bool(url) and confidence != "needs_url"
+        display = script_route.get("display_name", "") or "未判定"
+        matched_by = script_route.get("matched_by", [])
+        basis = " / ".join(matched_by) if matched_by else "マスタ優先順位"
+        message = "" if matched else "URL未確認"
+        if script_route.get("memo"):
+            message = f"{message}\n{script_route['memo']}" if message else script_route["memo"]
+        return {
+            "title": "📘 参照スクリプト",
+            "script_type": "参照スクリプト",
+            "display": display,
+            "label": display,
+            "matched": matched,
+            "url": url if matched else "",
+            "link_text": "スクリプト" if matched else "URL未確認",
+            "message": message,
+            "confidence": confidence,
+            "matched_by": matched_by,
+            "basis": basis,
+            "script_key": script_route.get("script_key", ""),
+        }
     script_link = lookup_script_link(script_result)
     script_type = summary["script_type"]
     script_display = script_result.get("display_name") or summary["script_part"] or summary["script_display"]
@@ -5051,6 +5209,10 @@ def build_script_reference_info(decision: dict) -> dict:
         "url": script_link.get("url", ""),
         "link_text": script_link.get("display_name", "スクリプト"),
         "message": message,
+        "confidence": "high" if matched else "none",
+        "matched_by": ["旧スクリプト参照"] if matched else [],
+        "basis": "旧スクリプト参照" if matched else "",
+        "script_key": "",
     }
 
 
@@ -5435,14 +5597,21 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
     if missing["スクリプト"]:
         script_tag = _missing_tag("スクリプト", missing["スクリプト"])
     else:
+        script_tertiary = f"根拠：{script_reference.get('basis', '')}" if script_reference.get("basis") else ""
+        script_quaternary = f"confidence: {script_reference.get('confidence', '')}" if script_reference.get("confidence") else ""
+        if script_reference.get("message") and not script_reference.get("matched"):
+            script_quaternary = script_reference.get("message", "").splitlines()[0]
         script_tag = {
             "title": "スクリプト",
             "primary": script_reference.get("script_type", ""),
             "secondary": script_reference.get("display", ""),
+            "tertiary": script_tertiary,
+            "quaternary": script_quaternary,
             "color": TAG_COLOR_DP if summary.get("is_double_protect") else TAG_COLOR_ACTION,
             "url": script_reference.get("url", ""),
             "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
-                         if script_reference.get("matched") else "URL未登録（手動で参照）",
+                         if script_reference.get("matched")
+                         else (script_reference.get("link_text") or "URL未登録（手動で参照）"),
             "matched": script_reference.get("matched", False),
         }
 
@@ -7553,6 +7722,17 @@ def render_tab_call():
             diagnostics, warranty_result, cost_result, manual_check,
             script_guidance.get("hearing_items", []),
         )
+
+        st.markdown("##### 参照スクリプト")
+        st.markdown(f"**{script_reference.get('display', '未判定')}**")
+        if script_reference.get("basis"):
+            st.caption(f"判定根拠：{script_reference.get('basis')}")
+        if script_reference.get("confidence"):
+            st.caption(f"confidence: {script_reference.get('confidence')}")
+        if script_reference.get("matched") and script_reference.get("url"):
+            st.markdown(f"[{script_reference.get('link_text', 'スクリプトを開く')}]({script_reference['url']})")
+        elif script_reference.get("message"):
+            st.warning(script_reference.get("message"))
 
         hearing_items = script_guidance.get("hearing_items", [])
         if hearing_items:
