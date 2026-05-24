@@ -5,10 +5,11 @@
 31,1,kohnan_jusetsu,コーナン住設,トークスクリプト,https://docs.google.com/spreadsheets/d/1YdVJupRTxaqiaZn1ADAyUqEsCMBxVs6yxAIZ0uzNUqM/edit?gid=1267412413#gid=1267412413,,住設,,コーナン,コーナン,,,high,,A32
 40,1,trial_arclands,トライアル/アークランズ,トークスクリプト,https://docs.google.com/spreadsheets/d/18Ogqmip4IrI1te8FnFeX3zVlQKS9AHG_G2xodzXT5mo/edit?pli=1&gid=975369740#gid=975369740,,,,トライアル;アークランズ,トライアル;アークランズ,,,high,,A44
 50,1,battery_solar_v2h,◆蓄電池（太陽光・V2H）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1890318217#gid=1890318217,,,,,,蓄電池;太陽光;V2H,,high,,A62
-100,1,0099_kaden_new,0099回線（家電/新築）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=898484067#gid=898484067,0099,家電,新築,,,,,high,0099回線かつ家電/新築系,A18
-110,1,0099_rental,0099回線（賃貸）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1758292955#gid=1758292955,0099,,賃貸,,,,,high,保証プラン・販売店情報などに賃貸がある場合,A20
-120,1,0099_used,0099回線（既築/中古）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=539693209#gid=539693209,0099,,既築;中古,,,,,high,保証プラン・販売店情報などに既築/中古がある場合,A22
-130,1,0099_kaketsuke,0099回線（駆けつけ）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=778778469#gid=778778469,0099,,駆けつけ;24h;24時間;365days,,,,,high,駆けつけ/24h系,A24
+90,1,0099_kaketsuke,0099回線（駆けつけ）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=778778469#gid=778778469,0099;家電;家電回線;住設;住設回線;0099住設,,駆けつけ;24h;24時間;365days,,,,,high,回線名と駆けつけ/24h系の保証プランで判定,A24
+95,1,0099_jusetsu,0099回線（住設）,トークスクリプト,,住設;0099住設;住設回線;0099,住設,,,,,,needs_url,住設回線用の参照スクリプト。URL未確認のため確認が必要。,
+100,1,0099_rental,0099回線（賃貸）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1758292955#gid=1758292955,0099;家電;家電回線;住設;住設回線;0099住設,,賃貸,,,,,high,対象回線名と賃貸系の保証プランで判定。回線名不明時は候補扱い,A20
+110,1,0099_used,0099回線（既築/中古）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=539693209#gid=539693209,0099;家電;家電回線;住設;住設回線;0099住設,,既築;中古,,,,,high,対象回線名と既築/中古系の保証プランで判定。回線名不明時は候補扱い,A22
+130,1,0099_kaden_new,0099回線（家電/新築）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=898484067#gid=898484067,家電;家電回線;0099,家電,,,,,,high,家電回線または0099回線＋家電で判定,A18
 200,1,lg,LG,トークスクリプト,https://docs.google.com/spreadsheets/d/1jsDM1ne2Q1CjZspzEVIhOAimVNQfCpXt0GZUBy82SHc/edit?gid=2023604868#gid=2023604868,,,,,LG,,,high,メーカー/販売店/プランにLGがある場合,A38
 210,1,tokai,TOKAI,トークスクリプト,https://docs.google.com/spreadsheets/d/1rxjipBAH5JebfXcGvAw0gDp666cmDOHsCTon2jx9bzQ/edit?gid=975369740#gid=975369740,,,,,TOKAI;東海,,,high,,A40
 220,1,mach_yucaco,マッハ・YUCACO,トークスクリプト,https://docs.google.com/spreadsheets/d/1pjWHtHOOF0S0mTwEATDE4DLBDz1SjbT1bttt8E9IeC0/edit?gid=1054213746#gid=1054213746,,,マッハ;YUCACO,,,,,high,,A42

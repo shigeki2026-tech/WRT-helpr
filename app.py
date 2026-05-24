@@ -3418,7 +3418,35 @@ def _script_route_no_match() -> dict:
         "confidence": "none",
         "matched_by": [],
         "memo": "該当するトークスクリプト入口が未登録、または判定条件不足",
+        "initial_line": "",
+        "correction_reason": "",
     }
+
+
+def _script_initial_line_label(call_line: str) -> str:
+    text = str(call_line or "").strip()
+    folded = text.casefold()
+    if not text:
+        return ""
+    if any(keyword.casefold() in folded for keyword in ("駆けつけ", "24h", "24時間", "365days")):
+        return "駆けつけ"
+    if "住設" in text:
+        return "住設"
+    if "家電" in text:
+        return "家電"
+    if "0099" in text:
+        return "0099"
+    return text
+
+
+def _script_route_correction_reason(script_key: str, matched_by: list[str], initial_line: str) -> str:
+    if not initial_line:
+        return ""
+    if "販売店" in matched_by and not script_key.startswith("0099_"):
+        return "販売店別スクリプトを優先"
+    if any(label in matched_by for label in ("製品", "メーカー")) and not script_key.startswith("0099_"):
+        return "製品・メーカー別スクリプトを優先"
+    return ""
 
 
 def judge_script_route(form: dict) -> dict:
@@ -3431,9 +3459,11 @@ def judge_script_route(form: dict) -> dict:
     call_line = " ".join(str(form.get(field) or "") for field in (
         "call_line", "call_line_original", "line_name",
     ))
+    initial_line = _script_initial_line_label(call_line)
     appliance_text = " ".join(str(form.get(field) or "") for field in (
         "appliance_category", "appliance_type", "housing_phase",
     ))
+    appliance_text = " ".join([appliance_text, initial_line]).strip()
     plan_text = " ".join(str(form.get(field) or "") for field in (
         "warranty_plan", "warranty_type", "store_name", "company_name",
         "case_memo", "call_memo", "symptom_detail", "notes",
@@ -3452,12 +3482,18 @@ def judge_script_route(form: dict) -> dict:
 
     for _, row in df.iterrows():
         matched_by: list[str] = []
+        line_matched = False
+        missing_required_line = False
 
         line_keywords = split_keywords(row.get("match_line", ""))
-        if line_keywords and call_line.strip():
-            if not _route_text_matches(call_line, line_keywords):
-                continue
-            _append_route_match(matched_by, "回線名")
+        if line_keywords:
+            if call_line.strip():
+                if not _route_text_matches(call_line, line_keywords):
+                    continue
+                line_matched = True
+                _append_route_match(matched_by, "回線名")
+            else:
+                missing_required_line = True
 
         category_keywords = split_keywords(row.get("match_kaden_jusetsu", ""))
         if category_keywords:
@@ -3495,13 +3531,27 @@ def judge_script_route(form: dict) -> dict:
                 continue
             _append_route_match(matched_by, "修理方針")
 
+        if missing_required_line and not matched_by:
+            continue
+        confidence = (row.get("confidence") or "").strip() or "medium"
+        memo = (row.get("memo") or "").strip()
+        if missing_required_line and not line_matched:
+            if matched_by == ["案件分類"]:
+                continue
+            confidence = "medium" if confidence == "high" else confidence
+            memo = (memo + " / " if memo else "") + "回線名未入力のため候補扱い"
+        script_key = (row.get("script_key") or "").strip()
+        if initial_line and matched_by and "回線名" not in matched_by:
+            matched_by.insert(0, "回線名")
         return {
-            "script_key": (row.get("script_key") or "").strip(),
+            "script_key": script_key,
             "display_name": (row.get("display_name") or "").strip() or "未判定",
             "url": (row.get("url") or "").strip(),
-            "confidence": (row.get("confidence") or "").strip() or "medium",
+            "confidence": confidence,
             "matched_by": matched_by,
-            "memo": (row.get("memo") or "").strip(),
+            "memo": memo,
+            "initial_line": initial_line,
+            "correction_reason": _script_route_correction_reason(script_key, matched_by, initial_line),
         }
 
     return _script_route_no_match()
@@ -5179,9 +5229,9 @@ def build_script_reference_info(decision: dict) -> dict:
             message = f"{message}\n{script_route['memo']}" if message else script_route["memo"]
         return {
             "title": "📘 参照スクリプト",
-            "script_type": "参照スクリプト",
+            "script_type": summary["script_type"],
             "display": display,
-            "label": display,
+            "label": f"{summary['script_type']} / {display}",
             "matched": matched,
             "url": url if matched else "",
             "link_text": "スクリプト" if matched else "URL未確認",
@@ -5190,6 +5240,8 @@ def build_script_reference_info(decision: dict) -> dict:
             "matched_by": matched_by,
             "basis": basis,
             "script_key": script_route.get("script_key", ""),
+            "initial_line": script_route.get("initial_line", ""),
+            "correction_reason": script_route.get("correction_reason", ""),
         }
     script_link = lookup_script_link(script_result)
     script_type = summary["script_type"]
@@ -5213,6 +5265,8 @@ def build_script_reference_info(decision: dict) -> dict:
         "matched_by": ["旧スクリプト参照"] if matched else [],
         "basis": "旧スクリプト参照" if matched else "",
         "script_key": "",
+        "initial_line": "",
+        "correction_reason": "",
     }
 
 
@@ -7724,9 +7778,13 @@ def render_tab_call():
         )
 
         st.markdown("##### 参照スクリプト")
-        st.markdown(f"**{script_reference.get('display', '未判定')}**")
+        st.markdown(f"推奨：**{script_reference.get('display', '未判定')}**")
+        if script_reference.get("initial_line"):
+            st.caption(f"初期回線：{script_reference.get('initial_line')}")
         if script_reference.get("basis"):
             st.caption(f"判定根拠：{script_reference.get('basis')}")
+        if script_reference.get("correction_reason"):
+            st.caption(f"補正理由：{script_reference.get('correction_reason')}")
         if script_reference.get("confidence"):
             st.caption(f"confidence: {script_reference.get('confidence')}")
         if script_reference.get("matched") and script_reference.get("url"):

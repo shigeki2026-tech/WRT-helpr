@@ -175,11 +175,15 @@ def test_master_script_routes_csv_exists_and_japannext_url_is_unconfirmed():
                         "data", "master_script_routes.csv")
     assert os.path.exists(path)
     df = app.load_script_routes()
-    assert len(df) == 24
+    assert len(df) == 25
     row = df[df["script_key"] == "japannext_greenhouse"].iloc[0]
     assert row["display_name"] == "ジャパンネクストorグリーンハウス"
     assert row["url"] == ""
     assert row["confidence"] == "needs_url"
+    jusetsu = df[df["script_key"] == "0099_jusetsu"].iloc[0]
+    assert jusetsu["display_name"] == "0099回線（住設）"
+    assert jusetsu["url"] == ""
+    assert jusetsu["confidence"] == "needs_url"
 
 
 def test_judge_script_route_store_and_plan_priority_cases():
@@ -189,18 +193,52 @@ def test_judge_script_route_store_and_plan_priority_cases():
         (make_form(store_name="ビックカメラ", warranty_plan="官舎向け保証"), "ビックカメラ（官舎向け）", "high"),
         (make_form(store_name="コーナン", appliance_category="家電"), "コーナン家電", "high"),
         (make_form(store_name="コーナン", appliance_category="住設（既築）"), "コーナン住設", "high"),
-        (make_form(warranty_plan="賃貸住宅プラン"), "0099回線（賃貸）", "high"),
-        (make_form(warranty_plan="既築住宅プラン"), "0099回線（既築/中古）", "high"),
-        (make_form(warranty_plan="中古住宅プラン"), "0099回線（既築/中古）", "high"),
-        (make_form(warranty_plan="駆けつけサービス"), "0099回線（駆けつけ）", "high"),
-        (make_form(warranty_plan="24hサポート"), "0099回線（駆けつけ）", "high"),
-        (make_form(warranty_plan="24時間サポート"), "0099回線（駆けつけ）", "high"),
+        (make_form(call_line="0099", warranty_plan="賃貸住宅プラン"), "0099回線（賃貸）", "high"),
+        (make_form(call_line="0099", warranty_plan="既築住宅プラン"), "0099回線（既築/中古）", "high"),
+        (make_form(call_line="0099", warranty_plan="中古住宅プラン"), "0099回線（既築/中古）", "high"),
+        (make_form(call_line="0099", warranty_plan="駆けつけサービス"), "0099回線（駆けつけ）", "high"),
+        (make_form(call_line="0099", warranty_plan="24hサポート"), "0099回線（駆けつけ）", "high"),
+        (make_form(call_line="0099", warranty_plan="24時間サポート"), "0099回線（駆けつけ）", "high"),
     ]
     for form, display_name, confidence in cases:
         result = app.judge_script_route(form)
         assert result["display_name"] == display_name
         assert result["confidence"] == confidence
         assert result["url"]
+
+
+def test_judge_script_route_line_first_basic_and_store_overrides():
+    cases = [
+        (make_form(call_line="家電"), "0099回線（家電/新築）", "high", True),
+        (make_form(call_line="家電回線"), "0099回線（家電/新築）", "high", True),
+        (make_form(call_line="住設"), "0099回線（住設）", "needs_url", False),
+        (make_form(call_line="住設回線"), "0099回線（住設）", "needs_url", False),
+        (make_form(call_line="0099", appliance_category="家電"), "0099回線（家電/新築）", "high", True),
+        (make_form(call_line="0099", appliance_category="住設（既築）"), "0099回線（住設）", "needs_url", False),
+        (make_form(call_line="住設", store_name="コーナン"), "コーナン住設", "high", True),
+        (make_form(call_line="家電", store_name="コーナン"), "コーナン家電", "high", True),
+        (make_form(call_line="家電", store_name="ビックカメラ"), "ビックカメラ・ソフマップ", "high", True),
+        (make_form(call_line="家電", store_name="ビックカメラ", warranty_plan="官舎"), "ビックカメラ（官舎向け）", "high", True),
+    ]
+    for form, display_name, confidence, has_url in cases:
+        result = app.judge_script_route(form)
+        assert result["display_name"] == display_name
+        assert result["confidence"] == confidence
+        assert bool(result["url"]) is has_url
+        assert result["initial_line"]
+        assert "回線名" in result["matched_by"]
+
+
+def test_judge_script_route_plan_only_is_medium_candidate_not_high():
+    rental = app.judge_script_route(make_form(warranty_plan="賃貸住宅プラン"))
+    assert rental["display_name"] == "0099回線（賃貸）"
+    assert rental["confidence"] == "medium"
+    assert "回線名" not in rental["matched_by"]
+    assert "候補扱い" in rental["memo"]
+
+    none = app.judge_script_route(make_form())
+    assert none["display_name"] == "未判定"
+    assert none["confidence"] == "none"
 
 
 def test_judge_script_route_product_manufacturer_cancel_and_no_match_cases():
