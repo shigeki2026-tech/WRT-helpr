@@ -7292,6 +7292,8 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         st.markdown("##### 🧾 案件基本（共通）")
     else:
         st.markdown("##### 案件基本")
+    with st.expander("案件操作", expanded=False):
+        render_case_clear_controls(f"case_basic_{key_suffix}")
 
     form["call_line"] = normalize_call_line_for_display(form.get("call_line", ""))
     call_line_opts = get_call_line_options()
@@ -7684,8 +7686,6 @@ def render_tab_call():
             expanded=show_copy_import(st.session_state),
         ):
             if _PYPERCLIP_AVAILABLE:
-                with st.expander("クリップボード直接抽出について", expanded=False):
-                    st.caption("クリップボード読み取りはローカルPC起動時のみ有効です。")
                 if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="secondary"):
                     try:
                         text = pyperclip.paste()
@@ -7751,8 +7751,6 @@ def render_tab_call():
                     close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
                     st.rerun()
-
-        render_case_clear_controls("call")
 
         form = st.session_state.form
 

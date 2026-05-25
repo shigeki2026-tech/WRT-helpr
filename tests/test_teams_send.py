@@ -2643,14 +2643,25 @@ def test_after_call_template_caption_replaced():
 def test_clipboard_notice_is_collapsed_and_direct_extract_is_secondary():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     clipboard_index = source.index('if st.button("📋 クリップボードから直接抽出"')
-    clipboard_notice_index = source.index('with st.expander("クリップボード直接抽出について", expanded=False):')
     clipboard_button_line = source[clipboard_index:source.index("):", clipboard_index)]
 
     assert "⚠️ クリップボード読み取りはローカルPC起動時のみ有効です" not in source
+    assert "クリップボード読み取りはローカルPC起動時のみ有効です。" not in source
+    assert "クリップボード直接抽出について" not in source
     assert 'st.checkbox("クリップボード読み取りについて"' not in source
-    assert clipboard_notice_index < clipboard_index
     assert 'type="secondary"' in clipboard_button_line
     assert 'type="primary"' not in clipboard_button_line
+
+
+def test_case_clear_controls_are_under_case_basic_operation_expander():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    copy_section = source[source.index('st.markdown("##### 📋 コピー情報取り込み")'):source.index("form = st.session_state.form")]
+    basic_index = source.index("def render_shared_case_basic_editor")
+    basic_source = source[basic_index:source.index("def render_global_case_basic_panel", basic_index)]
+
+    assert 'render_case_clear_controls("call")' not in copy_section
+    assert 'with st.expander("案件操作", expanded=False):' in basic_source
+    assert 'render_case_clear_controls(f"case_basic_{key_suffix}")' in basic_source
 
 
 def test_after_call_template_auto_and_candidate_display_exists():
