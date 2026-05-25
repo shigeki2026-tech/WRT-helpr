@@ -5,7 +5,10 @@
 31,1,kohnan_jusetsu,コーナン住設,トークスクリプト,https://docs.google.com/spreadsheets/d/1YdVJupRTxaqiaZn1ADAyUqEsCMBxVs6yxAIZ0uzNUqM/edit?gid=1267412413#gid=1267412413,,住設,,コーナン,コーナン,,,high,,A32
 40,1,trial_arclands,トライアル/アークランズ,トークスクリプト,https://docs.google.com/spreadsheets/d/18Ogqmip4IrI1te8FnFeX3zVlQKS9AHG_G2xodzXT5mo/edit?pli=1&gid=975369740#gid=975369740,トライアルカンパニー;トライアル;アークランズ,,,トライアル;アークランズ,トライアル;アークランズ,,,high,,A44
 50,1,battery_solar_v2h,◆蓄電池（太陽光・V2H）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1890318217#gid=1890318217,,,,,,蓄電池;太陽光;V2H,,high,,A62
-90,1,0099_kaketsuke,0099回線（駆けつけ）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=778778469#gid=778778469,0099;家電;家電回線;住設;住設回線;0099住設,,駆けつけ;24h;24時間;365days,,,,,high,回線名と駆けつけ/24h系の保証プランで判定,A24
+59,1,keihan_real_estate_urasoe,京阪不動産（浦添）,トークスクリプト,https://docs.google.com/spreadsheets/d/16ercvnV2KXbrScWo1ckQRy_vB5quAdGXRe7HnrqMP8w/edit?gid=2141634305#gid=2141634305,京阪不動産（浦添）,,,,,,,high,京阪不動産（浦添）専用スクリプト,
+60,1,keihan_real_estate,京阪不動産,トークスクリプト,https://docs.google.com/spreadsheets/d/16ercvnV2KXbrScWo1ckQRy_vB5quAdGXRe7HnrqMP8w/edit?gid=456752797#gid=456752797,京阪不動産,,,,,,,high,京阪不動産専用スクリプト,
+62,1,keihan_night,京阪（夜間）,トークスクリプト,https://docs.google.com/spreadsheets/d/1-Ocz3gujrNN06ccoyDTuKjtoiCQarYiasUe8yVqGeSg/edit?gid=780916536#gid=780916536,京阪（夜間）;京阪大津,,,,,,,high,京阪夜間専用スクリプト,
+90,1,0099_kaketsuke,0099回線（駆けつけ）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?gid=778778469#gid=778778469,0099;家電;家電回線;住設;住設回線;0099住設;駆けつけ;駆けつけサブスク,,駆けつけ;24h;24時間;365days,,,,,high,回線名と駆けつけ/24h系の保証プランで判定,A24
 95,0,0099_jusetsu,0099回線（住設）,トークスクリプト,,住設;0099住設;住設回線;0099,住設,,,,,,needs_url,住設回線単独では確定スクリプトにしない。案件分類で住設（新築）/住設（既築）の選択が必要。,
 100,1,0099_rental,0099回線（賃貸）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1758292955#gid=1758292955,0099;家電;家電回線;住設;住設回線;0099住設,,賃貸,,,,,high,対象回線名と賃貸系の保証プランで判定。回線名不明時は候補扱い,A20
 110,1,0099_used,0099回線（既築/中古）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=539693209#gid=539693209,0099;家電;家電回線;住設;住設回線;0099住設,,既築;中古,,,,,high,対象回線名と既築/中古系の保証プランで判定。回線名不明時は候補扱い,A22

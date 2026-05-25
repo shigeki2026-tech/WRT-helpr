@@ -3445,6 +3445,9 @@ def _script_initial_line_label(call_line: str) -> str:
         return "家電"
     if "0099" in text:
         return "0099"
+    line_group = get_line_group(text)
+    if line_group in ("家電", "住設"):
+        return line_group
     return text
 
 
@@ -3581,6 +3584,7 @@ def judge_script_route(form: dict) -> dict:
     plan_text = " ".join(str(form.get(field) or "") for field in (
         "warranty_plan", "warranty_type", "store_name", "company_name",
         "case_memo", "call_memo", "symptom_detail", "notes",
+        "call_line", "call_line_original", "line_name",
     ))
     store_text = " ".join(str(form.get(field) or "") for field in (
         "store_name", "store_name_original", "dealer_name",

@@ -175,7 +175,7 @@ def test_master_script_routes_csv_exists_and_japannext_url_is_unconfirmed():
                         "data", "master_script_routes.csv")
     assert os.path.exists(path)
     df = app.load_script_routes()
-    assert len(df) == 24
+    assert len(df) == 27
     row = df[df["script_key"] == "japannext_greenhouse"].iloc[0]
     assert row["display_name"] == "ジャパンネクストorグリーンハウス"
     assert row["url"] == ""
@@ -278,6 +278,66 @@ def test_judge_script_route_business_category_routes_to_expected_scripts():
 
         assert result["display_name"] == display_name
         assert result["confidence"] == "high"
+
+
+def test_enabled_call_lines_route_to_script_or_selection_waiting():
+    df = app.load_call_lines()
+    enabled = df[df["enabled"].astype(str).str.strip() == "1"]
+    assert not enabled.empty
+
+    unresolved = []
+    for _, row in enabled.iterrows():
+        call_line = row.get("display_name") or row.get("call_line")
+        line_group = row.get("line_group", "")
+        form = make_form(
+            call_line=call_line,
+            appliance_category="家電" if line_group == "家電" else "",
+            appliance_type="家電" if line_group == "家電" else "",
+        )
+        result = app.judge_script_route(form)
+        if result["confidence"] == "none":
+            unresolved.append(call_line)
+            continue
+        if not result.get("url"):
+            assert result["confidence"] in ("needs_selection", "needs_url")
+
+    assert unresolved == []
+
+
+def test_judge_script_route_keihan_lines_use_dedicated_scripts():
+    cases = [
+        ("京阪不動産", "京阪不動産", "keihan_real_estate"),
+        ("京阪不動産（浦添）", "京阪不動産（浦添）", "keihan_real_estate_urasoe"),
+        ("京阪（夜間）", "京阪（夜間）", "keihan_night"),
+        ("京阪大津", "京阪（夜間）", "keihan_night"),
+    ]
+    for call_line, display_name, script_key in cases:
+        result = app.judge_script_route(make_form(call_line=call_line))
+
+        assert result["script_key"] == script_key
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
+        assert result["url"]
+        assert result["matched_by"] == ["回線名"]
+
+
+def test_judge_script_route_existing_dedicated_call_lines_are_preserved():
+    cases = [
+        (make_form(call_line="ビックカメラ"), "ビックカメラ・ソフマップ"),
+        (make_form(call_line="ソフマップ"), "ビックカメラ・ソフマップ"),
+        (make_form(call_line="コーナン（家電）", appliance_category="家電"), "コーナン家電"),
+        (make_form(call_line="コーナン（住設）"), "コーナン住設"),
+        (make_form(call_line="トライアルカンパニー", appliance_category="家電"), "トライアル/アークランズ"),
+        (make_form(call_line="マッハユカコ"), "マッハ・YUCACO"),
+        (make_form(call_line="なかやしき"), "なかやしき"),
+        (make_form(call_line="駆けつけサブスク"), "0099回線（駆けつけ）"),
+    ]
+    for form, display_name in cases:
+        result = app.judge_script_route(form)
+
+        assert result["display_name"] == display_name
+        assert result["confidence"] in ("high", "medium")
+        assert result["url"]
 
 
 def test_judge_script_route_jusetsu_kaketsuke_plan_overrides_base_script_with_reason():
