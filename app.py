@@ -1558,14 +1558,22 @@ def normalize_appliance_category(value: str, appliance_type: str = "", housing_p
         return category
     if category in ("住設新築", "住設 新築"):
         return "住設（新築）"
-    if category in ("住設既築", "住設 既築"):
+    if category in ("住設新設", "住設 新設"):
+        return "住設（新築）"
+    if category in ("住設既築", "住設 既築", "住設中古", "住設 中古", "住設既築/中古", "住設 既築/中古"):
         return "住設（既築）"
+    if category in ("住設賃貸", "住設 賃貸") or ("住設" in category and "賃貸" in category):
+        return "住設（賃貸）"
+    if category == "賃貸" and (appliance_type or "").strip() == "住設":
+        return "住設（賃貸）"
     base_type = (appliance_type or "").strip()
     phase = (housing_phase or "").strip()
     if base_type == "家電":
         return "家電"
     if base_type == "住設":
-        return "住設（新築）" if phase == "新築" else "住設（既築）"
+        if phase == "賃貸":
+            return "住設（賃貸）"
+        return "住設（新築）" if phase in ("新築", "新設") else "住設（既築）"
     return ""
 
 
@@ -1586,6 +1594,9 @@ def apply_appliance_category_to_form(form: dict) -> dict:
     elif category == "住設（既築）":
         form["appliance_type"] = "住設"
         form["housing_phase"] = "既築"
+    elif category == "住設（賃貸）":
+        form["appliance_type"] = "住設"
+        form["housing_phase"] = "賃貸"
     return form
 
 
@@ -3007,14 +3018,8 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
     if not session_state.get("_pending_case_clear"):
         return False
     reset_case_session_state(session_state, settings)
-    for key in [
-        "_pending_case_clear",
-        "clear_case_pending_call",
-        "clear_case_pending_after",
-        "clear_case_done_call",
-        "clear_case_done_after",
-    ]:
-        if key in session_state:
+    for key in list(session_state.keys()):
+        if key == "_pending_case_clear" or key.startswith("clear_case_pending_") or key.startswith("clear_case_done_"):
             del session_state[key]
     session_state["case_memo_global"] = ""
     session_state["form"]["call_memo"] = ""
@@ -3046,7 +3051,7 @@ CASE_BASIC_FIELD_TO_WIDGET_STEM = {
     "product_price": "case_basic_product_price",
 }
 
-APPLIANCE_CATEGORY_OPTIONS = ["", "家電", "住設（新築）", "住設（既築）"]
+APPLIANCE_CATEGORY_OPTIONS = ["", "家電", "住設（新築）", "住設（既築）", "住設（賃貸）"]
 
 
 def get_case_basic_revision(session_state) -> int:
@@ -3481,6 +3486,8 @@ def _script_route_jusetsu_display(category: str, phase: str) -> str:
         return "0099回線（住設新築）"
     if category == "住設（既築）" or phase == "既築":
         return "0099回線（住設既築）"
+    if category == "住設（賃貸）" or phase == "賃貸":
+        return "0099回線（賃貸）"
     return ""
 
 
@@ -3510,6 +3517,16 @@ def _jusetsu_script_route_selection(form: dict, df: pd.DataFrame, initial_line: 
     phase = (form.get("housing_phase") or "").strip()
     if initial_line not in ("住設", "0099"):
         return None
+    if category == "住設（賃貸）" or phase == "賃貸":
+        row = _script_route_row_by_key(df, "0099_rental")
+        if row is not None:
+            return _script_route_row_result(
+                row,
+                ["回線名", "案件分類"],
+                initial_line,
+                "high",
+                "住設賃貸用の参照スクリプト。",
+            )
     if category == "住設（新築）" or phase == "新築":
         row = _script_route_row_by_key(df, "0099_kaden_new")
         if row is not None:
@@ -3539,7 +3556,7 @@ def _jusetsu_script_route_selection(form: dict, df: pd.DataFrame, initial_line: 
             "url": "",
             "confidence": "needs_selection",
             "matched_by": ["回線名"],
-            "memo": "案件分類で「住設新築」または「住設既築」を選択してください",
+            "memo": "案件分類で「住設新築」「住設既築」または「住設賃貸」を選択してください",
             "initial_line": initial_line,
             "correction_reason": "",
         }
@@ -5320,7 +5337,7 @@ def build_script_reference_info(decision: dict) -> dict:
         if matched:
             message = ""
         elif confidence == "needs_selection":
-            message = "案件分類で「住設新築 / 住設既築」を選択してください"
+            message = "案件分類で「住設新築 / 住設既築 / 住設賃貸」を選択してください"
         else:
             message = "URL未確認"
         if script_route.get("memo"):
@@ -5607,7 +5624,7 @@ def build_next_confirmation_sections(decision: dict, form: dict | None = None) -
         call_required = ["回線名を選択", "保証情報を貼り付け"]
         script_reference = build_script_reference_info(decision)
         if script_reference.get("confidence") == "needs_selection":
-            call_required.append("案件分類で「住設新築 / 住設既築」を選択")
+            call_required.append("案件分類で「住設新築 / 住設既築 / 住設賃貸」を選択")
         return {
             "initial": True,
             "call_required": call_required,
@@ -5650,7 +5667,7 @@ def build_next_confirmation_sections(decision: dict, form: dict | None = None) -
 
     script_reference = build_script_reference_info(decision)
     if script_reference.get("confidence") == "needs_selection":
-        call_required.append("案件分類で「住設新築 / 住設既築」を選択")
+        call_required.append("案件分類で「住設新築 / 住設既築 / 住設賃貸」を選択")
     if not script_reference.get("matched") and not missing.get("スクリプト"):
         after_call.append("正式Excelを参照")
 
@@ -6865,14 +6882,36 @@ def render_tab_local_call_memo_enabled() -> bool:
 def render_case_clear_controls(scope: str, use_container_width: bool = False) -> None:
     pending_key = f"clear_case_pending_{scope}"
     done_key = f"clear_case_done_{scope}"
+    confirm_message = "入力中の案件情報をすべてクリアします。必要な送信・記録が完了していることを確認してください。"
+    dialog_factory = getattr(st, "dialog", None)
+
+    if callable(dialog_factory):
+        @dialog_factory("この案件をクリア")
+        def _confirm_case_clear():
+            st.warning(confirm_message)
+            col_run, col_cancel = st.columns(2)
+            with col_run:
+                if st.button("クリア実行", key=f"clear_case_dialog_execute_{scope}", type="primary",
+                             use_container_width=True):
+                    request_case_clear(st.session_state)
+                    st.rerun()
+            with col_cancel:
+                if st.button("キャンセル", key=f"clear_case_dialog_cancel_{scope}", use_container_width=True):
+                    st.rerun()
+
+        if st.button("この案件をクリア", key=f"clear_case_prepare_{scope}", type="secondary",
+                     use_container_width=use_container_width):
+            _confirm_case_clear()
+        return
+
     if not st.session_state.get(pending_key):
-        if st.button("🧹 この案件をクリア", key=f"clear_case_prepare_{scope}", type="secondary",
+        if st.button("この案件をクリア", key=f"clear_case_prepare_{scope}", type="secondary",
                      use_container_width=use_container_width):
             st.session_state[pending_key] = True
             st.rerun()
         return
 
-    st.warning("次の案件へ移る前に、必要な送信・記録が完了していることを確認してください。")
+    st.warning(confirm_message)
     done = st.checkbox("送信・記録が完了しています", key=done_key)
     col_run, col_cancel = st.columns(2)
     with col_run:
@@ -7288,12 +7327,14 @@ def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
 
 
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
-    if show_template_result:
-        st.markdown("##### 🧾 案件基本（共通）")
-    else:
-        st.markdown("##### 案件基本")
-    with st.expander("案件操作", expanded=False):
-        render_case_clear_controls(f"case_basic_{key_suffix}")
+    header_col, action_col = st.columns([2.2, 1])
+    with header_col:
+        if show_template_result:
+            st.markdown("##### 🧾 案件基本（共通）")
+        else:
+            st.markdown("##### 案件基本")
+    with action_col:
+        render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)
 
     form["call_line"] = normalize_call_line_for_display(form.get("call_line", ""))
     call_line_opts = get_call_line_options()
@@ -8213,7 +8254,6 @@ def render_tab_call():
 def render_tab_after_call():
     st.subheader("終話後処理")
     form = st.session_state.form
-    render_case_clear_controls("after")
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]

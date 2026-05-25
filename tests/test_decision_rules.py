@@ -234,6 +234,7 @@ def test_judge_script_route_jusetsu_line_waits_for_category_selection():
         assert result["url"] == ""
         assert result["matched_by"] == ["回線名"]
         assert "住設新築" in result["memo"]
+        assert "住設賃貸" in result["memo"]
         assert "URL未確認" not in result["memo"]
 
 
@@ -241,8 +242,13 @@ def test_judge_script_route_jusetsu_category_confirms_new_or_existing_script():
     cases = [
         ("住設新築", "0099回線（住設新築）"),
         ("住設（新築）", "0099回線（住設新築）"),
+        ("住設新設", "0099回線（住設新築）"),
         ("住設既築", "0099回線（住設既築）"),
         ("住設（既築）", "0099回線（住設既築）"),
+        ("住設中古", "0099回線（住設既築）"),
+        ("住設既築/中古", "0099回線（住設既築）"),
+        ("住設賃貸", "0099回線（賃貸）"),
+        ("住設（賃貸）", "0099回線（賃貸）"),
     ]
     for category, display_name in cases:
         result = app.judge_script_route(make_form(call_line="住設", appliance_category=category))
@@ -251,7 +257,27 @@ def test_judge_script_route_jusetsu_category_confirms_new_or_existing_script():
         assert result["confidence"] == "high"
         assert result["url"]
         assert result["matched_by"] == ["回線名", "案件分類"]
-        assert "URLは0099回線" in result["memo"]
+        if display_name == "0099回線（賃貸）":
+            assert "賃貸" in result["memo"]
+        else:
+            assert "URLは0099回線" in result["memo"]
+
+
+def test_judge_script_route_business_category_routes_to_expected_scripts():
+    cases = [
+        (make_form(call_line="家電", appliance_category="家電"), "0099回線（家電/新築）"),
+        (make_form(call_line="住設", appliance_category="住設（新築）"), "0099回線（住設新築）"),
+        (make_form(call_line="住設", appliance_category="住設新設"), "0099回線（住設新築）"),
+        (make_form(call_line="住設", appliance_category="住設既築/中古"), "0099回線（住設既築）"),
+        (make_form(call_line="住設", appliance_category="住設（賃貸）"), "0099回線（賃貸）"),
+        (make_form(call_line="住設", appliance_category="賃貸", appliance_type="住設"), "0099回線（賃貸）"),
+        (make_form(call_line="住設", appliance_category="住設（既築）", warranty_plan="駆けつけ"), "0099回線（駆けつけ）"),
+    ]
+    for form, display_name in cases:
+        result = app.judge_script_route(form)
+
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
 
 
 def test_judge_script_route_jusetsu_kaketsuke_plan_overrides_base_script_with_reason():
@@ -371,7 +397,7 @@ def test_script_tag_uses_reference_route_for_jusetsu_lines_with_selection_waitin
         assert script_tag["matched"] is False
         assert script_tag["url"] == ""
         assert script_tag["color"] == app.TAG_COLOR_WARNING
-        assert "住設新築 / 住設既築" in script_tag["quaternary"]
+        assert "住設新築 / 住設既築 / 住設賃貸" in script_tag["quaternary"]
         assert "URL未確認" not in script_tag["quaternary"]
 
 
@@ -393,7 +419,7 @@ def test_next_confirmation_prompts_jusetsu_category_selection():
     decision = app.run_decision(form)
     sections = app.build_next_confirmation_sections(decision, form)
 
-    assert "案件分類で「住設新築 / 住設既築」を選択" in sections["call_required"]
+    assert "案件分類で「住設新築 / 住設既築 / 住設賃貸」を選択" in sections["call_required"]
 
 
 def test_script_reference_marks_jusetsu_kaketsuke_script_change():
@@ -479,6 +505,8 @@ def test_appendix_repair_policy_manufacturer_and_condition_priority():
 
 
 def test_appliance_category_maps_to_legacy_type_and_housing_phase():
+    assert "住設（賃貸）" in app.APPLIANCE_CATEGORY_OPTIONS
+
     new_home = app.apply_appliance_category_to_form({"appliance_category": "住設（新築）"})
     assert new_home["appliance_type"] == "住設"
     assert new_home["housing_phase"] == "新築"
@@ -486,6 +514,10 @@ def test_appliance_category_maps_to_legacy_type_and_housing_phase():
     existing_home = app.apply_appliance_category_to_form({"appliance_category": "住設（既築）"})
     assert existing_home["appliance_type"] == "住設"
     assert existing_home["housing_phase"] == "既築"
+
+    rental_home = app.apply_appliance_category_to_form({"appliance_category": "住設（賃貸）"})
+    assert rental_home["appliance_type"] == "住設"
+    assert rental_home["housing_phase"] == "賃貸"
 
     home_appliance = app.apply_appliance_category_to_form({"appliance_category": "家電"})
     assert home_appliance["appliance_type"] == "家電"

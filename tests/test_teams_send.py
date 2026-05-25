@@ -2653,15 +2653,34 @@ def test_clipboard_notice_is_collapsed_and_direct_extract_is_secondary():
     assert 'type="primary"' not in clipboard_button_line
 
 
-def test_case_clear_controls_are_under_case_basic_operation_expander():
+def test_case_clear_controls_are_near_case_basic_heading_not_copy_import():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     copy_section = source[source.index('st.markdown("##### 📋 コピー情報取り込み")'):source.index("form = st.session_state.form")]
     basic_index = source.index("def render_shared_case_basic_editor")
     basic_source = source[basic_index:source.index("def render_global_case_basic_panel", basic_index)]
 
     assert 'render_case_clear_controls("call")' not in copy_section
-    assert 'with st.expander("案件操作", expanded=False):' in basic_source
-    assert 'render_case_clear_controls(f"case_basic_{key_suffix}")' in basic_source
+    assert 'render_case_clear_controls("after")' not in source
+    assert 'with st.expander("案件操作", expanded=False):' not in basic_source
+    assert 'render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)' in basic_source
+    heading_index = basic_source.index('st.markdown("##### 🧾 案件基本（共通）")')
+    clear_index = basic_source.index('render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)')
+    first_field_index = basic_source.index('form["call_line"] = normalize_call_line_for_display')
+    assert heading_index < clear_index < first_field_index
+
+
+def test_case_clear_controls_require_confirmation_dialog_or_fallback():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    controls_start = source.index("def render_case_clear_controls")
+    controls_end = source.index("def build_case_basic_template_display", controls_start)
+    controls_source = source[controls_start:controls_end]
+
+    assert '@dialog_factory("この案件をクリア")' in controls_source
+    assert "入力中の案件情報をすべてクリアします。必要な送信・記録が完了していることを確認してください。" in controls_source
+    assert 'st.button("この案件をクリア"' in controls_source
+    assert 'st.button("🧹 この案件をクリア"' not in controls_source
+    assert "request_case_clear(st.session_state)" in controls_source
+    assert 'st.button("キャンセル"' in controls_source
 
 
 def test_after_call_template_auto_and_candidate_display_exists():
