@@ -271,6 +271,30 @@ def test_judge_script_route_jusetsu_kaketsuke_plan_overrides_base_script_with_re
         assert result["previous_script_display"] == "0099回線（住設既築）"
 
 
+def test_judge_script_route_nakayashiki_matches_call_line_without_legacy_fallback():
+    result = app.judge_script_route(make_form(call_line="なかやしき"))
+
+    assert result["script_key"] == "nakayashiki"
+    assert result["display_name"] == "なかやしき"
+    assert result["url"]
+    assert "回線名" in result["matched_by"]
+
+    decision = app.run_decision(make_form(call_line="なかやしき"))
+    info = app.build_script_reference_info(decision)
+    assert info["script_key"] == "nakayashiki"
+    assert info["display"] == "なかやしき"
+    assert info["display"] != "住設受付"
+
+
+def test_judge_script_route_nakayashiki_matches_store_name():
+    result = app.judge_script_route(make_form(store_name="なかやしき"))
+
+    assert result["script_key"] == "nakayashiki"
+    assert result["display_name"] == "なかやしき"
+    assert result["url"]
+    assert "販売店" in result["matched_by"]
+
+
 def test_judge_script_route_plan_only_is_medium_candidate_not_high():
     rental = app.judge_script_route(make_form(warranty_plan="賃貸住宅プラン"))
     assert rental["display_name"] == "0099回線（賃貸）"
@@ -401,6 +425,16 @@ def test_script_tag_shows_jusetsu_kaketsuke_correction_and_matches_reference_dis
     assert "補正理由：" in script_tag["quaternary"]
     assert "駆けつけ条件" in script_tag["quaternary"]
     assert script_tag["quinary"] == "confidence: high"
+
+
+def test_script_tag_and_reference_show_nakayashiki_for_call_line():
+    script_tag, script_reference = _script_tag_for_form(make_form(call_line="なかやしき"))
+
+    assert script_reference["script_key"] == "nakayashiki"
+    assert script_reference["display"] == "なかやしき"
+    assert script_tag["secondary"] == "なかやしき"
+    assert script_tag["secondary"] == script_reference["display"]
+    assert script_tag["matched"] is True
 
 
 def test_script_tag_does_not_fall_back_to_missing_when_line_route_exists_without_category():

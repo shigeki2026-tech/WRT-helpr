@@ -3567,10 +3567,12 @@ def judge_script_route(form: dict) -> dict:
     ))
     store_text = " ".join(str(form.get(field) or "") for field in (
         "store_name", "store_name_original", "dealer_name",
+        "call_line", "call_line_original", "line_name",
     ))
     company_text = " ".join(str(form.get(field) or "") for field in (
         "company_name", "store_name", "manufacturer", "manufacturer_original",
         "warranty_plan", "product", "product_original",
+        "call_line", "call_line_original", "line_name",
     ))
     product_text = " ".join(str(form.get(field) or "") for field in (
         "product", "product_original", "series", "symptom_detail",
