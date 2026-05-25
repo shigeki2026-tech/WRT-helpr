@@ -7292,7 +7292,6 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         st.markdown("##### 🧾 案件基本（共通）")
     else:
         st.markdown("##### 案件基本")
-    st.caption("基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。")
 
     form["call_line"] = normalize_call_line_for_display(form.get("call_line", ""))
     call_line_opts = get_call_line_options()
@@ -7679,18 +7678,15 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
-        render_case_clear_controls("call")
-
-        toggle_label = "📋 コピー情報取り込みを閉じる" if show_copy_import(st.session_state) else "📋 コピー情報取り込みを開く"
-        if st.button(toggle_label, key="toggle_copy_import", use_container_width=True):
-            set_show_copy_import(st.session_state, not show_copy_import(st.session_state))
-            st.rerun()
-
-        if show_copy_import(st.session_state):
-            st.markdown("##### 📋 コピー情報取り込み")
+        st.markdown("##### 📋 コピー情報取り込み")
+        with st.expander(
+            "保証画面などのテキストを貼り付ける",
+            expanded=show_copy_import(st.session_state),
+        ):
             if _PYPERCLIP_AVAILABLE:
-                st.caption("⚠️ クリップボード読み取りはローカルPC起動時のみ有効です")
-                if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="primary"):
+                with st.expander("クリップボード直接抽出について", expanded=False):
+                    st.caption("クリップボード読み取りはローカルPC起動時のみ有効です。")
+                if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="secondary"):
                     try:
                         text = pyperclip.paste()
                         if not text or not text.strip():
@@ -7755,6 +7751,8 @@ def render_tab_call():
                     close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
                     st.rerun()
+
+        render_case_clear_controls("call")
 
         form = st.session_state.form
 

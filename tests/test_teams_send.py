@@ -1591,12 +1591,16 @@ def test_copy_import_success_paths_close_only_after_form_reflection_or_clipboard
     assert "request_case_basic_widget_refresh(st.session_state)" in reflect_area
 
 
-def test_copy_import_uses_self_managed_ui_not_expander():
+def test_copy_import_uses_expander_not_toggle_button():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    copy_section = source[source.index("toggle_copy_import"):source.index("form = st.session_state.form")]
+    copy_section = source[source.index('st.markdown("##### 📋 コピー情報取り込み")'):source.index("form = st.session_state.form")]
 
-    assert "show_copy_import(st.session_state)" in copy_section
-    assert "st.expander" not in copy_section
+    assert '"📋 コピー情報取り込みを閉じる"' not in source
+    assert '"📋 コピー情報取り込みを開く"' not in source
+    assert 'st.button(toggle_label' not in source
+    assert 'with st.expander(' in copy_section
+    assert '"保証画面などのテキストを貼り付ける"' in copy_section
+    assert "expanded=show_copy_import(st.session_state)" in copy_section
 
 
 def test_copy_import_failure_paths_do_not_close_panel():
@@ -2633,7 +2637,20 @@ def test_after_call_template_caption_replaced():
 
     assert "回線名を選択するとテンプレートが表示されます" not in source
     assert "販売店テンプレート判定：" not in source
-    assert "基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。" in source
+    assert "基本項目を変更すると、テンプレート判定・ラクテル文・Teams報告文に反映されます。" not in source
+
+
+def test_clipboard_notice_is_collapsed_and_direct_extract_is_secondary():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    clipboard_index = source.index('if st.button("📋 クリップボードから直接抽出"')
+    clipboard_notice_index = source.index('with st.expander("クリップボード直接抽出について", expanded=False):')
+    clipboard_button_line = source[clipboard_index:source.index("):", clipboard_index)]
+
+    assert "⚠️ クリップボード読み取りはローカルPC起動時のみ有効です" not in source
+    assert 'st.checkbox("クリップボード読み取りについて"' not in source
+    assert clipboard_notice_index < clipboard_index
+    assert 'type="secondary"' in clipboard_button_line
+    assert 'type="primary"' not in clipboard_button_line
 
 
 def test_after_call_template_auto_and_candidate_display_exists():
