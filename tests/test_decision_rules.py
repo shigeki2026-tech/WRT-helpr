@@ -3075,13 +3075,29 @@ def test_script_reference_moved_into_decision_tags_panel():
     assert '"url"' in tags_panel_source or "link" in tags_panel_source
 
 
-def test_call_result_area_is_named_call_navigation():
+def test_call_result_area_starts_with_script_reference_without_large_heading():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
     call_tab_source = source[call_tab_start:]
 
     assert 'st.subheader("⚡ 通話中判定結果")' not in call_tab_source
-    assert 'st.subheader("⚡ 通話中ナビ")' in call_tab_source
+    assert 'st.subheader("⚡ 通話中ナビ")' not in call_tab_source
+    assert 'st.markdown("##### 使用するトークスクリプト")' in call_tab_source
+
+
+def test_call_result_script_reference_keeps_debug_details_collapsed():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    script_heading = source.index('st.markdown("##### 使用するトークスクリプト")', call_tab_start)
+    hearing_render = source.index("render_call_hearing_inputs(st.session_state.form)", script_heading)
+    normal_script_source = source[script_heading:hearing_render]
+
+    assert "[該当箇所を開く]" in normal_script_source
+    assert "スクリプトURL未登録：" in normal_script_source
+    assert "手動で正式スクリプトを確認してください。" in normal_script_source
+    assert "confidence:" not in normal_script_source
+    assert "判定根拠：" not in normal_script_source
+    assert "聴取事項：" not in normal_script_source
 
 
 def test_decision_tags_are_split_structured_items():

@@ -7929,9 +7929,8 @@ def render_tab_call():
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
 
-    # UI改修: 右カラムは通話中ナビ、聴取内容、判定詳細の順で表示
+    # UI改修: 右カラムは参照スクリプト、聴取内容、補助詳細の順で表示
     with col_result:
-        st.subheader("⚡ 通話中ナビ")
         manual_check = st.session_state.get("call_check_manual", {})
         script_reference = build_script_reference_info(decision)
         script_guidance = build_script_guidance_panel_info(st.session_state.form, decision, script_reference)
@@ -7940,71 +7939,40 @@ def render_tab_call():
             diagnostics, warranty_result, cost_result, manual_check,
             script_guidance.get("hearing_items", []),
         )
-        now_action_plan = build_now_action_plan(
-            st.session_state.form, repair_type, needs_data_erase,
-            diagnostics, warranty_result, cost_result, manual_check,
-            script_guidance.get("hearing_items", []),
-        )
 
-        st.markdown("### ✅ 次に確認すること")
-        call_required_items = now_action_plan["call_required"]
-        hearing_missing_items = [
-            item for item in call_required_items
-            if item.get("id") in HEARING_INPUT_FIELD_IDS
-        ]
-        regular_required_items = [
-            item for item in call_required_items
-            if item.get("id") not in HEARING_INPUT_FIELD_IDS
-        ]
-        if hearing_missing_items:
-            st.markdown("**未入力：** " + " / ".join(item["label"] for item in hearing_missing_items))
-        if regular_required_items:
-            for idx, item in enumerate(regular_required_items):
-                render_now_action_item(item, st.session_state.form, idx)
-        if not hearing_missing_items and not regular_required_items:
-            st.success("通話中の必須確認はありません")
-        if now_action_plan["completed"]:
-            with st.expander("✅ 完了済み", expanded=False):
-                for item in now_action_plan["completed"]:
-                    st.markdown(f"- {format_completed_check_item(item, st.session_state.form)}")
-
-        st.markdown("##### 参照スクリプト")
-        st.markdown(f"推奨：**{script_reference.get('display', '未判定')}**")
-        if script_reference.get("initial_line"):
-            st.caption(f"初期回線：{script_reference.get('initial_line')}")
-        if script_reference.get("basis"):
-            st.caption(f"判定根拠：{script_reference.get('basis')}")
-        if script_reference.get("correction_reason"):
-            st.caption(f"補正理由：{script_reference.get('correction_reason')}")
-        if script_reference.get("script_changed") and script_reference.get("previous_script_display"):
-            st.caption(
-                f"優先切替：{script_reference.get('previous_script_display')} → "
-                f"{script_reference.get('current_script_display') or script_reference.get('display')}"
-            )
-        if script_reference.get("confidence"):
-            st.caption(f"confidence: {script_reference.get('confidence')}")
+        st.markdown("##### 使用するトークスクリプト")
+        script_display = script_reference.get("display", "未判定")
+        st.markdown(f"推奨：**{script_display}**")
         if script_reference.get("matched") and script_reference.get("url"):
-            st.markdown(f"[{script_reference.get('link_text', 'スクリプトを開く')}]({script_reference['url']})")
+            st.markdown(f"[該当箇所を開く]({script_reference['url']})")
         elif script_reference.get("message"):
-            st.warning(script_reference.get("message"))
+            st.warning(f"スクリプトURL未登録：{script_display}\n\n手動で正式スクリプトを確認してください。")
 
         hearing_items = script_guidance.get("hearing_items", [])
-        if hearing_items:
-            compact_hearing = " / ".join(hearing_items[:5])
-            if len(hearing_items) > 5:
-                compact_hearing += " / ..."
-            st.caption(f"聴取事項：{compact_hearing}")
-        if len(hearing_items) > 5 or script_guidance.get("notes"):
-            with st.expander("📘 スクリプト補助の詳細", expanded=False):
-                st.markdown("**聴取事項：**")
-                for hearing_item in hearing_items:
-                    st.markdown(f"- {hearing_item}")
-                if script_guidance.get("notes"):
-                    st.markdown("**注意：**")
-                    st.info(script_guidance["notes"])
 
         st.divider()
         render_call_hearing_inputs(st.session_state.form)
+        with st.expander("📘 スクリプト補助の詳細", expanded=False):
+            if script_reference.get("initial_line"):
+                st.caption(f"初期回線：{script_reference.get('initial_line')}")
+            if script_reference.get("basis"):
+                st.caption(f"判定根拠：{script_reference.get('basis')}")
+            if script_reference.get("correction_reason"):
+                st.caption(f"補正理由：{script_reference.get('correction_reason')}")
+            if script_reference.get("script_changed") and script_reference.get("previous_script_display"):
+                st.caption(
+                    f"優先切替：{script_reference.get('previous_script_display')} → "
+                    f"{script_reference.get('current_script_display') or script_reference.get('display')}"
+                )
+            if script_reference.get("confidence"):
+                st.caption(f"confidence: {script_reference.get('confidence')}")
+            if hearing_items:
+                st.markdown("**聴取事項：**")
+                for hearing_item in hearing_items:
+                    st.markdown(f"- {hearing_item}")
+            if script_guidance.get("notes"):
+                st.markdown("**注意：**")
+                st.info(script_guidance["notes"])
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 

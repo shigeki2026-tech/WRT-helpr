@@ -806,13 +806,13 @@ def test_call_hearing_block_owns_stable_widget_keys():
     assert 'key="call_hearing_occurrence_frequency_text"' in hearing_source
 
 
-def test_call_hearing_block_renders_after_navigation_now_action():
+def test_call_hearing_block_renders_after_script_reference():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
+    script_reference_index = source.index('st.markdown("##### 使用するトークスクリプト")', call_tab_start)
     hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
-    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
 
-    assert now_action_index < hearing_index
+    assert script_reference_index < hearing_index
 
 
 def test_call_hearing_block_renders_after_script_support_area():
@@ -854,27 +854,24 @@ def test_now_action_does_not_show_large_hearing_info_boxes():
     assert "発生頻度を選択してください" not in now_source
 
 
-def test_now_action_compact_missing_list_for_hearing_fields():
+def test_right_column_does_not_render_inline_next_confirmation_list():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
-    summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
-    now_action_source = source[now_action_index:summary_index]
+    summary_index = source.index("summary_display = build_summary_card_display", call_tab_start)
+    right_column_source = source[call_tab_start:summary_index]
 
-    assert "hearing_missing_items" in now_action_source
-    assert "regular_required_items" in now_action_source
-    assert " / \".join(item[\"label\"] for item in hearing_missing_items)" in now_action_source
-    assert "render_now_action_item(item, st.session_state.form, idx)" in now_action_source
+    assert 'st.markdown("### ✅ 次に確認すること")' not in right_column_source
+    assert "now_action_plan" not in right_column_source
+    assert "render_now_action_item(item, st.session_state.form, idx)" not in right_column_source
 
 
-def test_now_action_does_not_show_success_when_only_hearing_items_are_missing():
+def test_script_support_details_are_below_hearing_block():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
-    summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
-    now_action_source = source[now_action_index:summary_index]
+    hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    support_detail_index = source.index('with st.expander("📘 スクリプト補助の詳細", expanded=False):', call_tab_start)
 
-    assert "if not hearing_missing_items and not regular_required_items:" in now_action_source
+    assert hearing_index < support_detail_index
 
 
 def test_attention_memo_preview_is_in_hearing_block_only():
@@ -883,13 +880,13 @@ def test_attention_memo_preview_is_in_hearing_block_only():
     hearing_end = source.index("def render_now_action_item", hearing_start)
     hearing_source = source[hearing_start:hearing_end]
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
-    summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
-    now_action_source = source[now_action_index:summary_index]
+    hearing_render_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    summary_index = source.index("summary_display = build_summary_card_display", hearing_render_index)
+    right_column_after_hearing_source = source[hearing_render_index:summary_index]
 
     assert "修理依頼書メモ反映予定" in hearing_source
     assert "📋 修理依頼書メモ反映予定" not in hearing_source
-    assert "attention_preview_lines = build_attention_memo_preview_lines" not in now_action_source
+    assert "attention_preview_lines = build_attention_memo_preview_lines" not in right_column_after_hearing_source
 
 
 def test_now_action_has_missing_guidance_only_for_hearing_fields():
