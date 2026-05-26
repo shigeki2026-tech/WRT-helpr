@@ -175,7 +175,7 @@ def test_master_script_routes_csv_exists_and_japannext_url_is_unconfirmed():
                         "data", "master_script_routes.csv")
     assert os.path.exists(path)
     df = app.load_script_routes()
-    assert len(df) == 27
+    assert len(df) == 29
     row = df[df["script_key"] == "japannext_greenhouse"].iloc[0]
     assert row["display_name"] == "ジャパンネクストorグリーンハウス"
     assert row["url"] == ""
@@ -319,6 +319,36 @@ def test_judge_script_route_keihan_lines_use_dedicated_scripts():
         assert result["confidence"] == "high"
         assert result["url"]
         assert result["matched_by"] == ["回線名"]
+
+
+def test_judge_script_route_fukuya_and_mitsui_lines_use_dedicated_scripts():
+    cases = [
+        ("福屋工務店", "福屋工務店", "fukuya_ys"),
+        ("三井デザイン", "三井デザイン", "mitsui_design"),
+    ]
+    for call_line, display_name, script_key in cases:
+        result = app.judge_script_route(make_form(call_line=call_line))
+
+        assert result["script_key"] == script_key
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
+        assert result["url"]
+        assert result["matched_by"] == ["回線名"]
+
+
+def test_judge_script_route_yamada_homes_stays_on_generic_jusetsu_routes():
+    cases = [
+        ("住設（新築）", "0099回線（住設新築）"),
+        ("住設（既築）", "0099回線（住設既築）"),
+        ("住設（賃貸）", "0099回線（賃貸）"),
+    ]
+    for category, display_name in cases:
+        result = app.judge_script_route(make_form(call_line="ヤマダホームズ", appliance_category=category))
+
+        assert result["script_key"] != "yamada_homes"
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
+        assert result["url"]
 
 
 def test_judge_script_route_existing_dedicated_call_lines_are_preserved():
@@ -3043,6 +3073,15 @@ def test_script_reference_moved_into_decision_tags_panel():
     tags_panel_source = source[tags_panel_start:tags_panel_end]
 
     assert '"url"' in tags_panel_source or "link" in tags_panel_source
+
+
+def test_call_result_area_is_named_call_navigation():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    call_tab_source = source[call_tab_start:]
+
+    assert 'st.subheader("⚡ 通話中判定結果")' not in call_tab_source
+    assert 'st.subheader("⚡ 通話中ナビ")' in call_tab_source
 
 
 def test_decision_tags_are_split_structured_items():

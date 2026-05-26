@@ -806,13 +806,13 @@ def test_call_hearing_block_owns_stable_widget_keys():
     assert 'key="call_hearing_occurrence_frequency_text"' in hearing_source
 
 
-def test_call_hearing_block_renders_before_now_action():
+def test_call_hearing_block_renders_after_navigation_now_action():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
     hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
-    now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
+    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
 
-    assert hearing_index < now_action_index
+    assert now_action_index < hearing_index
 
 
 def test_call_hearing_block_renders_after_script_support_area():
@@ -857,7 +857,7 @@ def test_now_action_does_not_show_large_hearing_info_boxes():
 def test_now_action_compact_missing_list_for_hearing_fields():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
+    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
     summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
     now_action_source = source[now_action_index:summary_index]
 
@@ -870,7 +870,7 @@ def test_now_action_compact_missing_list_for_hearing_fields():
 def test_now_action_does_not_show_success_when_only_hearing_items_are_missing():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
+    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
     summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
     now_action_source = source[now_action_index:summary_index]
 
@@ -883,7 +883,7 @@ def test_attention_memo_preview_is_in_hearing_block_only():
     hearing_end = source.index("def render_now_action_item", hearing_start)
     hearing_source = source[hearing_start:hearing_end]
     call_tab_start = source.index("def render_tab_call")
-    now_action_index = source.index('st.markdown("### ✅ 今聞くこと")', call_tab_start)
+    now_action_index = source.index('st.markdown("### ✅ 次に確認すること")', call_tab_start)
     summary_index = source.index("summary_display = build_summary_card_display", now_action_index)
     now_action_source = source[now_action_index:summary_index]
 

@@ -7929,9 +7929,9 @@ def render_tab_call():
     guidance_text = build_customer_cost_guidance(
         repair_type, cost_estimate, script_result["price_guidance_allowed"])
 
-    # UI改修: 右カラムはゾーンB/C/Dの順で判定結果を表示
+    # UI改修: 右カラムは通話中ナビ、聴取内容、判定詳細の順で表示
     with col_result:
-        st.subheader("⚡ 通話中判定結果")
+        st.subheader("⚡ 通話中ナビ")
         manual_check = st.session_state.get("call_check_manual", {})
         script_reference = build_script_reference_info(decision)
         script_guidance = build_script_guidance_panel_info(st.session_state.form, decision, script_reference)
@@ -7945,6 +7945,28 @@ def render_tab_call():
             diagnostics, warranty_result, cost_result, manual_check,
             script_guidance.get("hearing_items", []),
         )
+
+        st.markdown("### ✅ 次に確認すること")
+        call_required_items = now_action_plan["call_required"]
+        hearing_missing_items = [
+            item for item in call_required_items
+            if item.get("id") in HEARING_INPUT_FIELD_IDS
+        ]
+        regular_required_items = [
+            item for item in call_required_items
+            if item.get("id") not in HEARING_INPUT_FIELD_IDS
+        ]
+        if hearing_missing_items:
+            st.markdown("**未入力：** " + " / ".join(item["label"] for item in hearing_missing_items))
+        if regular_required_items:
+            for idx, item in enumerate(regular_required_items):
+                render_now_action_item(item, st.session_state.form, idx)
+        if not hearing_missing_items and not regular_required_items:
+            st.success("通話中の必須確認はありません")
+        if now_action_plan["completed"]:
+            with st.expander("✅ 完了済み", expanded=False):
+                for item in now_action_plan["completed"]:
+                    st.markdown(f"- {format_completed_check_item(item, st.session_state.form)}")
 
         st.markdown("##### 参照スクリプト")
         st.markdown(f"推奨：**{script_reference.get('display', '未判定')}**")
@@ -7981,29 +8003,8 @@ def render_tab_call():
                     st.markdown("**注意：**")
                     st.info(script_guidance["notes"])
 
+        st.divider()
         render_call_hearing_inputs(st.session_state.form)
-
-        st.markdown("### ✅ 今聞くこと")
-        call_required_items = now_action_plan["call_required"]
-        hearing_missing_items = [
-            item for item in call_required_items
-            if item.get("id") in HEARING_INPUT_FIELD_IDS
-        ]
-        regular_required_items = [
-            item for item in call_required_items
-            if item.get("id") not in HEARING_INPUT_FIELD_IDS
-        ]
-        if hearing_missing_items:
-            st.markdown("**未入力：** " + " / ".join(item["label"] for item in hearing_missing_items))
-        if regular_required_items:
-            for idx, item in enumerate(regular_required_items):
-                render_now_action_item(item, st.session_state.form, idx)
-        if not hearing_missing_items and not regular_required_items:
-            st.success("通話中の必須確認はありません")
-        if now_action_plan["completed"]:
-            with st.expander("✅ 完了済み", expanded=False):
-                for item in now_action_plan["completed"]:
-                    st.markdown(f"- {format_completed_check_item(item, st.session_state.form)}")
 
         # UI v3: ゾーンC（判定サマリー大カード4枚）
 
