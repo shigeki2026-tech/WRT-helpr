@@ -7946,7 +7946,7 @@ def render_tab_call():
         if script_reference.get("matched") and script_reference.get("url"):
             st.markdown(f"[該当箇所を開く]({script_reference['url']})")
         elif script_reference.get("message"):
-            st.warning(f"スクリプトURL未登録：{script_display}\n\n手動で正式スクリプトを確認してください。")
+            st.caption(f"未登録：{script_display}（手動確認）")
 
         hearing_items = script_guidance.get("hearing_items", [])
 
@@ -7966,6 +7966,8 @@ def render_tab_call():
                 )
             if script_reference.get("confidence"):
                 st.caption(f"confidence: {script_reference.get('confidence')}")
+            if script_reference.get("message"):
+                st.info("手動で正式スクリプトを確認してください。")
             if hearing_items:
                 st.markdown("**聴取事項：**")
                 for hearing_item in hearing_items:

@@ -3093,8 +3093,9 @@ def test_call_result_script_reference_keeps_debug_details_collapsed():
     normal_script_source = source[script_heading:hearing_render]
 
     assert "[該当箇所を開く]" in normal_script_source
-    assert "スクリプトURL未登録：" in normal_script_source
-    assert "手動で正式スクリプトを確認してください。" in normal_script_source
+    assert "未登録：" in normal_script_source
+    assert "手動で正式スクリプトを確認してください。" not in normal_script_source
+    assert "st.warning(" not in normal_script_source
     assert "confidence:" not in normal_script_source
     assert "判定根拠：" not in normal_script_source
     assert "聴取事項：" not in normal_script_source
