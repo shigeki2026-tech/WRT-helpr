@@ -6897,7 +6897,7 @@ def render_global_top_panels(form: dict) -> None:
     with tags_col:
         render_decision_tags_panel(form)
     with memo_col:
-        render_common_case_memo(form, "case_memo_global", height=110)
+        render_common_case_memo(form, "case_memo_global", height=125)
 
 
 def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
