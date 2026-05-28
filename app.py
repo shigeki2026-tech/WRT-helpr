@@ -6852,6 +6852,26 @@ def render_wrs_handover_action_panel(wrs_action: dict) -> None:
     )
 
 
+def wrs_handover_call_summary_lines(wrs_action: dict | None) -> list[str]:
+    wrs_action = wrs_action or _wrs_handover_no_match()
+    if not wrs_action.get("needs_wrs_handover"):
+        return ["WRS引き継ぎ：なし"]
+    priority = wrs_action.get("priority")
+    rule_name = wrs_action.get("rule_name") or "WRS引き継ぎ"
+    basis = f"WRS引き継ぎ対象 No.{priority} {rule_name}" if priority else f"WRS引き継ぎ対象 {rule_name}"
+    return [
+        "WRS引き継ぎ：あり",
+        f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or '要確認'}",
+        f"根拠：{basis}",
+    ]
+
+
+def render_call_wrs_handover_summary(wrs_action: dict | None) -> None:
+    st.markdown("##### WRS引き継ぎ")
+    for line in wrs_handover_call_summary_lines(wrs_action):
+        st.caption(line)
+
+
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
     st.markdown("##### 📣 Teamsワランティ送信")
     teams_config = load_teams_config()
@@ -8124,6 +8144,7 @@ def render_tab_call():
         hearing_items = script_guidance.get("hearing_items", [])
 
         render_call_hearing_inputs(st.session_state.form)
+        render_call_wrs_handover_summary(decision.get("wrs_handover_action"))
         with st.expander("📘 スクリプト補助の詳細", expanded=False):
             script_display = script_reference.get("display", "未判定")
             st.markdown(f"**使用するトークスクリプト：** {script_display}")

@@ -122,6 +122,45 @@ def test_wrs_handover_panel_renders_basis_text():
     assert "render_wrs_handover_action_panel(decision.get(\"wrs_handover_action\"))" in source
 
 
+def test_call_area_renders_wrs_handover_summary():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_start = source.index("def render_tab_call")
+    call_end = source.index("\ndef render_tab_after_call", call_start)
+    call_source = source[call_start:call_end]
+
+    assert "render_call_wrs_handover_summary(decision.get(\"wrs_handover_action\"))" in call_source
+    assert call_source.index("render_call_hearing_inputs(st.session_state.form)") < call_source.index("render_call_wrs_handover_summary")
+    assert call_source.index("render_call_wrs_handover_summary") < call_source.index('with st.expander("📘 スクリプト補助の詳細", expanded=False):')
+
+
+def test_wrs_call_summary_lines_show_present_and_absent_states():
+    present = wrs_handover(make_form(operating_company="株式会社アイ工務店"))
+    present_lines = app.wrs_handover_call_summary_lines(present)
+    absent_lines = app.wrs_handover_call_summary_lines(app.determine_wrs_handover_action(make_form(store_name="対象外販売店")))
+
+    assert "WRS引き継ぎ：あり" in present_lines
+    assert "依頼内容：受付報告" in present_lines
+    assert any(line.startswith("根拠：WRS引き継ぎ対象 No.") for line in present_lines)
+    assert absent_lines == ["WRS引き継ぎ：なし"]
+
+
+def test_wrs_call_summary_keeps_ai_koumuten_vendor_unite():
+    form = make_form(
+        operating_company="株式会社アイ工務店",
+        store_name="滋賀支店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ 10年保証",
+    )
+    decision = app.run_decision(form)
+    lines = app.wrs_handover_call_summary_lines(decision["wrs_handover_action"])
+
+    assert "ユナイト" in decision["vendor"]
+    assert "WRS" not in decision["vendor"]
+    assert "WRS引き継ぎ：あり" in lines
+
+
 def test_yamada_homes_repair_requires_handover():
     result = handover(make_form(store_name="ヤマダホームズ"))
 
