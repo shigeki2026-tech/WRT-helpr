@@ -6585,6 +6585,312 @@ def run_decision(form: dict) -> dict:
 # ============================================================
 # UI ヘルパー
 # ============================================================
+def inject_app_styles() -> None:
+    """Streamlit UI の共通スタイルを注入する。表示専用で判定値は変更しない。"""
+    st.markdown("""
+<style>
+.block-container {
+    max-width: 1500px;
+    padding-top: 1rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+}
+section.main > div {
+    padding-top: 0;
+}
+div[data-baseweb="tab-list"] {
+    border-bottom: 1px solid #D0D5DD !important;
+    gap: 6px;
+    padding-top: 2px;
+}
+button[data-baseweb="tab"] {
+    font-size: 0.95em;
+    font-weight: 650 !important;
+    color: #667085 !important;
+    padding: 9px 18px;
+    border: 1px solid transparent;
+    border-bottom: 3px solid transparent;
+    border-radius: 8px 8px 0 0;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    font-weight: 700 !important;
+    color: #2563EB !important;
+    background-color: #EFF6FF !important;
+    border-color: #BFDBFE !important;
+    border-bottom: 3px solid #2563EB;
+}
+button[data-baseweb="tab"][aria-selected="true"] * {
+    color: #2563EB !important;
+}
+div[data-baseweb="tab-highlight"] {
+    background-color: #2563EB !important;
+}
+button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
+    color: #475569;
+    background-color: #F8FAFC;
+}
+</style>
+""", unsafe_allow_html=True)
+    st.markdown("""
+<style>
+body {
+    background: #f6f8fb;
+}
+.wrt-app-header {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 8px 2px 10px;
+    margin: 0 0 10px;
+    border-bottom: 1px solid #e2e8f0;
+    background: transparent;
+}
+.wrt-app-header-title {
+    color: #111827;
+    font-size: 1.05rem;
+    font-weight: 800;
+    line-height: 1.15;
+}
+.wrt-app-header-subtitle {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.wrt-section-gap {
+    height: 6px;
+}
+.wrt-panel-title {
+    margin: 0 0 8px;
+    color: #1f2937;
+    font-size: 0.98rem;
+    font-weight: 800;
+    line-height: 1.25;
+}
+.wrt-status-card {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 8px 0 12px;
+    min-height: 72px;
+    border: 1px solid #e5e7eb;
+    border-left-width: 5px;
+    color: #1f2937;
+}
+.wrt-status-card.warning {
+    background: #fff7ed;
+    border-color: #fdba74;
+    border-left-color: #f97316;
+}
+.wrt-status-card.error {
+    background: #fef2f2;
+    border-color: #fca5a5;
+    border-left-color: #dc2626;
+}
+.wrt-status-card.info {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    border-left-color: #64748b;
+}
+.wrt-status-card.success {
+    background: #f0fdf4;
+    border-color: #86efac;
+    border-left-color: #16a34a;
+}
+.wrt-status-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.wrt-status-card-body {
+    font-size: 0.92rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+.wrt-text-section,
+.wrt-action-panel {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+.wrt-sub-input-label {
+    font-size: 0.82rem;
+    color: #6b7280;
+    margin-top: -4px;
+    margin-bottom: 2px;
+}
+.wrt-sub-input-help {
+    font-size: 0.78rem;
+    color: #9ca3af;
+    margin-bottom: 2px;
+}
+.wrt-pill {
+    display: inline-block;
+    min-width: 88px;
+    text-align: center;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid transparent;
+}
+.wrt-pill.warning {
+    background: #fed7aa;
+    color: #7c2d12;
+}
+.wrt-pill.error {
+    background: #fecaca;
+    color: #7f1d1d;
+}
+.wrt-pill.info {
+    background: #e2e8f0;
+    color: #334155;
+}
+.wrt-pill.success {
+    background: #bbf7d0;
+    color: #14532d;
+}
+.wrt-decision-tag {
+    min-height: 120px;
+    height: 120px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 4px;
+    overflow: hidden;
+    border-radius: 8px;
+    padding: 8px 10px 8px 12px;
+    margin-bottom: 6px;
+    font-size: 0.88em;
+    border: 1px solid #e5e7eb;
+    border-left-width: 5px;
+    color: #1f2937;
+}
+.wrt-decision-tag-title {
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1.25;
+    white-space: nowrap;
+    color: #475569;
+}
+.wrt-decision-tag-primary {
+    font-size: 1.1rem;
+    font-weight: 800;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+.wrt-decision-tag-secondary {
+    font-size: 0.76rem;
+    line-height: 1.35;
+    max-height: 3.0em;
+    color: #475569;
+    overflow: hidden;
+}
+.wrt-decision-tag-tertiary {
+    font-size: 0.69rem;
+    line-height: 1.3;
+    max-height: 2.6em;
+    color: #64748b;
+    overflow: hidden;
+}
+.wrt-decision-tag.ok {
+    background: #ffffff;
+    border-color: #bbf7d0;
+    border-left-color: #16a34a;
+}
+.wrt-decision-tag.warning {
+    background: #ffffff;
+    border-color: #fde68a;
+    border-left-color: #d97706;
+}
+.wrt-decision-tag.missing {
+    background: #ffffff;
+    border-color: #fecaca;
+    border-left-color: #dc2626;
+}
+.wrt-decision-tag.error {
+    background: #ffffff;
+    border-color: #fecaca;
+    border-left-color: #dc2626;
+}
+.wrt-decision-tag.neutral {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    border-left-color: #64748b;
+}
+.wrt-decision-tag.action {
+    background: #ffffff;
+    border-color: #bfdbfe;
+    border-left-color: #2563eb;
+}
+.wrt-decision-tag.dp {
+    background: #ffffff;
+    border-color: #e9d5ff;
+    border-left-color: #9333ea;
+}
+.wrt-decision-link {
+    margin-top: 5px;
+    font-size: 0.84em;
+}
+.wrt-decision-link a {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+.next-confirmation-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 4px 0 10px;
+}
+.next-confirmation-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 5px 9px;
+    font-size: 0.82rem;
+    line-height: 1.25;
+}
+.next-confirmation-card strong {
+    font-size: 0.72rem;
+}
+.wrt-snippet-group-label {
+    display: inline-block;
+    margin-top: 8px;
+    margin-bottom: 2px;
+    color: #334155;
+    font-size: 0.86rem;
+    font-weight: 700;
+}
+.wrt-memo-snippet-row {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 6px 0;
+    background: #ffffff;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+def render_app_header() -> None:
+    st.markdown(
+        """
+<div class="wrt-app-header">
+  <div>
+    <div class="wrt-app-header-title">修理受付 支援ツール</div>
+    <div class="wrt-app-header-subtitle">WRT-helpr MVP / ローカル判定補助</div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def _src_badge(source: str) -> str:
     """判定ソースの小バッジ HTML を返す。"""
     color = "#16a085" if source == "CSVマスタ" else "#7f8c8d"
@@ -6680,9 +6986,27 @@ def _ui_v3_escape(value) -> str:
             .replace('"', "&quot;"))
 
 
+def _decision_tag_tone(bg_color: str) -> str:
+    color = (bg_color or "").lower()
+    if color == TAG_COLOR_OK.lower():
+        return "ok"
+    if color == TAG_COLOR_MISSING.lower():
+        return "missing"
+    if color == TAG_COLOR_ERROR.lower():
+        return "error"
+    if color == TAG_COLOR_WARNING.lower():
+        return "warning"
+    if color == TAG_COLOR_ACTION.lower():
+        return "action"
+    if color == TAG_COLOR_DP.lower():
+        return "dp"
+    return "neutral"
+
+
 def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
                  min_height: int = 112, link: dict | None = None,
                  compact: bool = False) -> str:
+    tone = _decision_tag_tone(bg_color)
     body_parts = []
     for i, (label, value) in enumerate(lines):
         if compact and i == 0:
@@ -6710,22 +7034,25 @@ def _ui_v3_block(title: str, lines: list[tuple[str, str]], bg_color: str,
         text = link.get("text", "")
         if url and text:
             body_parts.append(
-                f'<div style="margin-top:5px;font-size:0.84em;">'
+                f'<div class="wrt-decision-link">'
                 f'<a href="{_ui_v3_escape(url)}" target="_blank" '
-                f'style="color:white;text-decoration:underline;opacity:0.92;">'
-                f'{_ui_v3_escape(text)} ↗</a></div>'
+                f'rel="noopener noreferrer">{_ui_v3_escape(text)} ↗</a></div>'
             )
         elif text:
             body_parts.append(
-                f'<div style="margin-top:5px;font-size:0.84em;opacity:0.7;">'
+                f'<div class="wrt-decision-link">'
                 f'{_ui_v3_escape(text)}</div>'
             )
     return (
-        f'<div class="wrt-decision-tag" style="background:{bg_color};color:white;">'
+        f'<div class="wrt-decision-tag {tone}">'
         f'<div class="wrt-decision-tag-title">{_ui_v3_escape(title)}</div>'
         f'{"".join(body_parts)}'
         f'</div>'
     )
+
+
+def _panel_heading_html(title: str) -> str:
+    return f'<div class="wrt-panel-title">{html.escape(str(title or ""))}</div>'
 
 
 def sync_case_memo_global(form: dict, session_state) -> dict:
@@ -6756,17 +7083,16 @@ def _next_confirmation_card_html(cards: list[dict]) -> str:
         "info": ("#eef8f1", "#9ed6ad", "#23613a"),
     }
     parts = [
-        "<div class='next-confirmation-cards' style='display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px 0;'>"
+        "<div class='next-confirmation-cards'>"
     ]
     for card in cards:
         bg, border, fg = tone_styles.get(card.get("tone"), tone_styles["call"])
         timing = html.escape(str(card.get("timing") or "通話中"))
         text = html.escape(str(card.get("text") or ""))
         parts.append(
-            "<div style='display:flex;align-items:center;gap:6px;"
-            f"background:{bg};border:1px solid {border};color:{fg};"
-            "border-radius:8px;padding:5px 8px;font-size:0.86rem;line-height:1.25;'>"
-            f"<span style='font-weight:700;font-size:0.75rem;'>{timing}</span>"
+            "<div class='next-confirmation-card' "
+            f"style='background:{bg};border:1px solid {border};border-left-width:4px;color:{fg};'>"
+            f"<strong>{timing}</strong>"
             f"<span>{text}</span>"
             "</div>"
         )
@@ -7591,7 +7917,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             st.session_state[appliance_widget_key] = form.get("appliance_category", "")
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b, col_c = st.columns(3, gap="medium")
     with col_a:
         form["call_line"] = st.selectbox(
             "回線名",
@@ -9562,185 +9888,14 @@ def main():
         layout="wide",
         initial_sidebar_state="collapsed",
     )
-    st.title("🔧 修理受付 支援ツール MVP")
+    inject_app_styles()
+    render_app_header()
     init_session()
     process_pending_case_clear(st.session_state)
     process_pending_case_basic_widget_refresh(st.session_state)
     sync_global_case_basic_widget_state(st.session_state.form, st.session_state)
     render_global_top_panels(st.session_state.form)
     render_global_case_basic_panel(st.session_state.form)
-    st.markdown("""
-<style>
-div[data-baseweb="tab-list"] {
-    border-bottom: 1px solid #D0D5DD !important;
-    gap: 4px;
-}
-button[data-baseweb="tab"] {
-    font-size: 1.0em;
-    font-weight: 500 !important;
-    color: #667085 !important;
-    padding: 8px 18px;
-    border-bottom: 3px solid transparent;
-}
-button[data-baseweb="tab"][aria-selected="true"] {
-    font-weight: 700 !important;
-    color: #2563EB !important;
-    background-color: #EFF6FF !important;
-    border-bottom: 3px solid #2563EB;
-}
-button[data-baseweb="tab"][aria-selected="true"] * {
-    color: #2563EB !important;
-}
-div[data-baseweb="tab-highlight"] {
-    background-color: #2563EB !important;
-}
-button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
-    color: #475569;
-    background-color: #F8FAFC;
-}
-</style>
-""", unsafe_allow_html=True)
-    st.markdown("""
-<style>
-.wrt-status-card {
-    width: 100%;
-    box-sizing: border-box;
-    overflow-wrap: anywhere;
-    border-radius: 10px;
-    padding: 12px 14px;
-    margin: 8px 0;
-    min-height: 72px;
-    border: 1px solid #e5e7eb;
-    color: #1f2937;
-}
-.wrt-status-card.warning {
-    background: #fff7ed;
-    border-color: #fdba74;
-}
-.wrt-status-card.error {
-    background: #fef2f2;
-    border-color: #fca5a5;
-}
-.wrt-status-card.info {
-    background: #f8fafc;
-    border-color: #cbd5e1;
-}
-.wrt-status-card.success {
-    background: #f0fdf4;
-    border-color: #86efac;
-}
-.wrt-status-card-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 6px;
-}
-.wrt-status-card-body {
-    font-size: 0.92rem;
-    line-height: 1.55;
-    overflow-wrap: anywhere;
-}
-.wrt-text-section,
-.wrt-action-panel {
-    width: 100%;
-    box-sizing: border-box;
-    overflow-wrap: anywhere;
-}
-.wrt-sub-input-label {
-    font-size: 0.82rem;
-    color: #6b7280;
-    margin-top: -4px;
-    margin-bottom: 2px;
-}
-.wrt-sub-input-help {
-    font-size: 0.78rem;
-    color: #9ca3af;
-    margin-bottom: 2px;
-}
-.wrt-pill {
-    display: inline-block;
-    min-width: 88px;
-    text-align: center;
-    border-radius: 999px;
-    padding: 2px 10px;
-    font-size: 12px;
-    font-weight: 700;
-    border: 1px solid transparent;
-}
-.wrt-pill.warning {
-    background: #fed7aa;
-    color: #7c2d12;
-}
-.wrt-pill.error {
-    background: #fecaca;
-    color: #7f1d1d;
-}
-.wrt-pill.info {
-    background: #e2e8f0;
-    color: #334155;
-}
-.wrt-pill.success {
-    background: #bbf7d0;
-    color: #14532d;
-}
-.wrt-decision-tag {
-    min-height: 124px;
-    height: 124px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 4px;
-    overflow: hidden;
-    border-radius: 8px;
-    padding: 11px 12px;
-    margin-bottom: 8px;
-    font-size: 0.92em;
-}
-.wrt-decision-tag-title {
-    font-size: 0.78rem;
-    font-weight: 700;
-    line-height: 1.25;
-    white-space: nowrap;
-    opacity: 0.82;
-}
-.wrt-decision-tag-primary {
-    font-size: 1.1rem;
-    font-weight: 800;
-    line-height: 1.25;
-    white-space: nowrap;
-}
-.wrt-decision-tag-secondary {
-    font-size: 0.76rem;
-    line-height: 1.35;
-    max-height: 3.0em;
-    opacity: 0.9;
-    overflow: hidden;
-}
-.wrt-decision-tag-tertiary {
-    font-size: 0.72rem;
-    line-height: 1.3;
-    max-height: 2.6em;
-    opacity: 0.9;
-    overflow: hidden;
-}
-.wrt-snippet-group-label {
-    display: inline-block;
-    margin-top: 8px;
-    margin-bottom: 2px;
-    color: #334155;
-    font-size: 0.86rem;
-    font-weight: 700;
-}
-.wrt-memo-snippet-row {
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin: 6px 0;
-    background: #ffffff;
-}
-</style>
-""", unsafe_allow_html=True)
     tab_call, tab_after, tab_master = st.tabs([
         "通話中判定",
         "終話後処理",
