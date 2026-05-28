@@ -313,3 +313,92 @@ def test_handover_panel_is_rendered_before_warranty_report_panel():
 
     assert "render_handover_requirement_panel(decision.get(\"handover_requirement\"))" in after_source
     assert after_source.index("render_handover_requirement_panel") < after_source.index("render_warranty_report_send_panel")
+
+
+def test_wrs_transfer_text_for_ai_koumuten_includes_request_and_note():
+    form = make_form(
+        operating_company="株式会社アイ工務店",
+        store_name="滋賀支店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ 10年保証",
+        rakuteru_no="2026_05_1073",
+        symptom_detail="水漏れ",
+    )
+    decision = app.run_decision(form)
+    text = app.build_wrs_handover_transfer_text(decision["working_form"], decision["wrs_handover_action"])
+
+    assert "依頼内容：受付報告" in text
+    assert "対象：アイ工務店" in text
+    assert "根拠：WRS引き継ぎ対象 No." in text
+    assert "アイ工務店" in text
+    assert "備考：間違い電話は不要" in text
+    assert "楽テルNO：2026_05_1073" in text
+    assert "製品：システムキッチン" in text
+    assert "メーカー：パナソニック" in text
+    assert "症状：水漏れ" in text
+
+
+def test_wrs_transfer_text_for_keihan_includes_alsok_note():
+    form = make_form(call_line="京阪不動産", rakuteru_no="R-001")
+    wrs = wrs_handover(form)
+    text = app.build_wrs_handover_transfer_text(form, wrs)
+
+    assert "依頼内容：受付報告" in text
+    assert "対象：京阪" in text
+    assert "ALSOK入力有無" in text
+    assert "楽テルNO：R-001" in text
+
+
+def test_wrs_transfer_text_is_empty_for_non_wrs_case():
+    form = make_form(store_name="対象外販売店")
+    wrs = wrs_handover(form)
+
+    assert app.build_wrs_handover_transfer_text(form, wrs) == ""
+
+
+def test_after_call_renders_wrs_transfer_after_detail_card():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_source = source[source.index("def render_tab_after_call"):source.index("def _candidate_field")]
+
+    assert "render_wrs_handover_transfer_text(form, decision.get(\"wrs_handover_action\"))" in after_source
+    assert after_source.index("render_wrs_handover_action_panel") < after_source.index("render_wrs_handover_transfer_text")
+    assert after_source.index("render_wrs_handover_transfer_text") < after_source.index("render_warranty_report_send_panel")
+
+
+def test_wrs_transfer_text_stays_out_of_rakutel_teams_and_repair_request_memo():
+    form = make_form(
+        operator_name="大浦",
+        operating_company="株式会社アイ工務店",
+        store_name="滋賀支店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ 10年保証",
+        rakuteru_no="2026_05_1073",
+        teams_action="FAX送信済",
+    )
+    decision = app.run_decision(form)
+    warranty_result = {"title": "保証中", "warranty_status": "active", "can_accept": True}
+    memo = app._build_after_call_memo(
+        decision["working_form"],
+        warranty_result,
+        decision["repair_type"],
+        decision["vendor"],
+        "",
+        decision["cost_estimate"],
+    )
+    rakutel = app._build_rakutel_text(decision["working_form"], "加入者", "")
+    teams = app._build_teams_chat_message(decision["working_form"], decision["vendor"], decision["vendor_result"].get("contact_type", ""))
+
+    forbidden = [
+        "WRS引き継ぎ対象",
+        "依頼内容：受付報告",
+        "備考：間違い電話は不要",
+    ]
+    for generated in (memo, rakutel, teams):
+        for value in forbidden:
+            assert value not in generated

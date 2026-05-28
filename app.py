@@ -6852,6 +6852,40 @@ def render_wrs_handover_action_panel(wrs_action: dict) -> None:
     )
 
 
+def build_wrs_handover_transfer_text(form: dict, wrs_action: dict | None) -> str:
+    wrs_action = wrs_action or _wrs_handover_no_match()
+    if not wrs_action.get("needs_wrs_handover"):
+        return ""
+    priority = wrs_action.get("priority")
+    rule_name = wrs_action.get("rule_name") or "WRS引き継ぎ"
+    basis = f"WRS引き継ぎ対象 No.{priority} {rule_name}" if priority else f"WRS引き継ぎ対象 {rule_name}"
+    return "\n".join([
+        f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or ''}",
+        f"対象：{rule_name}",
+        f"根拠：{basis}",
+        f"備考：{wrs_action.get('note_template') or ''}",
+        f"楽テルNO：{form.get('rakuteru_no') or form.get('rakutel_no') or ''}",
+        f"回線：{form.get('call_line') or ''}",
+        f"製品：{form.get('product') or ''}",
+        f"メーカー：{form.get('manufacturer') or ''}",
+        f"症状：{form.get('symptom_detail') or form.get('symptom') or form.get('symptoms') or ''}",
+    ])
+
+
+def render_wrs_handover_transfer_text(form: dict, wrs_action: dict | None) -> None:
+    transfer_text = build_wrs_handover_transfer_text(form, wrs_action)
+    if not transfer_text:
+        return
+    st.markdown("##### WRS引き継ぎ表 転記用")
+    st.text_area(
+        "WRS引き継ぎ表 転記用",
+        transfer_text,
+        height=190,
+        key=f"wrs_handover_transfer_{stable_hash_text(transfer_text, 12)}",
+    )
+    render_copy_button("📋 コピー", transfer_text, "copy_wrs_handover_transfer")
+
+
 def wrs_handover_call_summary_lines(wrs_action: dict | None) -> list[str]:
     wrs_action = wrs_action or _wrs_handover_no_match()
     if not wrs_action.get("needs_wrs_handover"):
@@ -9068,6 +9102,7 @@ def render_tab_after_call():
 
     render_handover_requirement_panel(decision.get("handover_requirement"))
     render_wrs_handover_action_panel(decision.get("wrs_handover_action"))
+    render_wrs_handover_transfer_text(form, decision.get("wrs_handover_action"))
     render_warranty_report_send_panel(form, decision)
 
     st.divider()
