@@ -1643,9 +1643,11 @@ def test_case_memo_header_is_short_and_without_description():
     memo_source = source[memo_start:memo_end]
 
     assert "##### 📝 案件メモ" in memo_source
+    assert "st.columns([1, 5], gap=\"small\")" not in memo_source
     assert "案件メモ（通話中・終話後共通）" not in source
     assert "判定には使いません。通話中の一時メモ・終話後の転記メモ用です。" not in source
     assert 'label_visibility="collapsed"' in memo_source
+    assert 'key=key' in memo_source
 
 
 def test_call_memo_tabs_use_same_form_field_source():
@@ -1751,6 +1753,9 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
 
     assert "render_common_case_memo" in panels_source
     assert "render_decision_tags_panel" in panels_source
+    assert "tags_col, memo_col = st.columns([2, 1], gap=\"medium\")" in panels_source
+    assert panels_source.index("with tags_col:") < panels_source.index("with memo_col:")
+    assert panels_source.index("render_decision_tags_panel(form)") < panels_source.index('render_common_case_memo(form, "case_memo_global", height=110)')
     assert top_index < tabs_index
 
 

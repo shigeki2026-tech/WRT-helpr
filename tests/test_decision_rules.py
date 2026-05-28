@@ -692,6 +692,26 @@ def test_vendor_tag_shows_missing_prefecture_when_vendor_needs_area():
 
     assert vendor_tag["primary"] == "未判定"
     assert "都道府県" in vendor_tag["secondary"]
+    assert vendor_tag["tertiary"].startswith("根拠：")
+    assert "不足" in vendor_tag["tertiary"]
+
+
+def test_vendor_tag_includes_reason_when_vendor_is_confirmed():
+    form = make_form(
+        product="エアコン",
+        manufacturer="ダイキン",
+        model_number="AN123",
+        appliance_type="家電",
+        prefecture="東京都",
+        call_line="家電",
+    )
+    decision = app.run_decision(form)
+    vendor_tag = app.build_decision_tag_items(decision, form)[2]
+
+    assert vendor_tag["title"] == "拠点対応"
+    assert vendor_tag["secondary"] == "確定"
+    assert vendor_tag["tertiary"].startswith("根拠：")
+    assert vendor_tag["tertiary"] != "根拠："
 
 
 def test_call_line_is_not_auto_filled_from_copy_or_residential_evidence():

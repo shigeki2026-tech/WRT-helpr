@@ -5561,6 +5561,28 @@ def _decision_tag_short_note(prefix: str, text: str) -> str:
     return f"{prefix}{text}"
 
 
+def vendor_tag_reason_for_display(decision: dict, missing_fields: list[str] | None = None) -> str:
+    vendor_result = decision.get("vendor_result", {}) or {}
+    if missing_fields:
+        labels = compact_missing_field_labels(missing_fields)
+        joined = " / ".join(labels) if labels else "必要項目"
+        return f"根拠：{joined}が不足"
+
+    reason = (
+        vendor_result.get("reason")
+        or vendor_result.get("vendor_missing_reason")
+        or vendor_result.get("notes")
+        or ""
+    ).strip()
+    if reason:
+        return f"根拠：{reason}"
+    if vendor_result.get("needs_escalation"):
+        return "根拠：担当確認が必要"
+    if vendor_result.get("matched"):
+        return "根拠：拠点マスタ条件に一致"
+    return "根拠：該当する拠点マスタなし"
+
+
 def _normalize_confirmation_action(action: str, timing: str = "call") -> str:
     text = (action or "").strip()
     if not text:
@@ -5778,13 +5800,16 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "color": summary["repair"]["color"],
         }
 
+    vendor_reason = vendor_tag_reason_for_display(decision, missing["拠点対応"])
     if missing["拠点対応"]:
         vendor_tag = _missing_tag("拠点対応", missing["拠点対応"])
+        vendor_tag["tertiary"] = vendor_reason
     else:
         vendor_tag = {
             "title": "拠点対応",
             "primary": vendor or "未確定",
             "secondary": vendor_status,
+            "tertiary": vendor_reason,
             "color": TAG_COLOR_WARNING if vendor_card.get("needs_escalation") else TAG_COLOR_OK,
         }
 
@@ -6868,11 +6893,11 @@ def render_decision_tags_panel(form: dict) -> None:
 
 
 def render_global_top_panels(form: dict) -> None:
-    memo_col, tags_col = st.columns([1, 2], gap="medium")
-    with memo_col:
-        render_common_case_memo(form, "case_memo_global", height=90)
+    tags_col, memo_col = st.columns([2, 1], gap="medium")
     with tags_col:
         render_decision_tags_panel(form)
+    with memo_col:
+        render_common_case_memo(form, "case_memo_global", height=110)
 
 
 def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
@@ -8211,11 +8236,15 @@ def render_tab_call():
             if vendor_result["matched"]:
                 st.markdown(f"- CSV: `{vendor_result['csv_name']}`  priority={vendor_result['priority']}")
                 st.markdown(f"- keyword: `{vendor_result['keyword']}` → **{vendor_result['vendor_name']}**")
+                if vendor_result.get("reason"):
+                    st.markdown(f"- reason: {vendor_result['reason']}")
                 if vendor_result["notes"]:
                     st.markdown(f"- notes: {vendor_result['notes']}")
             else:
                 st.info("CSVにヒットなし → determine_vendor_candidate() フォールバック")
                 st.markdown(f"- 結果: `{vendor}`")
+                if vendor_result.get("vendor_missing_reason") or vendor_result.get("reason"):
+                    st.markdown(f"- reason: {vendor_result.get('vendor_missing_reason') or vendor_result.get('reason')}")
 
 
 # ============================================================
