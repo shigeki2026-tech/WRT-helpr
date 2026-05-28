@@ -734,6 +734,13 @@ _HANDOVER_RULE_COLS = [
     "appliance_type", "call_type_inquiry", "call_type_repair", "rakutel_status",
     "handover_request_content", "notes", "exclude_wrong_number", "active",
 ]
+_WRS_HANDOVER_RULE_COLS = [
+    "priority", "enabled", "rule_name", "match_line", "match_store_keywords",
+    "match_company_keywords", "match_plan_keywords", "match_case_keywords",
+    "match_appliance_type", "match_repair_type", "action_type",
+    "handover_request_content", "basis_text", "note_template",
+    "requires_manual_confirm",
+]
 _MEMO_SNIPPET_COLS = [
     "snippet_id", "category", "ui_group", "label", "body", "condition_text",
     "default_checked", "active", "sort_order",
@@ -854,6 +861,11 @@ def _load_handover_rules_cached(mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def _load_wrs_handover_rules_cached(mtime: float) -> pd.DataFrame:
+    return _load_csv("master_wrs_handover_rules.csv", _WRS_HANDOVER_RULE_COLS)
+
+
+@st.cache_data
 def _load_script_guidance_cached(mtime: float) -> pd.DataFrame:
     return _load_csv("master_script_guidance.csv", _SCRIPT_GUIDANCE_COLS)
 
@@ -927,6 +939,10 @@ def load_vendor_send_templates() -> pd.DataFrame:
 
 def load_handover_rules() -> pd.DataFrame:
     return _load_handover_rules_cached(_csv_mtime("master_handover_rules.csv"))
+
+
+def load_wrs_handover_rules() -> pd.DataFrame:
+    return _load_wrs_handover_rules_cached(_csv_mtime("master_wrs_handover_rules.csv"))
 
 
 def load_script_guidance_csv() -> pd.DataFrame:
@@ -5088,6 +5104,126 @@ def determine_handover_requirement(form: dict, decision: dict | None = None, cal
     return _handover_no_match()
 
 
+def _wrs_handover_no_match(reason: str = "WRS引き継ぎ対象ルールに一致なし") -> dict:
+    return {
+        "needs_wrs_handover": False,
+        "matched": False,
+        "rule_name": "",
+        "action_type": "",
+        "handover_request_content": "",
+        "basis_text": reason,
+        "note_template": "",
+        "requires_manual_confirm": False,
+        "reason": reason,
+        "csv_name": "master_wrs_handover_rules.csv",
+    }
+
+
+def _wrs_handover_text_bundle(form: dict, vendor_result: dict | None = None) -> dict:
+    vendor_result = vendor_result or {}
+    return {
+        "line": " ".join(str(form.get(field) or "") for field in (
+            "call_line", "call_line_code", "line_group",
+        )).strip(),
+        "store": " ".join(str(form.get(field) or "") for field in (
+            "store_name", "store_original", "store_name_original", "display_store",
+        )).strip(),
+        "company": " ".join(str(form.get(field) or "") for field in (
+            "operating_company", "store_company", "company_name",
+        )).strip(),
+        "plan": str(form.get("warranty_plan") or "").strip(),
+        "case": " ".join(str(form.get(field) or "") for field in (
+            "case_keywords", "case_type", "reception_type", "call_type",
+            "symptoms", "symptom", "symptom_detail", "memo", "call_memo",
+            "extra_condition", "teams_action", "product", "manufacturer",
+        )).strip(),
+        "appliance": " ".join(str(form.get(field) or "") for field in (
+            "appliance_type", "appliance_category", "housing_phase",
+        )).strip(),
+        "repair_type": " ".join(str(value or "") for value in (
+            form.get("repair_type"),
+            vendor_result.get("repair_type"),
+        )).strip(),
+        "vendor": " ".join(str(value or "") for value in (
+            vendor_result.get("vendor_name"),
+            vendor_result.get("reason"),
+            vendor_result.get("notes"),
+        )).strip(),
+    }
+
+
+def _wrs_rule_matches(row, texts: dict) -> tuple[bool, list[str]]:
+    identity_checks = [
+        ("match_line", "line", "回線名"),
+        ("match_store_keywords", "store", "販売店"),
+        ("match_company_keywords", "company", "運営会社"),
+        ("match_plan_keywords", "plan", "保証プラン"),
+        ("match_case_keywords", "case", "案件内容"),
+    ]
+    qualifier_checks = [
+        ("match_appliance_type", "appliance", "案件分類"),
+        ("match_repair_type", "repair_type", "修理方針"),
+    ]
+
+    matched_by: list[str] = []
+    has_identity_condition = False
+    identity_matched = False
+    for column, target_key, label in identity_checks:
+        keyword = (row.get(column) or "").strip()
+        if not keyword:
+            continue
+        has_identity_condition = True
+        if _kw_any_match(keyword, texts.get(target_key, "")):
+            identity_matched = True
+            matched_by.append(label)
+    if has_identity_condition and not identity_matched:
+        return False, []
+
+    for column, target_key, label in qualifier_checks:
+        keyword = (row.get(column) or "").strip()
+        if not keyword:
+            continue
+        if not _kw_any_match(keyword, texts.get(target_key, "")):
+            return False, []
+        matched_by.append(label)
+    return bool(matched_by), matched_by
+
+
+def determine_wrs_handover_action(form: dict, vendor_result: dict | None = None) -> dict:
+    """
+    data/master_wrs_handover_rules.csv から、終話後のWRS引き継ぎ/受付報告アクションを判定する。
+    修理拠点判定とは別軸で、vendor_name や修理依頼先は変更しない。
+    """
+    df = load_wrs_handover_rules()
+    if df.empty:
+        return _wrs_handover_no_match("WRS引き継ぎマスタが未登録です")
+
+    texts = _wrs_handover_text_bundle(form or {}, vendor_result or {})
+    for _, row in df.iterrows():
+        matched, matched_by = _wrs_rule_matches(row, texts)
+        if not matched:
+            continue
+        rule_name = (row.get("rule_name") or "").strip()
+        basis = (row.get("basis_text") or "").strip()
+        if not basis:
+            basis = f"根拠：{' / '.join(matched_by)} が {rule_name or 'WRS引き継ぎルール'} に一致"
+        return {
+            "needs_wrs_handover": True,
+            "matched": True,
+            "priority": _int_or_default(row.get("priority")),
+            "rule_name": rule_name,
+            "action_type": (row.get("action_type") or "").strip(),
+            "handover_request_content": (row.get("handover_request_content") or "").strip(),
+            "basis_text": basis,
+            "note_template": (row.get("note_template") or "").strip(),
+            "requires_manual_confirm": _flag_enabled(row.get("requires_manual_confirm")),
+            "matched_by": matched_by,
+            "csv_name": "master_wrs_handover_rules.csv",
+        }
+
+    return _wrs_handover_no_match()
+
+
 # ============================================================
 # call_line 属性推定（回線名 + 販売店名）
 # ============================================================
@@ -6411,6 +6547,7 @@ def run_decision(form: dict) -> dict:
         },
         infer_handover_call_kind(working_form),
     )
+    wrs_handover_action = determine_wrs_handover_action(working_form, vendor_result)
 
     _result_core = {
         # ── 主要判定結果 ──
@@ -6425,6 +6562,7 @@ def run_decision(form: dict) -> dict:
         "warranty_status":     warranty_result["warranty_status"],
         "can_accept":          warranty_result["can_accept"],
         "handover_requirement": handover_requirement,
+        "wrs_handover_action": wrs_handover_action,
         # ── 各層の判定詳細 ──
         "alias_result":        alias_result,
         "repair_result":       repair_result,
@@ -6694,6 +6832,24 @@ def render_handover_requirement_panel(handover: dict) -> None:
     else:
         reason = handover.get("reason") or "引き継ぎ対象ルールに一致なし"
         st.markdown(_status_card_html("info", "不要", reason), unsafe_allow_html=True)
+
+
+def render_wrs_handover_action_panel(wrs_action: dict) -> None:
+    wrs_action = wrs_action or _wrs_handover_no_match()
+    if not wrs_action.get("needs_wrs_handover"):
+        return
+    st.markdown("##### 🔁 WRS引き継ぎ")
+    lines = [
+        f"処理：{wrs_action['action_type']}" if wrs_action.get("action_type") else "",
+        f"依頼先：{wrs_action['handover_request_content']}" if wrs_action.get("handover_request_content") else "",
+        wrs_action.get("basis_text", ""),
+        f"メモ：{wrs_action['note_template']}" if wrs_action.get("note_template") else "",
+        "手動確認：必要" if wrs_action.get("requires_manual_confirm") else "",
+    ]
+    st.markdown(
+        _status_card_html("warning", "終話後", wrs_action.get("rule_name") or "WRS引き継ぎ", lines),
+        unsafe_allow_html=True,
+    )
 
 
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
@@ -8890,6 +9046,7 @@ def render_tab_after_call():
                         st.caption(log["error_message"])
 
     render_handover_requirement_panel(decision.get("handover_requirement"))
+    render_wrs_handover_action_panel(decision.get("wrs_handover_action"))
     render_warranty_report_send_panel(form, decision)
 
     st.divider()

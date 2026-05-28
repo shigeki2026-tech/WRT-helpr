@@ -18,12 +18,108 @@ def handover(form, call_kind="repair", decision=None):
     return app.determine_handover_requirement(form, decision, call_kind)
 
 
+def wrs_handover(form, vendor_result=None):
+    return app.determine_wrs_handover_action(form, vendor_result)
+
+
 def test_handover_master_loads_and_sorts_by_priority():
     df = app.load_handover_rules()
 
     assert not df.empty
     assert list(df.columns) == app._HANDOVER_RULE_COLS
     assert df["priority"].tolist() == sorted(df["priority"].tolist())
+
+
+def test_wrs_handover_master_loads_and_sorts_by_priority():
+    df = app.load_wrs_handover_rules()
+
+    assert not df.empty
+    assert list(df.columns) == app._WRS_HANDOVER_RULE_COLS
+    assert df["priority"].tolist() == sorted(df["priority"].tolist())
+
+
+def test_ai_koumuten_vendor_stays_unite_and_wrs_handover_is_separate():
+    form = make_form(
+        operating_company="株式会社アイ工務店",
+        store_name="滋賀支店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ 10年保証",
+    )
+    decision = app.run_decision(form)
+    wrs = decision["wrs_handover_action"]
+
+    assert "ユナイト" in decision["vendor"]
+    assert "WRS" not in decision["vendor"]
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["rule_name"] == "アイ工務店"
+    assert wrs["action_type"] == "受付報告"
+    assert "根拠：" in wrs["basis_text"]
+
+
+def test_keihan_wrs_handover_keeps_alsok_note():
+    result = wrs_handover(make_form(call_line="京阪不動産"))
+
+    assert result["needs_wrs_handover"] is True
+    assert result["rule_name"] == "京阪"
+    assert "ALSOK入力有無" in result["note_template"]
+    assert "根拠：" in result["basis_text"]
+
+
+def test_yamada_homes_keeps_generic_jusetsu_script_and_gets_wrs_handover():
+    form = make_form(call_line="ヤマダホームズ修理受付業務", appliance_category="住設（新築）")
+    route = app.judge_script_route(form)
+    wrs = wrs_handover(form)
+
+    assert route["display_name"] == "0099回線（住設新築）"
+    assert route["script_key"] != "yamada_homes"
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["rule_name"] == "ヤマダホームズ"
+
+
+def test_jusetsu_kaketsuke_wrs_handover_does_not_overwrite_vendor():
+    form = make_form(
+        call_line="駆けつけサブスク",
+        appliance_type="住設",
+        warranty_plan="駆けつけ 24h",
+        prefecture="東京都",
+        product="トイレ",
+    )
+    decision = app.run_decision(form)
+    wrs = decision["wrs_handover_action"]
+
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["rule_name"] == "住設駆けつけ"
+    assert "WRS" not in decision["vendor"]
+    assert decision["vendor"] != wrs["handover_request_content"]
+
+
+def test_normal_case_has_no_wrs_handover_and_keeps_no7_unite_fallback():
+    form = make_form(
+        prefecture="滋賀県",
+        product="システムキッチン",
+        appliance_type="住設",
+        warranty_plan="住宅設備機器保証パッケージ",
+    )
+    decision = app.run_decision(form)
+    wrs = decision["wrs_handover_action"]
+
+    assert "ユナイト" in decision["vendor"]
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert wrs["needs_wrs_handover"] is False
+
+
+def test_wrs_handover_panel_renders_basis_text():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_start = source.index("def render_wrs_handover_action_panel")
+    panel_end = source.index("\ndef render_warranty_report_send_panel", panel_start)
+    panel_source = source[panel_start:panel_end]
+
+    assert "basis_text" in panel_source
+    assert "WRS引き継ぎ" in panel_source
+    assert "render_wrs_handover_action_panel(decision.get(\"wrs_handover_action\"))" in source
 
 
 def test_yamada_homes_repair_requires_handover():
