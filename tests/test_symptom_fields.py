@@ -806,13 +806,13 @@ def test_call_hearing_block_owns_stable_widget_keys():
     assert 'key="call_hearing_occurrence_frequency_text"' in hearing_source
 
 
-def test_call_hearing_block_renders_after_script_reference():
+def test_call_hearing_block_renders_before_script_support_details():
     source = Path(app.__file__).read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    script_reference_index = source.index('st.markdown("##### 使用するトークスクリプト")', call_tab_start)
     hearing_index = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    support_detail_index = source.index('with st.expander("📘 スクリプト補助の詳細", expanded=False):', call_tab_start)
 
-    assert script_reference_index < hearing_index
+    assert hearing_index < support_detail_index
 
 
 def test_call_hearing_block_renders_after_script_support_area():

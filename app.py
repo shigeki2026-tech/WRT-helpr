@@ -7940,19 +7940,16 @@ def render_tab_call():
             script_guidance.get("hearing_items", []),
         )
 
-        st.markdown("##### 使用するトークスクリプト")
-        script_display = script_reference.get("display", "未判定")
-        st.markdown(f"推奨：**{script_display}**")
-        if script_reference.get("matched") and script_reference.get("url"):
-            st.markdown(f"[該当箇所を開く]({script_reference['url']})")
-        elif script_reference.get("message"):
-            st.caption(f"未登録：{script_display}（手動確認）")
-
         hearing_items = script_guidance.get("hearing_items", [])
 
-        st.divider()
         render_call_hearing_inputs(st.session_state.form)
         with st.expander("📘 スクリプト補助の詳細", expanded=False):
+            script_display = script_reference.get("display", "未判定")
+            st.markdown(f"**使用するトークスクリプト：** {script_display}")
+            if script_reference.get("matched") and script_reference.get("url"):
+                st.markdown(f"[該当箇所を開く]({script_reference['url']})")
+            elif script_reference.get("message"):
+                st.info("手動で正式スクリプトを確認してください。")
             if script_reference.get("initial_line"):
                 st.caption(f"初期回線：{script_reference.get('initial_line')}")
             if script_reference.get("basis"):
@@ -7966,8 +7963,6 @@ def render_tab_call():
                 )
             if script_reference.get("confidence"):
                 st.caption(f"confidence: {script_reference.get('confidence')}")
-            if script_reference.get("message"):
-                st.info("手動で正式スクリプトを確認してください。")
             if hearing_items:
                 st.markdown("**聴取事項：**")
                 for hearing_item in hearing_items:

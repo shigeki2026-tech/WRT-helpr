@@ -3075,30 +3075,39 @@ def test_script_reference_moved_into_decision_tags_panel():
     assert '"url"' in tags_panel_source or "link" in tags_panel_source
 
 
-def test_call_result_area_starts_with_script_reference_without_large_heading():
+def test_call_result_area_starts_with_hearing_inputs_without_script_block():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
     call_tab_source = source[call_tab_start:]
+    hearing_render = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    support_detail = source.index('with st.expander("📘 スクリプト補助の詳細", expanded=False):', hearing_render)
 
     assert 'st.subheader("⚡ 通話中判定結果")' not in call_tab_source
     assert 'st.subheader("⚡ 通話中ナビ")' not in call_tab_source
-    assert 'st.markdown("##### 使用するトークスクリプト")' in call_tab_source
+    assert 'st.markdown("##### 使用するトークスクリプト")' not in call_tab_source
+    assert hearing_render < support_detail
 
 
-def test_call_result_script_reference_keeps_debug_details_collapsed():
+def test_call_result_script_reference_is_only_in_support_details():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
-    script_heading = source.index('st.markdown("##### 使用するトークスクリプト")', call_tab_start)
-    hearing_render = source.index("render_call_hearing_inputs(st.session_state.form)", script_heading)
-    normal_script_source = source[script_heading:hearing_render]
+    hearing_render = source.index("render_call_hearing_inputs(st.session_state.form)", call_tab_start)
+    support_detail = source.index('with st.expander("📘 スクリプト補助の詳細", expanded=False):', hearing_render)
+    summary_index = source.index("summary_display = build_summary_card_display", support_detail)
+    normal_source = source[call_tab_start:hearing_render]
+    detail_source = source[support_detail:summary_index]
 
-    assert "[該当箇所を開く]" in normal_script_source
-    assert "未登録：" in normal_script_source
-    assert "手動で正式スクリプトを確認してください。" not in normal_script_source
-    assert "st.warning(" not in normal_script_source
-    assert "confidence:" not in normal_script_source
-    assert "判定根拠：" not in normal_script_source
-    assert "聴取事項：" not in normal_script_source
+    assert "使用するトークスクリプト" not in normal_source
+    assert "[該当箇所を開く]" not in normal_source
+    assert "未登録：" not in normal_source
+    assert "手動で正式スクリプトを確認してください。" not in normal_source
+    assert "使用するトークスクリプト" in detail_source
+    assert "[該当箇所を開く]" in detail_source
+    assert "手動で正式スクリプトを確認してください。" in detail_source
+    assert "スクリプトURL未登録" not in normal_source
+    assert "confidence:" not in normal_source
+    assert "判定根拠：" not in normal_source
+    assert "聴取事項：" not in normal_source
 
 
 def test_decision_tags_are_split_structured_items():
