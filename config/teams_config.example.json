@@ -5,5 +5,18 @@
   "send_mode": "powershell_graph",
   "warranty_enabled": true,
   "warranty_chat_id": "",
-  "warranty_chat_name": "Teamsワランティ送信先チャット"
+  "warranty_chat_name": "Teamsワランティ送信先チャット",
+  "default_destination": "warranty",
+  "destinations": {
+    "warranty": {
+      "enabled": true,
+      "chat_name": "ワランティ報告用チャット",
+      "chat_id": ""
+    },
+    "self_test": {
+      "enabled": false,
+      "chat_name": "自分宛てテスト",
+      "chat_id": ""
+    }
+  }
 }

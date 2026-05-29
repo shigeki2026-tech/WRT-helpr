@@ -505,6 +505,19 @@ def test_teams_config_example_exists():
         "warranty_enabled": True,
         "warranty_chat_id": "",
         "warranty_chat_name": "Teamsワランティ送信先チャット",
+        "default_destination": "warranty",
+        "destinations": {
+            "warranty": {
+                "enabled": True,
+                "chat_name": "ワランティ報告用チャット",
+                "chat_id": "",
+            },
+            "self_test": {
+                "enabled": False,
+                "chat_name": "自分宛てテスト",
+                "chat_id": "",
+            },
+        },
     }
 
 
@@ -526,6 +539,60 @@ def test_teams_config_reads_chat_id_from_env(monkeypatch, tmp_path):
 
     assert config["enabled"] is True
     assert config["chat_id"] == "env-chat-id"
+
+
+def test_teams_config_supports_destination_map(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    config_path.write_text(
+        json.dumps({
+            "enabled": True,
+            "chat_id": "legacy-chat",
+            "chat_name": "自分宛てテスト",
+            "send_mode": "powershell_graph",
+            "default_destination": "warranty",
+            "destinations": {
+                "warranty": {
+                    "enabled": True,
+                    "chat_name": "ワランティ報告用チャット",
+                    "chat_id": "warranty-chat",
+                },
+                "self_test": {
+                    "enabled": True,
+                    "chat_name": "自分宛てテスト",
+                    "chat_id": "self-chat",
+                },
+            },
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+
+    config = app.load_teams_config()
+    warranty = app.resolve_warranty_report_destination(config, "warranty")
+    self_test = app.resolve_warranty_report_destination(config, "self_test")
+
+    assert warranty["chat_id"] == "warranty-chat"
+    assert warranty["chat_name"] == "ワランティ報告用チャット"
+    assert warranty["enabled"] is True
+    assert self_test["chat_id"] == "self-chat"
+    assert self_test["label"] == "自分宛てテスト"
+
+
+def test_legacy_teams_config_still_resolves_warranty_and_self_test_destinations():
+    config = warranty_config(enabled=True, chat_id="warranty-chat")
+    config.update({
+        "enabled": True,
+        "chat_id": "self-chat",
+        "chat_name": "自分宛てテスト",
+    })
+
+    warranty = app.resolve_warranty_report_destination(config, "warranty")
+    self_test = app.resolve_warranty_report_destination(config, "self_test")
+
+    assert warranty["chat_id"] == "warranty-chat"
+    assert warranty["enabled"] is True
+    assert self_test["chat_id"] == "self-chat"
+    assert self_test["enabled"] is True
 
 
 def test_teams_config_enabled_false_is_disabled(monkeypatch, tmp_path):
@@ -689,6 +756,33 @@ def test_warranty_report_validation_blocks_config_and_duplicate():
     assert "同じ内容は送信済みです" in duplicate
 
 
+def test_warranty_report_duplicate_state_is_scoped_by_destination():
+    state = {}
+    message = "2026_05_1073　家電　ユナイトへFAX送信済　ご確認お願いします"
+
+    app._mark_warranty_report_sent(
+        state,
+        message,
+        result={"ok": True, "stdout": "SUCCESS message-1"},
+        destination_key="self_test",
+        now=datetime(2026, 5, 29, 10, 0, 0),
+    )
+
+    assert app._warranty_report_already_sent(state, message, "self_test") is True
+    assert app._warranty_report_already_sent(state, message, "warranty") is False
+
+    app._mark_warranty_report_sent(
+        state,
+        message,
+        result={"ok": True, "stdout": "SUCCESS message-2"},
+        destination_key="warranty",
+        now=datetime(2026, 5, 29, 10, 1, 0),
+    )
+
+    assert app._warranty_report_already_sent(state, message, "self_test") is True
+    assert app._warranty_report_already_sent(state, message, "warranty") is True
+
+
 def test_warranty_report_send_is_independent_from_handover_requirement():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     panel_start = source.index("def render_warranty_report_send_panel")
@@ -773,14 +867,19 @@ def test_warranty_report_panel_buttons_have_unique_keys():
     assert "##### ワランティ報告チャット送信" in panel_source
     assert "Teamsワランティ送信" in panel_source
     assert "ワランティ報告送信" not in panel_source
-    assert 'st.markdown(f"**送信先：** {chat_name}")' in panel_source
+    assert '"送信先"' in panel_source
+    assert "WARRANTY_REPORT_DESTINATION_LABELS" in panel_source
+    assert "destination_options" in panel_source
+    assert 'st.markdown(f"**送信先：** {destination_label}")' in panel_source
     assert '"確認内容"' in panel_source
     assert 'key="warranty_report_content_input"' in panel_source
     assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
     assert "注意：未入力項目があります。内容を確認してから送信してください。" in panel_source
     assert '"Teamsワランティへ送信"' in panel_source
+    assert '"自分宛てにテスト送信"' in panel_source
     assert '"未完了項目があります"' not in panel_source
     for key in [
+        'key="warranty_report_destination_label"',
         'key="warranty_report_sending_button"',
         'key="warranty_report_sent_button"',
         'key="warranty_report_resend_button"',
@@ -2278,7 +2377,7 @@ def test_teams_auto_send_panel_heading_exists():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert "###### 通常Teams報告" in source
-    assert "送信前チェックと送信状態" in source
+    assert "送信機能は自分宛てテスト用です" in source
 
 
 def test_teams_report_and_send_have_separate_headings():
@@ -2307,7 +2406,7 @@ def test_after_call_teams_send_blocks_show_distinct_headings_and_destinations():
     assert normal_index < handover_index < transfer_index < divider_index < warranty_call_index
     assert 'st.markdown(f"**送信先：** {chat_name}")' in after_source[normal_index:handover_index]
     assert "##### ワランティ報告チャット送信" in panel_source
-    assert 'st.markdown(f"**送信先：** {chat_name}")' in panel_source
+    assert 'st.markdown(f"**送信先：** {destination_label}")' in panel_source
     assert "WRS引き継ぎ表 転記用" in source
     assert "按钮" not in after_source
 
