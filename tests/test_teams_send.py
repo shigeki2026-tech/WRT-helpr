@@ -22,8 +22,61 @@ def test_header_caption_removed_and_master_system_info_added():
     assert "正式スクリプト本文は先方管理のExcel" not in main_source
     assert "通話中の判断補助ツール —" not in main_source
     assert "システム情報" in master_source
-    assert "557 passed" in source
+    assert "d5f6cde" not in source
+    assert "557 passed" not in source
+    assert '"テスト": "pytest結果を確認"' in source
     assert "build_system_info_display()" in master_source
+
+
+def test_local_git_commit_short_success_and_failure(monkeypatch):
+    def fake_success(args, **kwargs):
+        assert args == ["git", "rev-parse", "--short", "HEAD"]
+        assert kwargs["cwd"] == app.APP_DIR
+        return SimpleNamespace(returncode=0, stdout="d83feaf\n", stderr="")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_success)
+
+    assert app.get_local_git_commit_short() == "d83feaf"
+
+    def fake_failure(args, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr="not a git repo")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_failure)
+
+    assert app.get_local_git_commit_short() == ""
+
+
+def test_system_info_uses_git_commit_or_manual_confirmation(monkeypatch):
+    config = {
+        **app.DEFAULT_TEAMS_CONFIG,
+        "enabled": True,
+        "chat_id": "normal-chat",
+        "warranty_enabled": True,
+        "warranty_chat_id": "warranty-chat",
+    }
+    monkeypatch.setattr(app, "load_teams_config", lambda: config)
+    monkeypatch.setattr(app, "get_local_git_commit_short", lambda: "d83feaf")
+
+    info = app.build_system_info_display()
+
+    assert info["最新commit"] == "d83feaf"
+    assert info["テスト"] == "pytest結果を確認"
+    assert info["Teams送信"] == "設定済み"
+    assert info["Teamsワランティ送信"] == "設定済み"
+
+    monkeypatch.setattr(app, "get_local_git_commit_short", lambda: "")
+
+    assert app.build_system_info_display()["最新commit"] == "手動確認"
+
+
+def test_system_info_marks_teams_config_uncertain(monkeypatch):
+    monkeypatch.setattr(app, "load_teams_config", lambda: {"error": "読み込めません"})
+    monkeypatch.setattr(app, "get_local_git_commit_short", lambda: "")
+
+    info = app.build_system_info_display()
+
+    assert info["Teams送信"] == "要確認"
+    assert info["Teamsワランティ送信"] == "要確認"
 
 
 def test_ui_label_uses_case_category_instead_of_legacy_appliance_slash_label():

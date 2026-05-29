@@ -3231,18 +3231,50 @@ def is_teams_send_enabled() -> bool:
     return bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
 
 
-def build_system_info_display() -> dict[str, str]:
-    config = load_teams_config()
+def get_local_git_commit_short() -> str:
+    """ローカルGitが使える場合だけ現在の短縮commitを返す。"""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=APP_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
+def teams_config_status_label(config: dict, *, warranty: bool = False) -> str:
+    if config.get("error"):
+        return "要確認"
     send_mode = (config.get("send_mode") or "").strip()
-    teams_ready = bool(config.get("enabled") and config.get("chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
-    warranty_ready = bool(config.get("warranty_enabled") and config.get("warranty_chat_id") and send_mode in SUPPORTED_TEAMS_SEND_MODES)
+    if send_mode not in SUPPORTED_TEAMS_SEND_MODES:
+        return "未設定"
+    if warranty:
+        ready = bool(config.get("warranty_enabled") and config.get("warranty_chat_id"))
+    else:
+        ready = bool(config.get("enabled") and config.get("chat_id"))
+    return "設定済み" if ready else "未設定"
+
+
+def build_system_info_display() -> dict[str, str]:
+    try:
+        config = load_teams_config()
+    except Exception:
+        config = {"error": "Teams設定を確認できません"}
+    commit = get_local_git_commit_short() or "手動確認"
     return {
         "アプリ版": "2026.05.24",
-        "最新commit": "d5f6cde",
-        "テスト": "557 passed",
+        "最新commit": commit,
+        "テスト": "pytest結果を確認",
         "CSVマスタ": "読込済み",
-        "Teams送信": "設定済み" if teams_ready else "未設定",
-        "Teamsワランティ送信": "設定済み" if warranty_ready else "未設定",
+        "Teams送信": teams_config_status_label(config),
+        "Teamsワランティ送信": teams_config_status_label(config, warranty=True),
     }
 
 
