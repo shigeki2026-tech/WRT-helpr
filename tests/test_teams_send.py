@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import csv
 import json
 import re
 import subprocess
@@ -193,14 +194,14 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
     snippet_source = after_source[
-        after_source.index("###### 追記候補"):
+        after_source.index("定型文を追記する"):
         after_source.index("##### 📝 ラクテル用テキスト")
     ]
     memo_text_area_index = after_source.index('memo_display = st.text_area(')
     memo_copy_index = after_source.index("copy_attention_memo")
-    snippet_index = after_source.index("###### 追記候補")
+    snippet_index = after_source.index("定型文を追記する")
     pending_index = after_source.index('pending_snippet_id = str(st.session_state.pop("_pending_append_memo_snippet_id"')
-    action_panel_index = after_source.index("修理依頼書メモ 操作")
+    template_panel_index = after_source.index("###### 修理依頼文テンプレ")
 
     assert "Choose options" not in source
     assert "Select all" not in source
@@ -210,8 +211,9 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")" in after_source
     assert "with memo_col:" in after_source
     assert "with memo_action_col:" in after_source
-    assert "修理依頼書メモ 操作" in after_source
-    assert "追記候補" in snippet_source
+    assert "修理依頼書メモ 操作" not in after_source
+    assert "追記候補" not in snippet_source
+    assert "定型文を追記する" in snippet_source
     assert "追記する定型文を選択" in snippet_source
     assert "追記条件" in snippet_source
     assert "追記内容" in snippet_source
@@ -229,11 +231,11 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "memo_snippet_append_selected_button" not in source
     assert "memo_snippet_clear_selected_button" not in source
     assert "_pending_append_memo_snippet_id" in snippet_source
-    assert "_memo_snippet_append_message" in snippet_source
+    assert "_memo_snippet_append_message" in after_source
     assert "st.rerun()" in snippet_source
     assert "append_attention_memo_snippets(form, [selected_snippet_id])" not in snippet_source
     assert "append_attention_memo_snippets(form, [pending_snippet_id])" in after_source
-    assert pending_index < memo_text_area_index < action_panel_index < memo_copy_index < snippet_index
+    assert template_panel_index < pending_index < memo_text_area_index < snippet_index < memo_copy_index
 
 
 def test_after_call_operator_name_input_is_compact_with_save_button():
@@ -271,9 +273,12 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert "with rakutel_action_col:" in after_source
     assert "with teams_text_col:" in after_source
     assert "with teams_action_col:" in after_source
-    assert "修理依頼書メモ 操作" in after_source
-    assert "ラクテル用テキスト 操作" in after_source
-    assert "Teams報告文 操作" in after_source
+    assert "修理依頼書メモ 操作" not in after_source
+    assert "ラクテル用テキスト 操作" not in after_source
+    assert "Teams報告文 操作" not in after_source
+    assert "memo_title_col, memo_regen_col, memo_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
+    assert "rakutel_title_col, rakutel_regen_col, rakutel_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
+    assert "teams_title_col, teams_regen_col, teams_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
     assert "st.columns([5, 2], gap=\"large\")" not in after_source
 
     rakutel_section = after_source[
@@ -305,17 +310,16 @@ def test_after_call_record_area_is_full_width_below_top_columns():
 
     top_left_index = after_source.index("##### 案件サマリー")
     top_right_index = after_source.index("##### 補助情報")
-    record_heading_index = after_source.index("##### 📝 記録文")
     memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
-    record_area = after_source[record_heading_index:memo_heading_index]
+    record_area = after_source[top_right_index:memo_heading_index]
 
-    assert top_left_index < record_heading_index
-    assert top_right_index < record_heading_index
+    assert top_left_index < memo_heading_index
+    assert top_right_index < memo_heading_index
     assert "with col2:" not in record_area
-    assert "\n    st.markdown(\"##### 📝 記録文\")" in after_source
-    assert after_source.index("memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
-    assert after_source.index("rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
-    assert after_source.index("teams_text_col, teams_action_col = st.columns([2, 3], gap=\"large\")") > record_heading_index
+    assert "\n    st.markdown(\"##### 📝 記録文\")" not in after_source
+    assert after_source.index("memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")") > memo_heading_index
+    assert after_source.index("rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")") > memo_heading_index
+    assert after_source.index("teams_text_col, teams_action_col = st.columns([2, 3], gap=\"large\")") > memo_heading_index
 
 
 def test_after_call_top_summary_keeps_details_collapsed():
@@ -323,16 +327,16 @@ def test_after_call_top_summary_keeps_details_collapsed():
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
-    record_heading_index = after_source.index("##### 📝 記録文")
+    memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
 
     assert "##### 案件サマリー" in after_source
     assert 'st.expander("送付テンプレート・拠点の詳細を開く", expanded=False)' in after_source
     assert 'st.expander("修理拠点・手配詳細を開く", expanded=False)' in after_source
     assert 'st.expander("候補テンプレートの詳細を見る", expanded=False)' in after_source
     assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
-    assert after_source.index("##### 案件サマリー") < record_heading_index
-    assert after_source.index("送付テンプレート・拠点の詳細を開く") < record_heading_index
-    assert after_source.index("修理拠点・手配詳細を開く") < record_heading_index
+    assert after_source.index("##### 案件サマリー") < memo_heading_index
+    assert after_source.index("送付テンプレート・拠点の詳細を開く") < memo_heading_index
+    assert after_source.index("修理拠点・手配詳細を開く") < memo_heading_index
 
 
 def test_repair_request_template_is_shown_before_memo_regeneration_button():
@@ -341,16 +345,22 @@ def test_repair_request_template_is_shown_before_memo_regeneration_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
     memo_action = after_source[
-        after_source.index("修理依頼書メモ 操作"):
-        after_source.index("###### 追記候補")
+        after_source.index("###### 修理依頼文テンプレ"):
+        after_source.index('memo_display = st.text_area(')
+    ]
+    memo_display_area = after_source[
+        after_source.index('with memo_action_col:'):
+        after_source.index("定型文を追記する")
     ]
 
     assert "修理依頼文テンプレ" in memo_action
     assert "テンプレート未確定" in memo_action
-    assert "memo_template_code" in memo_action
-    assert "memo_template_label" in memo_action
-    assert "build_template_selection_reason(template_selection)" in memo_action
-    assert memo_action.index("修理依頼文テンプレ") < memo_action.index('key="regenerate_attention_memo"')
+    assert "テンプレート候補" in memo_action
+    assert "memo_template_code" in memo_display_area
+    assert "memo_template_label" in memo_display_area
+    assert "build_template_selection_reason(template_selection)" in memo_display_area
+    assert after_source.index("###### 修理依頼文テンプレ") > after_source.index('key="regenerate_attention_memo"')
+    assert after_source.index("###### 修理依頼文テンプレ") < after_source.index('memo_display = st.text_area(')
 
 
 def test_after_call_history_template_is_collapsed_as_legacy_format():
@@ -2801,6 +2811,90 @@ def test_teams_send_log_includes_preview(monkeypatch):
     assert logs[0]["error_message"] == "送信失敗: denied"
 
 
+def test_teams_send_log_records_self_test_destination(monkeypatch, tmp_path):
+    log_path = tmp_path / "teams_send_log.csv"
+    original_session_state = app.st.session_state
+    monkeypatch.setattr(app, "TEAMS_SEND_LOG_PATH", str(log_path))
+    try:
+        app.st.session_state = SessionState()
+        logs = app.append_teams_send_log(
+            {"ok": True},
+            "テスト本文",
+            "自分宛てテスト",
+            form={"rakuteru_no": "2026_05_0001", "wrt_no": "WRT-1"},
+            vendor="テスト拠点",
+            teams_action="テスト送信",
+            destination_key="self_test",
+            destination_label="自分宛てテスト",
+        )
+    finally:
+        app.st.session_state = original_session_state
+
+    rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
+    assert logs[0]["destination_key"] == "self_test"
+    assert logs[0]["destination_label"] == "自分宛てテスト"
+    assert rows[0]["destination_key"] == "self_test"
+    assert rows[0]["destination_label"] == "自分宛てテスト"
+    assert rows[0]["chat_name"] == "自分宛てテスト"
+    assert rows[0]["result"] == "success"
+
+
+def test_teams_send_log_records_warranty_destination(monkeypatch, tmp_path):
+    log_path = tmp_path / "teams_send_log.csv"
+    original_session_state = app.st.session_state
+    monkeypatch.setattr(app, "TEAMS_SEND_LOG_PATH", str(log_path))
+    try:
+        app.st.session_state = SessionState()
+        app.append_teams_send_log(
+            {"ok": True},
+            "本番本文",
+            "ワランティ報告用チャット",
+            form={"rakuteru_no": "2026_05_0002"},
+            vendor="ユナイトサービス㈱",
+            teams_action="Teamsワランティ送信",
+            destination_key="warranty",
+            destination_label="ワランティ報告用チャット（本番）",
+        )
+    finally:
+        app.st.session_state = original_session_state
+
+    rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
+    assert rows[0]["destination_key"] == "warranty"
+    assert rows[0]["destination_label"] == "ワランティ報告用チャット（本番）"
+    assert rows[0]["chat_name"] == "ワランティ報告用チャット"
+    assert rows[0]["teams_action"] == "Teamsワランティ送信"
+
+
+def test_teams_send_log_upgrades_legacy_columns(monkeypatch, tmp_path):
+    log_path = tmp_path / "teams_send_log.csv"
+    log_path.write_text(
+        "timestamp,rakuteru_no,wrt_no,vendor,teams_action,result,error_message\n"
+        "2026/05/29 10:00:00,old,,,旧アクション,success,\n",
+        encoding="utf-8-sig",
+    )
+    original_session_state = app.st.session_state
+    monkeypatch.setattr(app, "TEAMS_SEND_LOG_PATH", str(log_path))
+    try:
+        app.st.session_state = SessionState()
+        app.append_teams_send_log(
+            {"ok": True},
+            "追加本文",
+            "自分宛てテスト",
+            form={"rakuteru_no": "2026_05_0003"},
+            destination_key="self_test",
+            destination_label="自分宛てテスト",
+        )
+    finally:
+        app.st.session_state = original_session_state
+
+    rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
+    assert len(rows) == 2
+    assert "destination_key" in rows[0]
+    assert rows[0]["destination_key"] == ""
+    assert rows[1]["destination_key"] == "self_test"
+    assert rows[1]["destination_label"] == "自分宛てテスト"
+
+
 def test_no_standalone_script_reference_block():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
@@ -2993,7 +3087,7 @@ def test_after_call_template_auto_and_candidate_display_exists():
     assert "summary[\"vendor_reason\"]" in after_source
     assert after_source.index("summary[\"template_reason\"]") < after_source.index("summary[\"vendor_reason\"]")
     assert "理由：" in after_source
-    assert '"テンプレートを選択"' in after_source
+    assert '"テンプレート候補"' in after_source
     assert "selected_option_val = st.selectbox(" in after_source
     assert "候補テンプレートの詳細を見る" in after_source
     assert "選択可能テンプレート：" in after_source
@@ -3012,8 +3106,8 @@ def test_after_call_template_selection_is_not_blocked_by_unconfirmed_vendor():
     ]
 
     assert "テンプレートは選択可能です。修理拠点は別途確認してください。" in after_source
-    assert "テンプレート候補がありません。回線名・製品・保証種別を確認してください。" in after_source
-    assert "if not df_tpl.empty:" in detail_source
+    assert "候補なし：回線名・製品・保証種別を確認してください" in after_source
+    assert "if template_candidates:" in detail_source
     assert 'if (call_line_val or template_selection.get("label"))' not in detail_source
     assert "disabled=True" not in detail_source
 
@@ -3184,13 +3278,13 @@ def test_repair_request_memo_sanitizes_stale_body_emoji_for_display_and_copy():
     after_source = source[after_index:master_index]
     memo_area = after_source[
         after_source.index('memo_display = st.text_area('):
-        after_source.index("###### 追記候補")
+        after_source.index("定型文を追記する")
     ]
 
     assert 'key=memo_widget_key' in memo_area
     assert '"memo_after_widget"' in after_source
     assert 'form["attention_memo"] = sanitize_generated_body_text(memo_display)' in memo_area
-    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_area
+    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
 
 
 def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
@@ -3242,8 +3336,8 @@ def test_after_call_display_uses_repair_request_memo_not_attention_memo():
 
     assert "注意内容メモ" not in after_source
     assert "##### 📝 修理依頼書メモ" in after_source
-    assert "修理依頼書メモ 操作" in after_source
-    assert 'st.button("再生成", key="regenerate_attention_memo")' in after_source
+    assert "修理依頼書メモ 操作" not in after_source
+    assert 'key="regenerate_attention_memo"' in after_source
     assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
 
 
@@ -3336,7 +3430,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
 
     memo_area = after_source[
         after_source.index('memo_display = st.text_area('):
-        after_source.index("###### 追記候補")
+        after_source.index("定型文を追記する")
     ]
     memo_and_snippet_area = after_source[
         after_source.index('memo_display = st.text_area('):
@@ -3357,9 +3451,9 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
 
     assert "st.code(" not in memo_area
     assert "コピー用：修理依頼書メモ" not in memo_area
-    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_area
-    assert memo_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_area.index("copy_attention_memo")
-    assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("###### 追記候補")
+    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
+    assert memo_and_snippet_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_and_snippet_area.index("copy_attention_memo")
+    assert memo_and_snippet_area.index("定型文を追記する") < memo_and_snippet_area.index("copy_attention_memo")
 
     assert "st.code(" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area

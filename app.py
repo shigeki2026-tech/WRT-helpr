@@ -3465,14 +3465,24 @@ def send_teams_message_via_powershell(message: str, chat_id_override: str = "") 
 
 def append_teams_send_log(result: dict, message: str, chat_name: str,
                           form: dict | None = None, vendor: str = "",
-                          teams_action: str = "") -> list:
+                          teams_action: str = "",
+                          destination_key: str = "",
+                          destination_label: str = "") -> list:
     if "teams_send_log" not in st.session_state:
         st.session_state.teams_send_log = []
     form = form or {}
     timestamp = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    destination_key = (destination_key or "").strip()
+    destination_label = (
+        destination_label
+        or WARRANTY_REPORT_DESTINATION_LABELS.get(destination_key, "")
+        or chat_name
+    ).strip()
     entry = {
         "sent_at": timestamp,
         "ok": bool(result.get("ok")),
+        "destination_key": destination_key,
+        "destination_label": destination_label,
         "chat_name": chat_name,
         "message_preview": (message or "").replace("\n", " ")[:100],
         "error_message": "" if result.get("ok") else result.get("message", ""),
@@ -3483,16 +3493,34 @@ def append_teams_send_log(result: dict, message: str, chat_name: str,
             return st.session_state.teams_send_log
         os.makedirs(os.path.dirname(TEAMS_SEND_LOG_PATH), exist_ok=True)
         file_exists = os.path.exists(TEAMS_SEND_LOG_PATH)
+        fieldnames = [
+            "timestamp",
+            "rakuteru_no",
+            "wrt_no",
+            "vendor",
+            "teams_action",
+            "destination_key",
+            "destination_label",
+            "chat_name",
+            "result",
+            "error_message",
+        ]
+        if file_exists:
+            with open(TEAMS_SEND_LOG_PATH, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                existing_fieldnames = reader.fieldnames or []
+                if existing_fieldnames and any(field not in existing_fieldnames for field in fieldnames):
+                    rows = list(reader)
+                    merged_fieldnames = existing_fieldnames + [
+                        field for field in fieldnames if field not in existing_fieldnames
+                    ]
+                    with open(TEAMS_SEND_LOG_PATH, "w", encoding="utf-8-sig", newline="") as rewrite_f:
+                        rewrite_writer = csv.DictWriter(rewrite_f, fieldnames=merged_fieldnames)
+                        rewrite_writer.writeheader()
+                        for row in rows:
+                            rewrite_writer.writerow({field: row.get(field, "") for field in merged_fieldnames})
+                    fieldnames = merged_fieldnames
         with open(TEAMS_SEND_LOG_PATH, "a", encoding="utf-8-sig", newline="") as f:
-            fieldnames = [
-                "timestamp",
-                "rakuteru_no",
-                "wrt_no",
-                "vendor",
-                "teams_action",
-                "result",
-                "error_message",
-            ]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             if not file_exists:
                 writer.writeheader()
@@ -3502,6 +3530,9 @@ def append_teams_send_log(result: dict, message: str, chat_name: str,
                 "wrt_no": (form.get("wrt_no") or "").strip(),
                 "vendor": (vendor or "").strip(),
                 "teams_action": (teams_action or form.get("teams_action") or "").strip(),
+                "destination_key": destination_key,
+                "destination_label": destination_label,
+                "chat_name": (chat_name or "").strip(),
                 "result": "success" if result.get("ok") else "failure",
                 "error_message": "" if result.get("ok") else result.get("message", ""),
             })
@@ -8872,6 +8903,30 @@ def render_tab_after_call():
         warranty_plan_val = form.get("warranty_plan", "")
         template_selection = select_template_for_form(
             form, repair_type_val, warranty_plan_val, df_tpl)
+        template_candidates = []
+        template_option_rows = {}
+        template_labels = [""]
+        template_current_option = ""
+        template_auto_option = ""
+        if not df_tpl.empty:
+            template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
+                form, repair_type_val, warranty_plan_val, df_tpl, template_selection
+            )
+            template_option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
+            template_auto_option = _template_option_label({
+                "template_code": template_selection.get("template_code", ""),
+                "label": template_selection.get("label", ""),
+            })
+            template_labels = [""] + list(template_option_rows.keys())
+            current_code = normalize_template_code(form.get("template_code"))
+            current_label = form.get("template_label", "") or template_selection.get("label", "")
+            for option_label, candidate in template_option_rows.items():
+                if current_code and candidate.get("template_code") == current_code:
+                    template_current_option = option_label
+                    break
+                if current_label and candidate.get("label") == current_label:
+                    template_current_option = option_label
+                    break
         vr = decision["vendor_result"]
         vendor_card = build_vendor_candidate_card_info(vendor, vr)
         request_folder = vendor_card["request_folder"]
@@ -8896,83 +8951,33 @@ def render_tab_after_call():
             if is_double_protect_plan(warranty_plan_val):
                 st.warning(f"物損付 / DP案件: {double_protect_plan_label(warranty_plan_val)}。ダブルプロテクト系テンプレートを優先します。")
 
-            if not df_tpl.empty:
-                template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
-                    form, repair_type_val, warranty_plan_val, df_tpl, template_selection
-                )
-                if template_candidates:
-                    option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
-                    auto_option = _template_option_label({
-                        "template_code": template_selection.get("template_code", ""),
-                        "label": template_selection.get("label", ""),
-                    })
-                    tpl_labels = [""] + list(option_rows.keys())
-                    current_code = normalize_template_code(form.get("template_code"))
-                    current_label = form.get("template_label", "") or template_selection.get("label", "")
-                    current_option = ""
-                    for option_label, candidate in option_rows.items():
-                        if current_code and candidate.get("template_code") == current_code:
-                            current_option = option_label
-                            break
-                        if current_label and candidate.get("label") == current_label:
-                            current_option = option_label
-                            break
-                    idx = tpl_labels.index(current_option) if current_option in tpl_labels else 0
-
-                    selected_option_val = st.selectbox(
-                        "テンプレートを選択",
-                        tpl_labels,
-                        index=idx,
-                        key="tpl_label_select_after",
+            if template_candidates:
+                summary_option = template_current_option or template_auto_option
+                if summary_option:
+                    summary = build_after_call_template_vendor_summary(
+                        form, decision, template_selection, summary_option
                     )
-                    if auto_option:
-                        summary = build_after_call_template_vendor_summary(
-                            form, decision, template_selection, selected_option_val or auto_option
-                        )
-                        st.markdown("**テンプレート：**")
-                        st.markdown(summary["template"])
-                        if summary["template_reason"]:
-                            st.caption(f"理由：{summary['template_reason']}")
-                        if summary["template_source_value"]:
-                            st.caption(f"判定根拠：{summary['template_source_label']} {summary['template_source_value']}")
-                        if summary["display_store"]:
-                            st.caption(f"表示販売店：{summary['display_store']}")
-                        st.markdown("**修理拠点：**")
-                        st.markdown(summary["vendor"] or "未確定")
-                        if summary["vendor_reason"]:
-                            st.caption(f"理由：{summary['vendor_reason']}")
-                        st.caption(f"状態：{summary['vendor_status']}")
-                    with st.expander("候補テンプレートの詳細を見る", expanded=False):
-                        st.caption("選択可能テンプレート：")
-                        for option_label in option_rows.keys():
-                            st.caption(f"- {option_label}")
-                    if selected_option_val:
-                        row = option_rows.get(selected_option_val, {})
-                        selected_code = normalize_template_code(row.get("template_code"))
-                        selected_label_val = row.get("label", "")
-                        selected_notes = (row.get("notes") or "").strip()
-                        if selected_code:
-                            st.code(selected_code, language=None)
-                        if selected_code == "0009":
-                            st.caption("修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
-                        if selected_notes:
-                            st.info(f"📋 備考: {selected_notes}")
-                        if row.get("data_erase_required") == "条件付き":
-                            st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
-                        if row.get("cost_guidance_allowed") == "不可":
-                            st.error("🚫 金額案内不可案件")
-                        form["template_code"] = selected_code
-                        form["template_label"] = selected_label_val
-                        st.session_state.form = form
-                    else:
-                        form["template_code"] = ""
-                        form["template_label"] = ""
-                    if not (vr["matched"] and not vr.get("needs_escalation")):
-                        st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
-                else:
-                    st.warning("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
+                    st.markdown("**テンプレート：**")
+                    st.markdown(summary["template"])
+                    if summary["template_reason"]:
+                        st.caption(f"理由：{summary['template_reason']}")
+                    if summary["template_source_value"]:
+                        st.caption(f"判定根拠：{summary['template_source_label']} {summary['template_source_value']}")
+                    if summary["display_store"]:
+                        st.caption(f"表示販売店：{summary['display_store']}")
+                    st.markdown("**修理拠点：**")
+                    st.markdown(summary["vendor"] or "未確定")
+                    if summary["vendor_reason"]:
+                        st.caption(f"理由：{summary['vendor_reason']}")
+                    st.caption(f"状態：{summary['vendor_status']}")
+                with st.expander("候補テンプレートの詳細を見る", expanded=False):
+                    st.caption("選択可能テンプレート：")
+                    for option_label in template_option_rows.keys():
+                        st.caption(f"- {option_label}")
+                if not (vr["matched"] and not vr.get("needs_escalation")):
+                    st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
             else:
-                st.warning("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
+                st.warning("候補なし：回線名・製品・保証種別を確認してください")
 
         with st.expander("修理拠点・手配詳細を開く", expanded=False):
             if vr["matched"] and not vr.get("needs_escalation"):
@@ -9027,10 +9032,55 @@ def render_tab_after_call():
         form["teams_action"] = st.session_state.get("teams_action_input", "")
     st.session_state.form = form
 
-    st.markdown("##### 📝 記録文")
-
     # ── 修理依頼書メモ（備考欄反映）──
-    st.markdown("##### 📝 修理依頼書メモ")
+    memo_title_col, memo_regen_col, memo_copy_col = st.columns([6, 1, 1], gap="small")
+    with memo_title_col:
+        st.markdown("##### 📝 修理依頼書メモ")
+    with memo_regen_col:
+        if st.button(
+            "再生成",
+            key="regenerate_attention_memo",
+            help="現在の修理依頼書メモを上書きして再生成します。",
+            use_container_width=True,
+        ):
+            st.session_state["_pending_regenerate_attention_memo"] = True
+            st.rerun()
+    memo_copy_slot = memo_copy_col.empty()
+
+    st.markdown("###### 修理依頼文テンプレ")
+    if template_candidates:
+        template_idx = template_labels.index(template_current_option) if template_current_option in template_labels else 0
+        selected_option_val = st.selectbox(
+            "テンプレート候補",
+            template_labels,
+            index=template_idx,
+            key="tpl_label_select_after",
+        )
+        if selected_option_val:
+            row = template_option_rows.get(selected_option_val, {})
+            selected_code = normalize_template_code(row.get("template_code"))
+            selected_label_val = row.get("label", "")
+            selected_notes = (row.get("notes") or "").strip()
+            if selected_code:
+                st.code(selected_code, language=None)
+            if selected_code == "0009":
+                st.caption("修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。")
+            if selected_notes:
+                st.info(f"📋 備考: {selected_notes}")
+            if row.get("data_erase_required") == "条件付き":
+                st.warning("⚠️ データ消去同意【データ消去同意済】を依頼書へ記載")
+            if row.get("cost_guidance_allowed") == "不可":
+                st.error("🚫 金額案内不可案件")
+            form["template_code"] = selected_code
+            form["template_label"] = selected_label_val
+            st.session_state.form = form
+        else:
+            form["template_code"] = ""
+            form["template_label"] = ""
+    else:
+        st.info("テンプレート未確定")
+        st.caption("候補なし：回線名・製品・保証種別を確認してください")
+
     notes_filled = _fill_template_notes(selected_notes, form)
     generated_attention_memo = sanitize_generated_body_text(_build_after_call_memo(
         form, warranty_result, repair_type, vendor, notes_filled, cost_estimate))
@@ -9083,8 +9133,6 @@ def render_tab_after_call():
         st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
 
     with memo_action_col:
-        st.markdown("###### 修理依頼書メモ 操作")
-        st.markdown("###### 修理依頼文テンプレ")
         memo_template_code = normalize_template_code(form.get("template_code") or selected_code or template_selection.get("template_code"))
         memo_template_label = form.get("template_label") or selected_label_val or template_selection.get("label", "")
         memo_template_reason = build_template_selection_reason(template_selection)
@@ -9096,7 +9144,7 @@ def render_tab_after_call():
                 st.caption(f"備考：{selected_notes}")
         else:
             st.info("テンプレート未確定")
-            st.caption("テンプレート候補がありません。回線名・製品・保証種別を確認してください。")
+            st.caption("候補なし：回線名・製品・保証種別を確認してください")
         if not (vr["matched"] and not vr.get("needs_escalation")):
             st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
         regen_message = str(st.session_state.pop("_attention_memo_regenerate_message", "") or "").strip()
@@ -9104,16 +9152,9 @@ def render_tab_after_call():
             st.success(regen_message)
         if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
             st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
-        if st.button("再生成", key="regenerate_attention_memo"):
-            st.session_state["_pending_regenerate_attention_memo"] = True
-            st.rerun()
-        st.caption("再生成すると、現在の修理依頼書メモは上書きされます。")
-        render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
 
         snippets_df = load_memo_snippets()
         if not snippets_df.empty:
-            st.markdown("###### 追記候補")
-            st.caption("必要な定型文を選択して、現在の修理依頼書メモへ追記できます。")
             snippet_message = str(st.session_state.pop("_memo_snippet_append_message", "") or "").strip()
             if snippet_message:
                 if snippet_message == "修理依頼書メモへ追記しました。":
@@ -9125,43 +9166,48 @@ def render_tab_after_call():
                 for _, row in snippets_df.iterrows()
                 if str(row.get("snippet_id") or "").strip()
             ]
-            selected_snippet_id = st.selectbox(
-                "追記する定型文を選択",
-                snippet_options,
-                format_func=lambda snippet_id: (
-                    "選択してください"
-                    if not snippet_id
-                    else memo_snippet_option_label(memo_snippet_row_by_id(snippets_df, snippet_id))
-                ),
-                key="memo_snippet_selectbox",
-            )
-            selected_row = memo_snippet_row_by_id(snippets_df, selected_snippet_id)
-            if selected_row:
-                condition_text = str(selected_row.get("condition_text") or "").strip()
-                body = sanitize_generated_body_text(selected_row.get("body") or "").strip()
-                if condition_text:
-                    st.caption(f"追記条件：{condition_text}")
-                if "\n" in body:
-                    st.caption("追記内容：")
-                    st.code(body, language=None)
-            if st.button("この文言を追記", key="memo_snippet_append_current_button"):
-                if selected_snippet_id:
-                    st.session_state["_pending_append_memo_snippet_id"] = selected_snippet_id
-                    st.rerun()
-                else:
-                    st.warning("追記する定型文を選択してください。")
+            with st.expander("定型文を追記する", expanded=False):
+                selected_snippet_id = st.selectbox(
+                    "追記する定型文を選択",
+                    snippet_options,
+                    format_func=lambda snippet_id: (
+                        "選択してください"
+                        if not snippet_id
+                        else memo_snippet_option_label(memo_snippet_row_by_id(snippets_df, snippet_id))
+                    ),
+                    key="memo_snippet_selectbox",
+                )
+                selected_row = memo_snippet_row_by_id(snippets_df, selected_snippet_id)
+                if selected_row:
+                    condition_text = str(selected_row.get("condition_text") or "").strip()
+                    body = sanitize_generated_body_text(selected_row.get("body") or "").strip()
+                    if condition_text:
+                        st.caption(f"追記条件：{condition_text}")
+                    if "\n" in body:
+                        st.caption("追記内容：")
+                        st.code(body, language=None)
+                if st.button("この文言を追記", key="memo_snippet_append_current_button"):
+                    if selected_snippet_id:
+                        st.session_state["_pending_append_memo_snippet_id"] = selected_snippet_id
+                        st.rerun()
+                    else:
+                        st.warning("追記する定型文を選択してください。")
+    with memo_copy_slot.container():
+        render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
 
     # ── ラクテル用テキスト ──
-    st.markdown("##### 📝 ラクテル用テキスト")
+    rakutel_title_col, rakutel_regen_col, rakutel_copy_col = st.columns([6, 1, 1], gap="small")
+    with rakutel_title_col:
+        st.markdown("##### 📝 ラクテル用テキスト")
+    with rakutel_regen_col:
+        if st.button("再生成", key="regenerate_rakutel_text", use_container_width=True):
+            st.session_state["_pending_regenerate_rakutel_text"] = True
+            st.rerun()
+    rakutel_copy_slot = rakutel_copy_col.empty()
     form = sync_after_call_rakutel_action_inputs(form, st.session_state)
     rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap="large")
     with rakutel_action_col:
-        st.markdown("###### ラクテル用テキスト 操作")
         rakutel_regen_message_slot = st.empty()
-        if st.button("再生成", key="regenerate_rakutel_text"):
-            st.session_state["_pending_regenerate_rakutel_text"] = True
-            st.rerun()
-        rakutel_copy_slot = st.empty()
         call_direction_options = ["受電", "架電"]
         call_direction = st.selectbox(
             "通話方向",
@@ -9235,15 +9281,17 @@ def render_tab_after_call():
         render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")
 
     # ── Teams報告文 ──
-    st.markdown("##### 💬 Teams報告文")
-    teams_text_col, teams_action_col = st.columns([2, 3], gap="large")
-    with teams_action_col:
-        st.markdown("###### Teams報告文 操作")
-        teams_regen_message_slot = st.empty()
-        if st.button("再生成", key="regenerate_teams_chat_message"):
+    teams_title_col, teams_regen_col, teams_copy_col = st.columns([6, 1, 1], gap="small")
+    with teams_title_col:
+        st.markdown("##### 💬 Teams報告文")
+    with teams_regen_col:
+        if st.button("再生成", key="regenerate_teams_chat_message", use_container_width=True):
             st.session_state["_pending_regenerate_teams_chat_message"] = True
             st.rerun()
-        teams_copy_slot = st.empty()
+    teams_copy_slot = teams_copy_col.empty()
+    teams_text_col, teams_action_col = st.columns([2, 3], gap="large")
+    with teams_action_col:
+        teams_regen_message_slot = st.empty()
         rakuteru_val = st.text_input(
             "楽テルNO",
             value=form.get("rakuteru_no", ""),
@@ -9447,6 +9495,8 @@ def render_tab_after_call():
                 form=form,
                 vendor=vendor,
                 teams_action=log_action,
+                destination_key=destination_key,
+                destination_label=destination_label,
             )
             if result.get("ok"):
                 _mark_warranty_report_sent(st.session_state, message, result=result, destination_key=destination_key)
