@@ -289,8 +289,10 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
         after_source.index('render_handover_requirement_panel(decision.get("handover_requirement"))')
     ]
     assert teams_section.index("with teams_action_col:") < teams_section.index('"Teams報告文に入れる対応内容"')
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"送信内容と送信先を確認しました"')
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"Teamsチャットへ送信"')
+    assert '"送信内容と送信先を確認しました"' not in teams_section
+    assert '"Teams報告アクションを確定しました"' not in teams_section
+    assert teams_section.index("with teams_action_col:") < teams_section.index('"自分宛てにテスト送信"')
+    assert "テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。" in teams_section
     assert "追加候補に入れる" not in after_source
     assert "選択中リスト" not in after_source
 
@@ -1457,6 +1459,96 @@ def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
     assert app.teams_send_status_label(reasons, already_sent=False) == "送信不可"
 
 
+def test_teams_test_send_allows_missing_rakuteru_confirmation_and_action():
+    form = {
+        "rakuteru_no": "",
+        "teams_chat_message": "テスト送信用のTeams報告文",
+    }
+    config = {
+        "enabled": True,
+        "chat_id": "self-chat",
+        "send_mode": "powershell_graph",
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    reasons = app.build_teams_test_send_incomplete_reasons(
+        form,
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+    errors = app.validate_teams_test_send_request(
+        form,
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+
+    assert reasons == []
+    assert errors == []
+    assert app.teams_test_send_status_label(reasons, already_sent=False) == "テスト送信可能"
+
+
+def test_teams_test_send_blocks_empty_message_and_missing_self_test_destination():
+    config = {
+        "enabled": True,
+        "chat_id": "",
+        "send_mode": "powershell_graph",
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    reasons = app.build_teams_test_send_incomplete_reasons(
+        {"teams_chat_message": ""},
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+    errors = app.validate_teams_test_send_request(
+        {"teams_chat_message": ""},
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+
+    assert "自分宛てテスト送信設定が未完了" in reasons
+    assert "Teams報告文が空" in reasons
+    assert "自分宛てテスト送信先 chat_id が未設定です" in errors
+    assert "Teams報告文が空です。" in errors
+    assert app.teams_test_send_status_label(reasons, already_sent=False) == "テスト送信不可"
+
+
+def test_teams_test_send_requires_global_teams_enabled_even_with_self_test_destination():
+    config = {
+        "enabled": False,
+        "chat_id": "",
+        "send_mode": "powershell_graph",
+        "destinations": {
+            "self_test": {
+                "enabled": True,
+                "chat_name": "自分宛てテスト",
+                "chat_id": "self-chat",
+            }
+        },
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    reasons = app.build_teams_test_send_incomplete_reasons(
+        {"teams_chat_message": "テスト送信本文"},
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+    errors = app.validate_teams_test_send_request(
+        {"teams_chat_message": "テスト送信本文"},
+        config,
+        already_sent=False,
+        destination=destination,
+    )
+
+    assert "自分宛てテスト送信設定が未完了" in reasons
+    assert "Teams送信設定が無効です" in errors
+
+
 def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label([], already_sent=False) == "送信可能"
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=True) == "送信済み"
@@ -2366,7 +2458,7 @@ def test_teams_chat_message_never_includes_drive_url_for_cer():
 def test_teams_area_source_does_not_render_drive_link():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     teams_index = source.index("##### 💬 Teams報告文")
-    send_button_index = source.index('st.button("Teamsチャットへ送信"', teams_index)
+    send_button_index = source.index('st.button("自分宛てにテスト送信"', teams_index)
     teams_area = source[teams_index:send_button_index]
 
     assert "Google Drive を開く" not in teams_area
@@ -2417,7 +2509,7 @@ def test_teams_auto_send_heading_is_not_duplicated():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert after_source.count("Teams自動送信") == 1  # validation warning text only
+    assert "Teams自動送信" not in after_source
     assert "##### 💬 Teams自動送信" not in after_source
     assert "##### 🚀 Teams送信" not in after_source
     assert "##### 🚀 Teams自動送信" not in after_source
@@ -2430,7 +2522,7 @@ def test_teams_send_unavailable_reasons_are_rendered_in_one_place():
     after_source = source[after_index:master_index]
 
     assert after_source.count('st.markdown("**未完了：**")') == 1
-    assert "build_teams_send_incomplete_reasons" in after_source
+    assert "build_teams_test_send_incomplete_reasons" in after_source
     assert "楽テルNOが未入力です。" not in after_source
     assert "設定未完了のため送信できません" not in after_source
 
@@ -2456,6 +2548,10 @@ def test_teams_action_input_label_is_teams_report_content():
 def test_teams_send_panel_status_labels_exist():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
+    assert "テスト送信不可" in source
+    assert "テスト送信可能" in source
+    assert "テスト送信済み" in source
+    assert "テスト送信失敗" in source
     assert "送信不可" in source
     assert "送信可能" in source
     assert "送信済み" in source
@@ -2471,7 +2567,7 @@ def test_teams_send_success_ui_hides_normal_primary_send_button():
     already_sent_index = after_source.index("if already_sent:")
     sent_button_index = after_source.index('st.button("送信済み"', already_sent_index)
     resend_button_index = after_source.index('st.button("同じ内容を再送する"', sent_button_index)
-    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', resend_button_index)
+    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', resend_button_index)
 
     assert "Teamsへ送信しました。" in after_source
     assert "送信済み本文（確認用）" in after_source
@@ -2485,11 +2581,11 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    status_index = after_source.index('send_status == "送信処理中"')
+    status_index = after_source.index('send_status == "テスト送信処理中"')
     in_progress_index = after_source.index("if in_progress:", status_index)
     message_index = after_source.index("Teamsへ送信しています。完了まで画面を閉じないでください。", in_progress_index)
     disabled_button_index = after_source.index('st.button("送信処理中..."', message_index)
-    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', disabled_button_index)
+    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', disabled_button_index)
 
     assert "teams_send_in_progress_body_hash" in source
     assert "teams_send_requested_body_hash" in source
@@ -2507,7 +2603,7 @@ def test_teams_send_incomplete_ui_hides_normal_primary_send_button():
     sent_branch_index = after_source.index("elif already_sent:")
     incomplete_branch_index = after_source.index("elif incomplete_reasons:", sent_branch_index)
     disabled_button_index = after_source.index('st.button("未完了項目があります"', incomplete_branch_index)
-    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', disabled_button_index)
+    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', disabled_button_index)
 
     assert incomplete_branch_index < disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
@@ -2519,9 +2615,9 @@ def test_teams_send_failure_ui_keeps_error_and_normal_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    failure_index = after_source.index('send_status == "送信失敗"')
+    failure_index = after_source.index('send_status == "テスト送信失敗"')
     error_index = after_source.index("Teams送信に失敗しました：", failure_index)
-    normal_button_index = after_source.index('st.button("Teamsチャットへ送信"', error_index)
+    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', error_index)
 
     assert failure_index < error_index < normal_button_index
     assert "_mark_teams_message_send_failed" in after_source

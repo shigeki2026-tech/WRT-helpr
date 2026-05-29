@@ -2639,6 +2639,24 @@ def warranty_teams_config_unavailable_reasons(config: dict, destination: dict | 
     return reasons
 
 
+def teams_test_config_unavailable_reasons(config: dict, destination: dict | None = None) -> list[str]:
+    destination = destination or resolve_warranty_report_destination(config, "self_test")
+    reasons = []
+    if not config.get("enabled"):
+        reasons.append("Teams送信設定が無効です")
+    if not destination.get("enabled"):
+        reasons.append("自分宛てテスト送信設定が無効です")
+    if not (destination.get("chat_id") or "").strip():
+        reasons.append("自分宛てテスト送信先 chat_id が未設定です")
+    if (config.get("send_mode") or "").strip() not in SUPPORTED_TEAMS_SEND_MODES:
+        reasons.append("send_mode は powershell_graph を指定してください")
+    if not os.path.exists(TEAMS_SEND_SCRIPT_PATH):
+        reasons.append("Teams/PowerShell送信スクリプトが利用できません")
+    if config.get("error"):
+        reasons.append(str(config["error"]))
+    return reasons
+
+
 def _warranty_report_body_hash(message: str, destination_key: str = "warranty") -> str:
     body = teams_plain_text_to_html((message or "").strip())
     if not body:
@@ -2994,6 +3012,50 @@ def build_teams_send_incomplete_reasons(
             reasons.append("担当エスカ案件のTeams本文が担当確認依頼済みではない")
 
     return list(dict.fromkeys(reasons))
+
+
+def build_teams_test_send_incomplete_reasons(
+    form: dict,
+    teams_config: dict,
+    already_sent: bool = False,
+    destination: dict | None = None,
+) -> list[str]:
+    reasons = []
+    if teams_test_config_unavailable_reasons(teams_config, destination):
+        reasons.append("自分宛てテスト送信設定が未完了")
+    if already_sent:
+        reasons.append("送信済み（二重送信防止）")
+    if not (form.get("teams_chat_message") or "").strip():
+        reasons.append("Teams報告文が空")
+    return list(dict.fromkeys(reasons))
+
+
+def validate_teams_test_send_request(
+    form: dict,
+    teams_config: dict,
+    already_sent: bool = False,
+    destination: dict | None = None,
+) -> list[str]:
+    errors = []
+    errors.extend(teams_test_config_unavailable_reasons(teams_config, destination))
+    if not (form.get("teams_chat_message") or "").strip():
+        errors.append("Teams報告文が空です。")
+    if already_sent:
+        errors.append("同じ内容は送信済みです。")
+    return list(dict.fromkeys(errors))
+
+
+def teams_test_send_status_label(incomplete_reasons: list[str], already_sent: bool,
+                                 send_failed: bool = False, in_progress: bool = False) -> str:
+    if in_progress:
+        return "テスト送信処理中"
+    if already_sent:
+        return "テスト送信済み"
+    if incomplete_reasons:
+        return "テスト送信不可"
+    if send_failed:
+        return "テスト送信失敗"
+    return "テスト送信可能"
 
 
 def teams_send_status_label(incomplete_reasons: list[str], already_sent: bool,
@@ -9367,50 +9429,43 @@ def render_tab_after_call():
             st.info("\n".join(teams_preview_lines))
         st.markdown("###### 通常Teams報告")
         st.caption("再生成・コピー・プレビュー中心。送信機能は自分宛てテスト用です。")
-        request_folder = get_request_pdf_folder_info(vendor)
         teams_config = load_teams_config()
         teams_send_mode = (teams_config.get("send_mode") or "").strip()
+        self_test_destination = resolve_warranty_report_destination(teams_config, "self_test")
         teams_enabled = bool(
             teams_config.get("enabled")
-            and teams_config.get("chat_id")
+            and self_test_destination.get("enabled")
+            and self_test_destination.get("chat_id")
             and teams_send_mode in SUPPORTED_TEAMS_SEND_MODES
         )
-        chat_name = teams_config.get("chat_name") or DEFAULT_TEAMS_CONFIG["chat_name"]
-        config_reasons = teams_config_unavailable_reasons(teams_config)
+        chat_name = self_test_destination.get("chat_name") or "自分宛てテスト"
+        config_reasons = teams_test_config_unavailable_reasons(teams_config, self_test_destination)
 
         pdf_storage_confirmed = True
-        if request_folder.get("required"):
-            pdf_storage_confirmed = bool(st.session_state.get("request_pdf_storage_confirmed", False))
-        confirmed = bool(st.session_state.get("teams_send_confirmed", False))
-        action_confirmed = bool(st.session_state.get("teams_action_confirmed", False))
         effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
         _clear_stale_teams_send_transient_state(st.session_state, form)
         already_sent = _teams_case_already_sent(st.session_state, form)
         in_progress = _teams_send_in_progress(st.session_state, form)
         send_failed = _teams_last_send_failed(st.session_state, form)
-        incomplete_reasons = build_teams_send_incomplete_reasons(
+        incomplete_reasons = build_teams_test_send_incomplete_reasons(
             form,
             teams_config,
-            confirmed,
-            action_confirmed,
-            pdf_storage_confirmed,
-            vendor,
-            contact_type,
             already_sent,
+            self_test_destination,
         )
-        send_status = teams_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
+        send_status = teams_test_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
         st.markdown(f"**送信先：** {chat_name}")
         st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
         if config_reasons:
             st.markdown("**理由：**")
             st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
-        if send_status == "送信可能":
+        if send_status == "テスト送信可能":
             st.success(f"状態：{send_status}")
-        elif send_status == "送信処理中":
+        elif send_status == "テスト送信処理中":
             st.info(f"状態：{send_status}")
-        elif send_status == "送信済み":
+        elif send_status == "テスト送信済み":
             st.info(f"状態：{send_status}")
-        elif send_status == "送信失敗":
+        elif send_status == "テスト送信失敗":
             st.error(f"状態：{send_status}")
         else:
             st.warning(f"状態：{send_status}")
@@ -9440,33 +9495,17 @@ def render_tab_after_call():
         elif send_failed:
             error_message = st.session_state.get("teams_send_error_message") or "エラー内容を取得できませんでした"
             st.error(f"Teams送信に失敗しました：{error_message}")
-        st.markdown("**送信前チェック：**")
-        if request_folder.get("required"):
-            pdf_storage_confirmed = st.checkbox(
-                "依頼書PDFを指定フォルダへ格納しました",
-                key="request_pdf_storage_confirmed",
-            )
-        confirmed = st.checkbox(
-            "送信内容と送信先を確認しました",
-            key="teams_send_confirmed",
-        )
-        action_confirmed = st.checkbox(
-            "Teams報告アクションを確定しました",
-            key="teams_action_confirmed",
-        )
+        st.caption("テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。")
 
         def request_teams_send(allow_resend: bool = False):
-            validation_errors = validate_teams_send_request(
+            validation_errors = validate_teams_test_send_request(
                 form,
-                teams_enabled,
-                confirmed,
-                action_confirmed,
-                pdf_storage_confirmed,
-                vendor,
-                contact_type,
+                teams_config,
+                already_sent=(already_sent and not allow_resend),
+                destination=self_test_destination,
             )
             if validation_errors:
-                st.warning("未完了項目があります。Teams自動送信パネルの未完了一覧を確認してください。")
+                st.warning("未完了項目があります。通常Teams報告の未完了一覧を確認してください。")
                 return
             if already_sent and not allow_resend:
                 st.warning("すでに送信済みです。再送する場合のみ実行してください。")
@@ -9481,7 +9520,10 @@ def render_tab_after_call():
         def execute_requested_teams_send():
             teams_send_body = _get_teams_send_body(form)
             with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
-                result = send_teams_message_via_powershell(teams_send_body)
+                result = send_teams_message_via_powershell(
+                    teams_send_body,
+                    chat_id_override=self_test_destination.get("chat_id", ""),
+                )
             append_teams_send_log(
                 result,
                 teams_chat_message,
@@ -9511,7 +9553,7 @@ def render_tab_after_call():
         elif incomplete_reasons:
             st.button("未完了項目があります", disabled=True, use_container_width=True)
         else:
-            if st.button("Teamsチャットへ送信", disabled=not teams_enabled, type="primary", use_container_width=True):
+            if st.button("自分宛てにテスト送信", disabled=not teams_enabled, type="primary", use_container_width=True):
                 request_teams_send(allow_resend=False)
 
         if _teams_send_requested(st.session_state, form):
