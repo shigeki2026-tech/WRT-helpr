@@ -32,6 +32,14 @@ NEW_WRS_HANDOVER_CASES = (
     ("木場(こば)家電住宅設備", "木場家電住宅設備"),
     ("こば家電住宅設備", "木場家電住宅設備"),
     ("ぽちる", "ぽちる"),
+    ("SKY", "SKY"),
+    ("電算システム", "電算システム案件"),
+    ("三城", "三城案件（メガネ）"),
+    ("コジマ", "コジマ（CHIKYUJIN）"),
+    ("CHIKYUJIN", "コジマ（CHIKYUJIN）"),
+    ("チャオ", "チャオ"),
+    ("WM案件", "WM案件（M停止）"),
+    ("M停止", "WM案件（M停止）"),
 )
 
 
@@ -58,6 +66,12 @@ UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES = (
     "FUTAEDA",
     "木場(こば)家電住宅設備",
     "ぽちる",
+    "SKY",
+    "電算システム案件",
+    "三城案件（メガネ）",
+    "コジマ（CHIKYUJIN）",
+    "チャオ",
+    "WM案件（M停止）",
 )
 
 
@@ -170,6 +184,8 @@ def test_added_wrs_handover_targets_are_matched(keyword, expected_rule_name):
     form_values = {"operating_company": keyword}
     if expected_rule_name == "フュディアル":
         form_values["appliance_type"] = "住設"
+    if expected_rule_name == "電算システム案件":
+        form_values["appliance_type"] = "住設"
     result = wrs_handover(make_form(**form_values))
 
     assert result["needs_wrs_handover"] is True
@@ -182,6 +198,15 @@ def test_fudial_wrs_handover_is_limited_to_jusetsu_cases():
     result = wrs_handover(make_form(operating_company="フュディアル", appliance_type="家電"))
 
     assert result["needs_wrs_handover"] is False
+
+
+def test_densan_wrs_handover_is_limited_to_jusetsu_cases():
+    residential = wrs_handover(make_form(store_name="電算システム", appliance_type="住設"))
+    appliance = wrs_handover(make_form(store_name="電算システム", appliance_type="家電"))
+
+    assert residential["needs_wrs_handover"] is True
+    assert residential["rule_name"] == "電算システム案件"
+    assert appliance["needs_wrs_handover"] is False
 
 
 @pytest.mark.parametrize(("store_name", "call_line", "expected_vendor"), SELF_REPAIR_VENDOR_CASES)
@@ -200,6 +225,9 @@ def test_unclear_self_repair_vendor_candidates_are_left_as_test_memo():
     assert "大成有楽（TOKAI/リファテック/ユナイト条件分岐あり）" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
     assert "Comfo home" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
     assert "株式会社ミツウロコヴェッセル" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
+    assert "SKY" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
+    assert "電算システム案件" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
+    assert "WM案件（M停止）" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
 
 
 def test_wrs_handover_panel_renders_basis_text():

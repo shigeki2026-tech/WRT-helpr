@@ -209,6 +209,33 @@ def test_wrs_only_target_does_not_overwrite_repair_vendor():
     assert "WRS" not in decision["vendor"]
 
 
+@pytest.mark.parametrize(
+    ("store_name", "appliance_type", "expected_wrs_rule"),
+    [
+        ("SKY", "住設", "SKY"),
+        ("電算システム", "住設", "電算システム案件"),
+        ("三城メガネ", "家電", "三城案件（メガネ）"),
+        ("コジマ CHIKYUJIN", "家電", "コジマ（CHIKYUJIN）"),
+        ("チャオ", "家電", "チャオ"),
+        ("WM案件 M停止", "家電", "WM案件（M停止）"),
+    ],
+)
+def test_added_wrs_only_targets_do_not_overwrite_repair_vendor(store_name, appliance_type, expected_wrs_rule):
+    form = make_form(
+        store_name=store_name,
+        appliance_type=appliance_type,
+        product="システムキッチン" if appliance_type == "住設" else "ドライヤー",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+    )
+
+    decision = app.run_decision(form)
+
+    assert_wrs(decision, expected_wrs_rule)
+    assert decision["vendor"] != decision["wrs_handover_action"]["handover_request_content"]
+    assert "WRS" not in decision["vendor"]
+
+
 def test_real_case_regression_source_has_no_unwanted_chinese_button_text():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
