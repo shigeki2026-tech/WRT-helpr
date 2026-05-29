@@ -235,7 +235,7 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "st.rerun()" in snippet_source
     assert "append_attention_memo_snippets(form, [selected_snippet_id])" not in snippet_source
     assert "append_attention_memo_snippets(form, [pending_snippet_id])" in after_source
-    assert template_panel_index < pending_index < memo_text_area_index < snippet_index < memo_copy_index
+    assert template_panel_index < pending_index < memo_text_area_index < memo_copy_index < snippet_index
 
 
 def test_after_call_operator_name_input_is_compact_with_save_button():
@@ -276,10 +276,29 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert "修理依頼書メモ 操作" not in after_source
     assert "ラクテル用テキスト 操作" not in after_source
     assert "Teams報告文 操作" not in after_source
-    assert "memo_title_col, memo_regen_col, memo_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
-    assert "rakutel_title_col, rakutel_regen_col, rakutel_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
-    assert "teams_title_col, teams_regen_col, teams_copy_col = st.columns([6, 1, 1], gap=\"small\")" in after_source
+    assert "memo_title_col, memo_regen_col, memo_copy_col" not in after_source
+    assert "rakutel_title_col, rakutel_regen_col, rakutel_copy_col" not in after_source
+    assert "teams_title_col, teams_regen_col, teams_copy_col" not in after_source
+    assert "memo_regen_col, memo_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
+    assert "rakutel_regen_col, rakutel_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
+    assert "teams_regen_col, teams_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
     assert "st.columns([5, 2], gap=\"large\")" not in after_source
+
+    memo_heading_area = after_source[
+        after_source.index("##### 📝 修理依頼書メモ"):
+        after_source.index("###### 修理依頼文テンプレ")
+    ]
+    rakutel_heading_area = after_source[
+        after_source.index("##### 📝 ラクテル用テキスト"):
+        after_source.index("rakutel_text_col, rakutel_action_col")
+    ]
+    teams_heading_area = after_source[
+        after_source.index("##### 💬 Teams報告文"):
+        after_source.index("teams_text_col, teams_action_col")
+    ]
+    for heading_area in (memo_heading_area, rakutel_heading_area, teams_heading_area):
+        assert 'st.button("再生成"' not in heading_area
+        assert "render_copy_button" not in heading_area
 
     rakutel_section = after_source[
         after_source.index("##### 📝 ラクテル用テキスト"):
@@ -350,7 +369,7 @@ def test_repair_request_template_is_shown_before_memo_regeneration_button():
     ]
     memo_display_area = after_source[
         after_source.index('with memo_action_col:'):
-        after_source.index("定型文を追記する")
+        after_source.index("##### 📝 ラクテル用テキスト")
     ]
 
     assert "修理依頼文テンプレ" in memo_action
@@ -359,7 +378,7 @@ def test_repair_request_template_is_shown_before_memo_regeneration_button():
     assert "memo_template_code" in memo_display_area
     assert "memo_template_label" in memo_display_area
     assert "build_template_selection_reason(template_selection)" in memo_display_area
-    assert after_source.index("###### 修理依頼文テンプレ") > after_source.index('key="regenerate_attention_memo"')
+    assert after_source.index("###### 修理依頼文テンプレ") < after_source.index('key="regenerate_attention_memo"')
     assert after_source.index("###### 修理依頼文テンプレ") < after_source.index('memo_display = st.text_area(')
 
 
@@ -3400,12 +3419,18 @@ def test_after_call_regeneration_buttons_are_independent():
     attention_button = after_source.index('key="regenerate_attention_memo"')
     rakutel_button = after_source.index('key="regenerate_rakutel_text"')
     teams_button = after_source.index('key="regenerate_teams_chat_message"')
-    rakutel_area = after_source[rakutel_button:teams_button]
-    teams_area = after_source[teams_button:]
+    rakutel_section = after_source[
+        after_source.index("##### 📝 ラクテル用テキスト"):
+        after_source.index("##### 💬 Teams報告文")
+    ]
+    teams_section = after_source[
+        after_source.index("##### 💬 Teams報告文"):
+        after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
+    ]
 
     assert attention_button < rakutel_button < teams_button
-    assert 'form["teams_chat_message"] = generated_teams_message' not in rakutel_area
-    assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_area
+    assert 'form["teams_chat_message"] = generated_teams_message' not in rakutel_section
+    assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_section
 
 
 def test_render_copy_button_helper_exists():
@@ -3453,7 +3478,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "コピー用：修理依頼書メモ" not in memo_area
     assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
     assert memo_and_snippet_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_and_snippet_area.index("copy_attention_memo")
-    assert memo_and_snippet_area.index("定型文を追記する") < memo_and_snippet_area.index("copy_attention_memo")
+    assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("定型文を追記する")
 
     assert "st.code(" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area

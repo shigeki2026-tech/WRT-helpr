@@ -9033,19 +9033,7 @@ def render_tab_after_call():
     st.session_state.form = form
 
     # ── 修理依頼書メモ（備考欄反映）──
-    memo_title_col, memo_regen_col, memo_copy_col = st.columns([6, 1, 1], gap="small")
-    with memo_title_col:
-        st.markdown("##### 📝 修理依頼書メモ")
-    with memo_regen_col:
-        if st.button(
-            "再生成",
-            key="regenerate_attention_memo",
-            help="現在の修理依頼書メモを上書きして再生成します。",
-            use_container_width=True,
-        ):
-            st.session_state["_pending_regenerate_attention_memo"] = True
-            st.rerun()
-    memo_copy_slot = memo_copy_col.empty()
+    st.markdown("##### 📝 修理依頼書メモ")
 
     st.markdown("###### 修理依頼文テンプレ")
     if template_candidates:
@@ -9120,6 +9108,12 @@ def render_tab_after_call():
     else:
         st.session_state[memo_widget_key] = memo_value
     st.session_state["_memo_after_widget_synced"] = memo_value
+    snippets_df = load_memo_snippets()
+    snippet_options = [""] + [
+        str(row.get("snippet_id") or "").strip()
+        for _, row in snippets_df.iterrows()
+        if str(row.get("snippet_id") or "").strip()
+    ] if not snippets_df.empty else []
 
     memo_col, memo_action_col = st.columns([2, 3], gap="large")
     with memo_col:
@@ -9131,41 +9125,19 @@ def render_tab_after_call():
         )
         form["attention_memo"] = sanitize_generated_body_text(memo_display)
         st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-
-    with memo_action_col:
-        memo_template_code = normalize_template_code(form.get("template_code") or selected_code or template_selection.get("template_code"))
-        memo_template_label = form.get("template_label") or selected_label_val or template_selection.get("label", "")
-        memo_template_reason = build_template_selection_reason(template_selection)
-        if memo_template_code or memo_template_label:
-            st.markdown(f"**{memo_template_code or '----'} {memo_template_label or 'テンプレート名未設定'}**")
-            if memo_template_reason:
-                st.caption(f"理由：{memo_template_reason}")
-            if selected_notes:
-                st.caption(f"備考：{selected_notes}")
-        else:
-            st.info("テンプレート未確定")
-            st.caption("候補なし：回線名・製品・保証種別を確認してください")
-        if not (vr["matched"] and not vr.get("needs_escalation")):
-            st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
-        regen_message = str(st.session_state.pop("_attention_memo_regenerate_message", "") or "").strip()
-        if regen_message:
-            st.success(regen_message)
-        if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
-            st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
-
-        snippets_df = load_memo_snippets()
+        memo_regen_col, memo_copy_col = st.columns([1, 1], gap="small")
+        with memo_regen_col:
+            if st.button(
+                "再生成",
+                key="regenerate_attention_memo",
+                help="現在の修理依頼書メモを上書きして再生成します。",
+                use_container_width=True,
+            ):
+                st.session_state["_pending_regenerate_attention_memo"] = True
+                st.rerun()
+        with memo_copy_col:
+            render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
         if not snippets_df.empty:
-            snippet_message = str(st.session_state.pop("_memo_snippet_append_message", "") or "").strip()
-            if snippet_message:
-                if snippet_message == "修理依頼書メモへ追記しました。":
-                    st.success(snippet_message)
-                else:
-                    st.info(snippet_message)
-            snippet_options = [""] + [
-                str(row.get("snippet_id") or "").strip()
-                for _, row in snippets_df.iterrows()
-                if str(row.get("snippet_id") or "").strip()
-            ]
             with st.expander("定型文を追記する", expanded=False):
                 selected_snippet_id = st.selectbox(
                     "追記する定型文を選択",
@@ -9192,18 +9164,38 @@ def render_tab_after_call():
                         st.rerun()
                     else:
                         st.warning("追記する定型文を選択してください。")
-    with memo_copy_slot.container():
-        render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
+
+    with memo_action_col:
+        memo_template_code = normalize_template_code(form.get("template_code") or selected_code or template_selection.get("template_code"))
+        memo_template_label = form.get("template_label") or selected_label_val or template_selection.get("label", "")
+        memo_template_reason = build_template_selection_reason(template_selection)
+        if memo_template_code or memo_template_label:
+            st.markdown(f"**{memo_template_code or '----'} {memo_template_label or 'テンプレート名未設定'}**")
+            if memo_template_reason:
+                st.caption(f"理由：{memo_template_reason}")
+            if selected_notes:
+                st.caption(f"備考：{selected_notes}")
+        else:
+            st.info("テンプレート未確定")
+            st.caption("候補なし：回線名・製品・保証種別を確認してください")
+        if not (vr["matched"] and not vr.get("needs_escalation")):
+            st.warning("テンプレートは選択可能です。修理拠点は別途確認してください。")
+        regen_message = str(st.session_state.pop("_attention_memo_regenerate_message", "") or "").strip()
+        if regen_message:
+            st.success(regen_message)
+        if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
+            st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
+
+        if not snippets_df.empty:
+            snippet_message = str(st.session_state.pop("_memo_snippet_append_message", "") or "").strip()
+            if snippet_message:
+                if snippet_message == "修理依頼書メモへ追記しました。":
+                    st.success(snippet_message)
+                else:
+                    st.info(snippet_message)
 
     # ── ラクテル用テキスト ──
-    rakutel_title_col, rakutel_regen_col, rakutel_copy_col = st.columns([6, 1, 1], gap="small")
-    with rakutel_title_col:
-        st.markdown("##### 📝 ラクテル用テキスト")
-    with rakutel_regen_col:
-        if st.button("再生成", key="regenerate_rakutel_text", use_container_width=True):
-            st.session_state["_pending_regenerate_rakutel_text"] = True
-            st.rerun()
-    rakutel_copy_slot = rakutel_copy_col.empty()
+    st.markdown("##### 📝 ラクテル用テキスト")
     form = sync_after_call_rakutel_action_inputs(form, st.session_state)
     rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap="large")
     with rakutel_action_col:
@@ -9277,18 +9269,17 @@ def render_tab_after_call():
             key="rakutel_text_display",
         )
     form["rakutel_text"] = rakutel_text_display
-    with rakutel_copy_slot.container():
-        render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")
+    with rakutel_text_col:
+        rakutel_regen_col, rakutel_copy_col = st.columns([1, 1], gap="small")
+        with rakutel_regen_col:
+            if st.button("再生成", key="regenerate_rakutel_text", use_container_width=True):
+                st.session_state["_pending_regenerate_rakutel_text"] = True
+                st.rerun()
+        with rakutel_copy_col:
+            render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")
 
     # ── Teams報告文 ──
-    teams_title_col, teams_regen_col, teams_copy_col = st.columns([6, 1, 1], gap="small")
-    with teams_title_col:
-        st.markdown("##### 💬 Teams報告文")
-    with teams_regen_col:
-        if st.button("再生成", key="regenerate_teams_chat_message", use_container_width=True):
-            st.session_state["_pending_regenerate_teams_chat_message"] = True
-            st.rerun()
-    teams_copy_slot = teams_copy_col.empty()
+    st.markdown("##### 💬 Teams報告文")
     teams_text_col, teams_action_col = st.columns([2, 3], gap="large")
     with teams_action_col:
         teams_regen_message_slot = st.empty()
@@ -9331,8 +9322,14 @@ def render_tab_after_call():
         )
     form["teams_chat_message"] = teams_chat_message
     teams_preview_lines = build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))
-    with teams_copy_slot.container():
-        render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")
+    with teams_text_col:
+        teams_regen_col, teams_copy_col = st.columns([1, 1], gap="small")
+        with teams_regen_col:
+            if st.button("再生成", key="regenerate_teams_chat_message", use_container_width=True):
+                st.session_state["_pending_regenerate_teams_chat_message"] = True
+                st.rerun()
+        with teams_copy_col:
+            render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")
     st.session_state.form = form
 
     with teams_action_col:
