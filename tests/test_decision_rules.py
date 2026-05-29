@@ -636,8 +636,9 @@ def test_initial_decision_tags_are_unjudged_with_missing_items():
     script_reference = app.build_script_reference_info(decision)
     tags = app.build_decision_tag_items(decision, form, script_reference)
 
-    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定"]
-    assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags)
+    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定", "不要"]
+    assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags[:4])
+    assert tags[4]["color"] == app.TAG_COLOR_NEUTRAL
     assert "保証期間" in tags[0]["secondary"]
     assert "製品" in tags[1]["secondary"]
     assert "住所/都道府県" in tags[2]["secondary"]
@@ -3141,10 +3142,47 @@ def test_decision_tags_are_split_structured_items():
     d = app.run_decision(form)
     tags = app.build_decision_tag_items(d, form)
 
-    assert [tag["title"] for tag in tags] == ["受付可否", "修理方針", "拠点対応", "スクリプト"]
+    assert [tag["title"] for tag in tags] == ["受付可否", "修理方針", "拠点対応", "スクリプト", "引継要否"]
     assert all(" / " not in tag["title"] for tag in tags)
     assert all(tag["primary"] for tag in tags)
     assert all(tag["secondary"] for tag in tags)
+
+
+def test_decision_tags_handover_required_for_wrs_case():
+    form = make_form(
+        store_name="滋賀支店",
+        call_line="住設",
+        appliance_type="住設",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+        warranty_plan="アイ工務店_住宅設備機器【10年保証】",
+    )
+    form["operating_company"] = "株式会社アイ工務店"
+    decision = app.run_decision(form)
+    tag = app.build_decision_tag_items(decision, form)[4]
+
+    assert tag["title"] == "引継要否"
+    assert tag["primary"] == "必要"
+    assert "依頼内容：" in tag["secondary"]
+    assert "根拠：WRS引き継ぎ対象" in tag["tertiary"]
+
+
+def test_decision_tags_handover_not_required_for_normal_case():
+    form = make_form(
+        call_line="家電",
+        appliance_type="家電",
+        product="洗濯機",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+        warranty_plan="一般家電延長保証【5年】",
+    )
+    decision = app.run_decision(form)
+    tag = app.build_decision_tag_items(decision, form)[4]
+
+    assert tag["title"] == "引継要否"
+    assert tag["primary"] == "不要"
+    assert "理由：" in tag["secondary"]
 
 
 def test_aircon_sharp_does_not_leave_manufacturer_confirmation():

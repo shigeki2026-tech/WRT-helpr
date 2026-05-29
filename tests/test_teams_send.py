@@ -286,13 +286,13 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
 
     teams_section = after_source[
         after_source.index("##### 💬 Teams報告文"):
-        after_source.index('render_handover_requirement_panel(decision.get("handover_requirement"))')
+        after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
     ]
     assert teams_section.index("with teams_action_col:") < teams_section.index('"Teams報告文に入れる対応内容"')
     assert '"送信内容と送信先を確認しました"' not in teams_section
     assert '"Teams報告アクションを確定しました"' not in teams_section
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"自分宛てにテスト送信"')
-    assert "テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。" in teams_section
+    assert teams_section.index("with teams_action_col:") < teams_section.index('"###### Teams送信"')
+    assert "テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。" not in teams_section
     assert "追加候補に入れる" not in after_source
     assert "選択中リスト" not in after_source
 
@@ -421,20 +421,15 @@ def test_decision_tag_long_reason_is_summarized():
     assert app._decision_tag_short_note("確認：", text) == "確認：要確認"
 
 
-def test_handover_and_warranty_panels_use_cards_for_status_display():
+def test_handover_panel_uses_card_for_status_display():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     handover_start = source.index("def render_handover_requirement_panel")
-    warranty_start = source.index("def render_warranty_report_send_panel")
-    handover_source = source[handover_start:warranty_start]
-    warranty_end = source.index("\ndef render_decision_tags_panel", warranty_start)
-    warranty_source = source[warranty_start:warranty_end]
+    handover_end = source.index("\ndef build_wrs_handover_transfer_text", handover_start)
+    handover_source = source[handover_start:handover_end]
 
     assert "_status_card_html" in handover_source
     assert "st.error(" not in handover_source
     assert "st.warning(" not in handover_source
-    assert "_status_card_html" in warranty_source
-    assert warranty_source.index("_status_card_html") < warranty_source.index("st.text_area(")
-    assert "送信不可理由をすべて表示" in warranty_source
 
 
 def test_memo_snippet_selectbox_labels_are_template_text_only():
@@ -787,9 +782,12 @@ def test_warranty_report_duplicate_state_is_scoped_by_destination():
 
 def test_warranty_report_send_is_independent_from_handover_requirement():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    panel_start = source.index("def render_warranty_report_send_panel")
-    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
-    panel_source = source[panel_start:panel_end]
+    after_start = source.index("def render_tab_after_call")
+    after_end = source.index("\ndef render_tab_master", after_start)
+    after_source = source[after_start:after_end]
+    panel_start = after_source.index("##### 💬 Teams報告文")
+    panel_end = after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
+    panel_source = after_source[panel_start:panel_end]
     form = warranty_form()
     decision = {
         **warranty_decision(send_method="FAX"),
@@ -803,7 +801,7 @@ def test_warranty_report_send_is_independent_from_handover_requirement():
 
     assert errors == []
     assert "引き継ぎ対象ルールに一致していません" not in source
-    assert "全案件、ワランティ報告チャットへ送信してください。" in panel_source
+    assert "全案件、ワランティ報告チャットへ送信してください。" not in panel_source
     assert "handover_requirement" not in panel_source
 
 
@@ -860,33 +858,38 @@ def test_warranty_report_send_uses_warranty_chat_id(monkeypatch, tmp_path):
     assert "warranty-chat-id" in calls["args"]
 
 
-def test_warranty_report_panel_buttons_have_unique_keys():
+def test_teams_report_block_contains_destination_selection_and_unified_send_controls():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    panel_start = source.index("def render_warranty_report_send_panel")
-    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
-    panel_source = source[panel_start:panel_end]
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    block_start = after_source.index("##### 💬 Teams報告文")
+    block_end = after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
+    panel_source = after_source[block_start:block_end]
 
-    assert "##### ワランティ報告チャット送信" in panel_source
+    assert "##### ワランティ報告チャット送信" not in panel_source
     assert "Teamsワランティ送信" in panel_source
     assert "ワランティ報告送信" not in panel_source
     assert '"送信先"' in panel_source
     assert "WARRANTY_REPORT_DESTINATION_LABELS" in panel_source
     assert "destination_options" in panel_source
-    assert 'st.markdown(f"**送信先：** {destination_label}")' in panel_source
+    assert 'st.markdown(f"**送信先：** {destination_label}")' not in panel_source
+    assert 'default_destination = teams_config.get("default_destination") or "warranty"' in panel_source
+    assert 'destination_options.index(WARRANTY_REPORT_DESTINATION_LABELS[default_destination])' in panel_source
     assert '"確認内容"' in panel_source
     assert 'key="warranty_report_content_input"' in panel_source
     assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
     assert "注意：未入力項目があります。内容を確認してから送信してください。" in panel_source
     assert '"Teamsワランティへ送信"' in panel_source
     assert '"自分宛てにテスト送信"' in panel_source
-    assert '"未完了項目があります"' not in panel_source
+    assert "自動判定：" not in panel_source
+    assert "自動判定と異なる場合のみ変更" not in panel_source
+    assert "テスト送信のため、楽テルNO" not in panel_source
+    assert "未完了：なし" not in panel_source
+    assert "Teams送信：有効" not in panel_source
+    assert "チャット名：" not in panel_source
     for key in [
         'key="warranty_report_destination_label"',
-        'key="warranty_report_sending_button"',
-        'key="warranty_report_sent_button"',
-        'key="warranty_report_resend_button"',
-        'key="warranty_report_send_incomplete_button"',
-        'key="warranty_report_send_button"',
         'key="warranty_report_message_display"',
     ]:
         assert key in panel_source
@@ -2043,6 +2046,17 @@ def test_case_basic_widget_keys_include_revision():
     assert app.case_basic_widget_key("product", 7) == "case_basic_product_7"
     assert app.case_basic_widget_key("manufacturer", 7) == "case_basic_manufacturer_7"
     assert app.case_basic_widget_key("store_name", 7) == "case_basic_store_name_7"
+    assert "prefecture" in app.CASE_BASIC_FIELD_TO_WIDGET_STEM
+    assert "warranty_plan" in app.CASE_BASIC_FIELD_TO_WIDGET_STEM
+    assert app.case_basic_widget_key("prefecture", 7) == "case_basic_prefecture_7"
+    assert app.case_basic_widget_key("warranty_plan", 7) == "case_basic_warranty_plan_7"
+
+
+def test_case_basic_widget_map_covers_prefecture_and_warranty_plan():
+    widget_map = app.case_basic_widget_to_field_map(7)
+
+    assert widget_map["case_basic_prefecture_7"] == "prefecture"
+    assert widget_map["case_basic_warranty_plan_7"] == "warranty_plan"
 
 
 def test_case_basic_refresh_success_paths_bump_revision():
@@ -2070,6 +2084,11 @@ def test_case_basic_widget_initial_values_use_current_form_values():
     assert 'value=form.get("product_price", "")' in panel_source
     assert 'current_manufacturer = form.get("manufacturer", "")' in panel_source
     assert 'value=form.get("store_name", "")' in panel_source
+    assert 'form["prefecture"] = st.selectbox(' in panel_source
+    assert 'form["warranty_plan"] = st.text_input(' in panel_source
+    assert 'value=form.get("warranty_plan", "")' in panel_source
+    assert 'case_basic_widget_key("prefecture", revision)' in panel_source
+    assert 'case_basic_widget_key("warranty_plan", revision)' in panel_source
 
 
 def test_case_basic_fields_do_not_show_required_optional_badges():
@@ -2083,7 +2102,9 @@ def test_case_basic_fields_do_not_show_required_optional_badges():
     assert "conditional-badge" not in panel_source
     assert "render_field_label(" not in panel_source
     assert 'st.selectbox(\n            "回線名"' in panel_source
+    assert 'st.selectbox(\n            "都道府県"' in panel_source
     assert 'st.text_input(\n            "商品価格"' in panel_source
+    assert 'st.text_input(\n            "保証プラン名"' in panel_source
 
 
 def test_hearing_choice_text_uses_supplemental_input_labels():
@@ -2458,7 +2479,7 @@ def test_teams_chat_message_never_includes_drive_url_for_cer():
 def test_teams_area_source_does_not_render_drive_link():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     teams_index = source.index("##### 💬 Teams報告文")
-    send_button_index = source.index('st.button("自分宛てにテスト送信"', teams_index)
+    send_button_index = source.index("send_button_label =", teams_index)
     teams_area = source[teams_index:send_button_index]
 
     assert "Google Drive を開く" not in teams_area
@@ -2468,14 +2489,15 @@ def test_teams_area_source_does_not_render_drive_link():
 def test_teams_auto_send_panel_heading_exists():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "###### 通常Teams報告" in source
-    assert "送信機能は自分宛てテスト用です" in source
+    assert "###### Teams送信" in source
+    assert "###### 通常Teams報告" not in source
+    assert "送信先を選択して、本番または自分宛てテストへ送信します。" not in source
 
 
 def test_teams_report_and_send_have_separate_headings():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     report_index = source.index("##### 💬 Teams報告文")
-    send_index = source.index("###### 通常Teams報告")
+    send_index = source.index("###### Teams送信")
 
     assert report_index < send_index
 
@@ -2485,20 +2507,17 @@ def test_after_call_teams_send_blocks_show_distinct_headings_and_destinations():
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
-    panel_start = source.index("def render_warranty_report_send_panel")
-    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
-    panel_source = source[panel_start:panel_end]
 
-    normal_index = after_source.index("###### 通常Teams報告")
-    handover_index = after_source.index("render_handover_requirement_panel", normal_index)
-    transfer_index = after_source.index("render_wrs_handover_transfer_text", handover_index)
-    divider_index = after_source.index("st.divider()", transfer_index)
-    warranty_call_index = after_source.index("render_warranty_report_send_panel", divider_index)
+    normal_index = after_source.index("###### Teams送信")
+    transfer_index = after_source.index("render_wrs_handover_transfer_text", normal_index)
 
-    assert normal_index < handover_index < transfer_index < divider_index < warranty_call_index
-    assert 'st.markdown(f"**送信先：** {chat_name}")' in after_source[normal_index:handover_index]
-    assert "##### ワランティ報告チャット送信" in panel_source
-    assert 'st.markdown(f"**送信先：** {destination_label}")' in panel_source
+    assert normal_index < transfer_index
+    assert 'key="warranty_report_destination_label"' in after_source[normal_index:transfer_index]
+    assert 'st.markdown(f"**送信先：** {destination_label}")' not in after_source[normal_index:transfer_index]
+    assert '"Teamsワランティへ送信"' in after_source[normal_index:transfer_index]
+    assert '"自分宛てにテスト送信"' in after_source[normal_index:transfer_index]
+    assert "render_warranty_report_send_panel(form, decision)" not in after_source
+    assert "##### ワランティ報告チャット送信" not in after_source
     assert "WRS引き継ぎ表 転記用" in source
     assert "按钮" not in after_source
 
@@ -2521,7 +2540,8 @@ def test_teams_send_unavailable_reasons_are_rendered_in_one_place():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert after_source.count('st.markdown("**未完了：**")') == 1
+    assert 'st.markdown("**未完了：**")' not in after_source
+    assert "送信不可：" in after_source
     assert "build_teams_test_send_incomplete_reasons" in after_source
     assert "楽テルNOが未入力です。" not in after_source
     assert "設定未完了のため送信できません" not in after_source
@@ -2530,7 +2550,8 @@ def test_teams_send_unavailable_reasons_are_rendered_in_one_place():
 def test_teams_send_disabled_message_is_specific():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "**Teams送信：{'有効' if teams_enabled else '無効'}**" in source
+    assert "**Teams送信：{'有効' if teams_enabled else '無効'}**" not in source
+    assert "送信不可：" in source
     assert "config/teams_config.json が未作成、または enabled=false" in source
     assert "chat_id が未設定" in source
     assert "送信スクリプトが利用できない" in source
@@ -2540,22 +2561,21 @@ def test_teams_action_input_label_is_teams_report_content():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert '"Teams報告文に入れる対応内容"' in source
-    assert 'st.caption(f"自動判定：{auto_teams_action_display}")' in source
-    assert "自動判定と異なる場合のみ変更" in source
+    assert 'st.caption(f"自動判定：{auto_teams_action_display}")' not in source
+    assert "自動判定と異なる場合のみ変更" not in source
     assert '"Teams報告アクション（手入力優先）"' not in source
 
 
-def test_teams_send_panel_status_labels_exist():
+def test_teams_send_panel_status_labels_are_minimal():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "テスト送信不可" in source
-    assert "テスト送信可能" in source
-    assert "テスト送信済み" in source
-    assert "テスト送信失敗" in source
     assert "送信不可" in source
-    assert "送信可能" in source
     assert "送信済み" in source
     assert "送信失敗" in source
+    assert "状態：テスト送信不可" not in source
+    assert "状態：テスト送信可能" not in source
+    assert "Teams送信：有効" not in source
+    assert "未完了：なし" not in source
 
 
 def test_teams_send_success_ui_hides_normal_primary_send_button():
@@ -2567,10 +2587,9 @@ def test_teams_send_success_ui_hides_normal_primary_send_button():
     already_sent_index = after_source.index("if already_sent:")
     sent_button_index = after_source.index('st.button("送信済み"', already_sent_index)
     resend_button_index = after_source.index('st.button("同じ内容を再送する"', sent_button_index)
-    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', resend_button_index)
+    normal_button_index = after_source.index("st.button(send_button_label", resend_button_index)
 
-    assert "Teamsへ送信しました。" in after_source
-    assert "送信済み本文（確認用）" in after_source
+    assert "送信済み：" in after_source
     assert sent_button_index < resend_button_index < normal_button_index
     assert 'type="primary"' not in after_source[sent_button_index:resend_button_index]
 
@@ -2581,15 +2600,15 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    status_index = after_source.index('send_status == "テスト送信処理中"')
-    in_progress_index = after_source.index("if in_progress:", status_index)
-    message_index = after_source.index("Teamsへ送信しています。完了まで画面を閉じないでください。", in_progress_index)
+    in_progress_index = after_source.index("if in_progress:")
+    message_index = after_source.index("送信処理中：", in_progress_index)
     disabled_button_index = after_source.index('st.button("送信処理中..."', message_index)
-    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', disabled_button_index)
+    normal_button_index = after_source.index("st.button(send_button_label", disabled_button_index)
 
     assert "teams_send_in_progress_body_hash" in source
     assert "teams_send_requested_body_hash" in source
-    assert "Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。" in after_source
+    assert "Teamsへ送信中です..." in after_source
+    assert "Microsoft Graph / PowerShell の応答待ちです。" not in after_source
     assert disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
 
@@ -2603,7 +2622,7 @@ def test_teams_send_incomplete_ui_hides_normal_primary_send_button():
     sent_branch_index = after_source.index("elif already_sent:")
     incomplete_branch_index = after_source.index("elif incomplete_reasons:", sent_branch_index)
     disabled_button_index = after_source.index('st.button("未完了項目があります"', incomplete_branch_index)
-    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', disabled_button_index)
+    normal_button_index = after_source.index("st.button(send_button_label", disabled_button_index)
 
     assert incomplete_branch_index < disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
@@ -2615,12 +2634,12 @@ def test_teams_send_failure_ui_keeps_error_and_normal_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    failure_index = after_source.index('send_status == "テスト送信失敗"')
-    error_index = after_source.index("Teams送信に失敗しました：", failure_index)
-    normal_button_index = after_source.index('st.button("自分宛てにテスト送信"', error_index)
+    failure_index = after_source.index("elif send_failed:")
+    error_index = after_source.index("送信失敗：", failure_index)
+    normal_button_index = after_source.index("st.button(send_button_label", error_index)
 
     assert failure_index < error_index < normal_button_index
-    assert "_mark_teams_message_send_failed" in after_source
+    assert "_mark_warranty_report_send_failed" in after_source
 
 
 def test_dp_rakutel_text_includes_guarantee_amount_confirmation():
@@ -3329,7 +3348,11 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     ]
     teams_area = after_source[
         after_source.index('teams_chat_message = st.text_area('):
-        after_source.index("###### 通常Teams報告")
+        after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
+    ]
+    teams_text_area = after_source[
+        after_source.index('teams_chat_message = st.text_area('):
+        after_source.index("copy_teams_chat_message")
     ]
 
     assert "st.code(" not in memo_area
@@ -3343,9 +3366,9 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert 'render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
     assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
 
-    assert "st.code(" not in teams_area
-    assert "コピー用：Teams報告文" not in teams_area
-    assert "height=160" in teams_area
+    assert "st.code(" not in teams_text_area
+    assert "コピー用：Teams報告文" not in teams_text_area
+    assert "height=160" in teams_text_area
     assert "送信内容プレビュー：" in teams_area
     assert 'build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))' in teams_area
     assert 'render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")' in teams_area

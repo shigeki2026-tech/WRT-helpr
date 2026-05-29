@@ -3161,6 +3161,8 @@ CASE_BASIC_WIDGET_PREFIXES = (
     "product_input_",
     "manufacturer_input_",
     "store_name_input_",
+    "case_basic_prefecture_",
+    "case_basic_warranty_plan_",
     "case_basic_product_price_",
 )
 
@@ -3170,6 +3172,8 @@ CASE_BASIC_FIELD_TO_WIDGET_STEM = {
     "product": "case_basic_product",
     "manufacturer": "case_basic_manufacturer",
     "store_name": "case_basic_store_name",
+    "prefecture": "case_basic_prefecture",
+    "warranty_plan": "case_basic_warranty_plan",
     "product_price": "case_basic_product_price",
 }
 
@@ -3192,7 +3196,10 @@ def bump_case_basic_revision(session_state) -> int:
 def case_basic_widget_key(field: str, revision: int | None = None, session_state=None) -> str:
     if revision is None:
         revision = get_case_basic_revision(session_state if session_state is not None else st.session_state)
-    return f"{CASE_BASIC_FIELD_TO_WIDGET_STEM[field]}_{revision}"
+    stem = CASE_BASIC_FIELD_TO_WIDGET_STEM.get(field)
+    if stem is None:
+        raise KeyError(f"Unknown case basic widget field: {field}")
+    return f"{stem}_{revision}"
 
 
 def case_basic_widget_to_field_map(revision: int | None = None, session_state=None) -> dict:
@@ -6120,11 +6127,42 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "matched": script_reference.get("matched", False),
         }
 
+    wrs_action = decision.get("wrs_handover_action") or {}
+    handover = decision.get("handover_requirement") or {}
+    if wrs_action.get("needs_wrs_handover"):
+        priority = wrs_action.get("priority")
+        rule_name = wrs_action.get("rule_name") or "WRS引き継ぎ"
+        basis = f"WRS引き継ぎ対象 No.{priority} {rule_name}" if priority else f"WRS引き継ぎ対象 {rule_name}"
+        handover_tag = {
+            "title": "引継要否",
+            "primary": "必要",
+            "secondary": f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or '要確認'}",
+            "tertiary": f"根拠：{basis}",
+            "quaternary": f"備考：{wrs_action.get('note_template')}" if wrs_action.get("note_template") else "",
+            "color": TAG_COLOR_WARNING,
+        }
+    elif handover.get("required"):
+        handover_tag = {
+            "title": "引継要否",
+            "primary": "必要",
+            "secondary": f"依頼内容：{handover.get('handover_request_content') or '要確認'}",
+            "tertiary": f"理由：{handover.get('reason') or handover.get('rule_name') or '要確認'}",
+            "color": TAG_COLOR_WARNING,
+        }
+    else:
+        handover_tag = {
+            "title": "引継要否",
+            "primary": "不要",
+            "secondary": f"理由：{handover.get('reason') or '引き継ぎ対象ルールに一致なし'}",
+            "color": TAG_COLOR_NEUTRAL,
+        }
+
     return [
         warranty_tag,
         repair_tag,
         vendor_tag,
         script_tag,
+        handover_tag,
     ]
 
 
@@ -7375,188 +7413,6 @@ def render_call_wrs_handover_summary(wrs_action: dict | None) -> None:
         st.caption(line)
 
 
-def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
-    st.markdown("##### ワランティ報告チャット送信")
-    teams_config = load_teams_config()
-    destination_options = list(WARRANTY_REPORT_DESTINATION_LABELS.values())
-    destination_by_label = {label: key for key, label in WARRANTY_REPORT_DESTINATION_LABELS.items()}
-    default_destination = teams_config.get("default_destination") or "warranty"
-    if default_destination not in WARRANTY_REPORT_DESTINATION_LABELS:
-        default_destination = "warranty"
-    destination_label = st.selectbox(
-        "送信先",
-        destination_options,
-        index=destination_options.index(WARRANTY_REPORT_DESTINATION_LABELS[default_destination]),
-        key="warranty_report_destination_label",
-    )
-    destination_key = destination_by_label.get(destination_label, "warranty")
-    destination = resolve_warranty_report_destination(teams_config, destination_key)
-    chat_name = destination["chat_name"]
-    if "warranty_report_content_input" in st.session_state:
-        form["warranty_report_content"] = st.session_state.get("warranty_report_content_input", "")
-    warranty_report_content = st.text_input(
-        "確認内容",
-        value=form.get("warranty_report_content", ""),
-        key="warranty_report_content_input",
-        placeholder="例：ユナイトへFAX送信済 / 担当確認お願いします",
-    )
-    form["warranty_report_content"] = warranty_report_content
-    st.session_state.form = form
-    generated_message = build_warranty_report_message(form, decision)
-    content_hash = stable_hash_text("|".join([
-        form.get("rakuteru_no") or form.get("rakutel_no") or "",
-        form.get("call_line") or "",
-        form.get("warranty_report_content") or "",
-    ]))
-    if st.session_state.get("_warranty_report_source_hash") != content_hash:
-        st.session_state["_warranty_report_source_hash"] = content_hash
-        st.session_state["warranty_report_message_display"] = generated_message
-    preview_value = st.session_state.get("warranty_report_message_display", generated_message)
-    message_for_status = str(preview_value or "")
-    _clear_stale_warranty_report_send_transient_state(st.session_state, message_for_status, destination_key)
-    already_sent = _warranty_report_already_sent(st.session_state, message_for_status, destination_key)
-    in_progress = _warranty_report_send_in_progress(st.session_state, message_for_status, destination_key)
-    send_failed = _warranty_report_last_send_failed(st.session_state, message_for_status, destination_key)
-    incomplete_reasons = validate_warranty_report_send_request(
-        form,
-        decision,
-        teams_config,
-        message_for_status,
-        already_sent=already_sent,
-        destination=destination,
-    )
-    missing_items = get_warranty_report_missing_items(form)
-    status_lines: list[str] = []
-    if incomplete_reasons and not already_sent:
-        status_lines.extend(["理由："] + [f"- {reason}" for reason in incomplete_reasons[:5]])
-        tone = "warning"
-        pill = "送信不可"
-    elif already_sent:
-        sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
-        status_lines.append(f"送信日時：{sent_at}")
-        tone = "info"
-        pill = "送信済み"
-    elif send_failed:
-        error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
-        status_lines.append(f"ワランティ送信に失敗しました：{error_message}")
-        tone = "error"
-        pill = "送信失敗"
-    elif in_progress:
-        started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
-        status_lines.extend([
-            "ワランティへ送信しています。完了まで画面を閉じないでください。",
-            f"送信先：{destination_label}",
-            f"開始時刻：{started_at}",
-        ])
-        tone = "info"
-        pill = "送信処理中"
-    else:
-        status_lines.append("全案件、ワランティ報告チャットへ送信してください。")
-        if missing_items:
-            status_lines.extend(
-                ["注意：未入力項目があります。内容を確認してから送信してください。"]
-                + [f"- {reason}" for reason in missing_items]
-            )
-            tone = "warning"
-        else:
-            tone = "success"
-        pill = "送信可能"
-    st.markdown(f"**送信先：** {destination_label}")
-    st.caption(f"チャット名：{chat_name}")
-    st.markdown(_status_card_html(tone, pill, chat_name, status_lines), unsafe_allow_html=True)
-    if len(incomplete_reasons) > 5 and not already_sent:
-        with st.expander("送信不可理由をすべて表示", expanded=False):
-            st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons[5:]))
-
-    message = st.text_area(
-        "送信文プレビュー",
-        value=preview_value,
-        height=90,
-        key="warranty_report_message_display",
-        help="ワランティ報告専用の送信文です。ラクテル用テキスト、修理依頼書メモ、既存Teams報告文には反映されません。",
-    )
-
-    def request_warranty_report_send(allow_resend: bool = False):
-        current_already_sent = _warranty_report_already_sent(st.session_state, message, destination_key)
-        validation_errors = validate_warranty_report_send_request(
-            form,
-            decision,
-            teams_config,
-            message,
-            already_sent=(current_already_sent and not allow_resend),
-            destination=destination,
-        )
-        if validation_errors:
-            st.warning("送信できない設定があります。Teamsワランティ送信パネルの送信不可理由を確認してください。")
-            return
-        if in_progress:
-            st.warning("ワランティ送信処理中です。完了まで画面を閉じないでください。")
-            return
-        _mark_warranty_report_send_requested(st.session_state, message, destination_key)
-        st.rerun()
-
-    def execute_requested_warranty_report_send():
-        warranty_chat_id = destination["chat_id"]
-        body = teams_plain_text_to_html(message)
-        with st.spinner("Teamsワランティへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
-            result = send_teams_message_via_powershell(body, chat_id_override=warranty_chat_id)
-        vendor_name = ((decision.get("vendor_result") or {}).get("vendor_name") or decision.get("vendor") or "")
-        append_teams_send_log(
-            result,
-            message,
-            chat_name,
-            form=form,
-            vendor=vendor_name,
-            teams_action="Teamsワランティ送信",
-        )
-        if result.get("ok"):
-            _mark_warranty_report_sent(st.session_state, message, result=result, destination_key=destination_key)
-            st.rerun()
-        else:
-            _mark_warranty_report_send_failed(st.session_state, message, result, destination_key=destination_key)
-            st.rerun()
-
-    if in_progress:
-        st.button(
-            "送信処理中...",
-            key="warranty_report_sending_button",
-            disabled=True,
-            use_container_width=True,
-        )
-    elif already_sent:
-        st.button(
-            "送信済み",
-            key="warranty_report_sent_button",
-            disabled=True,
-            use_container_width=True,
-        )
-        if st.button(
-            "同じ内容を再送する",
-            key="warranty_report_resend_button",
-            use_container_width=True,
-        ):
-            request_warranty_report_send(allow_resend=True)
-    elif incomplete_reasons:
-        st.button(
-            "送信不可",
-            key="warranty_report_send_incomplete_button",
-            disabled=True,
-            use_container_width=True,
-        )
-    else:
-        send_button_label = "自分宛てにテスト送信" if destination_key == "self_test" else "Teamsワランティへ送信"
-        if st.button(
-            send_button_label,
-            key="warranty_report_send_button",
-            type="primary",
-            use_container_width=True,
-        ):
-            request_warranty_report_send()
-
-    if _warranty_report_send_requested(st.session_state, message, destination_key):
-        execute_requested_warranty_report_send()
-
-
 def render_decision_tags_panel(form: dict) -> None:
     st.markdown("##### 🧭 判定タグ")
     try:
@@ -7568,11 +7424,11 @@ def render_decision_tags_panel(form: dict) -> None:
         st.warning(f"判定タグを生成できません: {exc}")
         return
 
-    tag_cols = st.columns(4)
+    tag_cols = st.columns(len(tags))
     for idx, tag in enumerate(tags):
         with tag_cols[idx]:
             link = None
-            if idx == 3:
+            if tag.get("title") == "スクリプト":
                 if tag.get("matched") and tag.get("url"):
                     link = {"url": tag["url"], "text": tag["link_text"]}
                 else:
@@ -8091,6 +7947,14 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             if form.get("call_line", "") in call_line_opts else 0,
             key=case_basic_widget_key("call_line", revision),
         )
+        pref_opts = [""] + PREFECTURES
+        form["prefecture"] = st.selectbox(
+            "都道府県",
+            pref_opts,
+            index=pref_opts.index(form.get("prefecture", ""))
+            if form.get("prefecture", "") in pref_opts else 0,
+            key=case_basic_widget_key("prefecture", revision),
+        )
         form["product"] = st.text_input(
             "製品",
             value=form.get("product", ""),
@@ -8129,6 +7993,11 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             "商品価格",
             value=form.get("product_price", ""),
             key=case_basic_widget_key("product_price", revision),
+        )
+        form["warranty_plan"] = st.text_input(
+            "保証プラン名",
+            value=form.get("warranty_plan", ""),
+            key=case_basic_widget_key("warranty_plan", revision),
         )
         if show_template_result:
             preview_decision = run_decision(form)
@@ -9383,17 +9252,12 @@ def render_tab_after_call():
         )
         form["rakuteru_no"] = rakuteru_val
         auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        auto_teams_action_display = f"{vendor}へ{auto_teams_action}" if vendor or auto_teams_action else ""
         form["teams_action"] = st.text_input(
             "Teams報告文に入れる対応内容",
             value=form.get("teams_action", ""),
             placeholder=auto_teams_action,
             key="teams_action_input",
-            help="自動判定と異なる場合のみ変更",
         )
-        if auto_teams_action_display:
-            st.caption(f"自動判定：{auto_teams_action_display}")
-        st.caption("自動判定と異なる場合のみ変更")
     st.session_state.form = form
     teams_generation_form = form_for_current_teams_generation(form, vendor, contact_type)
     generated_teams_message = _build_teams_chat_message(teams_generation_form, vendor, contact_type)
@@ -9424,119 +9288,171 @@ def render_tab_after_call():
     st.session_state.form = form
 
     with teams_action_col:
-        if teams_preview_lines:
-            st.markdown("送信内容プレビュー：")
-            st.info("\n".join(teams_preview_lines))
-        st.markdown("###### 通常Teams報告")
-        st.caption("再生成・コピー・プレビュー中心。送信機能は自分宛てテスト用です。")
+        st.markdown("###### Teams送信")
         teams_config = load_teams_config()
         teams_send_mode = (teams_config.get("send_mode") or "").strip()
-        self_test_destination = resolve_warranty_report_destination(teams_config, "self_test")
+        destination_options = list(WARRANTY_REPORT_DESTINATION_LABELS.values())
+        destination_by_label = {label: key for key, label in WARRANTY_REPORT_DESTINATION_LABELS.items()}
+        default_destination = teams_config.get("default_destination") or "warranty"
+        if default_destination not in WARRANTY_REPORT_DESTINATION_LABELS:
+            default_destination = "warranty"
+        destination_label = st.selectbox(
+            "送信先",
+            destination_options,
+            index=destination_options.index(WARRANTY_REPORT_DESTINATION_LABELS[default_destination]),
+            key="warranty_report_destination_label",
+        )
+        destination_key = destination_by_label.get(destination_label, "warranty")
+        destination = resolve_warranty_report_destination(teams_config, destination_key)
+        is_warranty_destination = destination_key == "warranty"
         teams_enabled = bool(
             teams_config.get("enabled")
-            and self_test_destination.get("enabled")
-            and self_test_destination.get("chat_id")
+            and destination.get("enabled")
+            and destination.get("chat_id")
             and teams_send_mode in SUPPORTED_TEAMS_SEND_MODES
         )
-        chat_name = self_test_destination.get("chat_name") or "自分宛てテスト"
-        config_reasons = teams_test_config_unavailable_reasons(teams_config, self_test_destination)
+        chat_name = destination.get("chat_name") or destination_label
+        config_reasons = (
+            warranty_teams_config_unavailable_reasons(teams_config, destination)
+            if is_warranty_destination
+            else teams_test_config_unavailable_reasons(teams_config, destination)
+        )
+        if is_warranty_destination:
+            if "warranty_report_content_input" in st.session_state:
+                form["warranty_report_content"] = st.session_state.get("warranty_report_content_input", "")
+            warranty_report_content = st.text_input(
+                "確認内容",
+                value=form.get("warranty_report_content", ""),
+                key="warranty_report_content_input",
+                placeholder="例：ユナイトへFAX送信済 / 担当確認お願いします",
+            )
+            form["warranty_report_content"] = warranty_report_content
+            generated_send_message = build_warranty_report_message(form, decision)
+            content_hash = stable_hash_text("|".join([
+                destination_key,
+                form.get("rakuteru_no") or form.get("rakutel_no") or "",
+                form.get("call_line") or "",
+                form.get("warranty_report_content") or "",
+            ]))
+            if st.session_state.get("_warranty_report_source_hash") != content_hash:
+                st.session_state["_warranty_report_source_hash"] = content_hash
+                st.session_state["warranty_report_message_display"] = generated_send_message
+            message_for_status = str(st.session_state.get("warranty_report_message_display", generated_send_message) or "")
+        else:
+            message_for_status = teams_chat_message
 
         pdf_storage_confirmed = True
         effective_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        _clear_stale_teams_send_transient_state(st.session_state, form)
-        already_sent = _teams_case_already_sent(st.session_state, form)
-        in_progress = _teams_send_in_progress(st.session_state, form)
-        send_failed = _teams_last_send_failed(st.session_state, form)
-        incomplete_reasons = build_teams_test_send_incomplete_reasons(
-            form,
-            teams_config,
-            already_sent,
-            self_test_destination,
-        )
-        send_status = teams_test_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
-        st.markdown(f"**送信先：** {chat_name}")
-        st.markdown(f"**Teams送信：{'有効' if teams_enabled else '無効'}**")
-        if config_reasons:
-            st.markdown("**理由：**")
-            st.markdown("\n".join(f"- {reason}" for reason in config_reasons))
-        if send_status == "テスト送信可能":
-            st.success(f"状態：{send_status}")
-        elif send_status == "テスト送信処理中":
-            st.info(f"状態：{send_status}")
-        elif send_status == "テスト送信済み":
-            st.info(f"状態：{send_status}")
-        elif send_status == "テスト送信失敗":
-            st.error(f"状態：{send_status}")
-        else:
-            st.warning(f"状態：{send_status}")
-        if in_progress:
-            st.markdown("**未完了：なし**")
-        elif already_sent:
-            st.markdown("**未完了：なし**")
-        elif incomplete_reasons:
-            st.markdown("**未完了：**")
-            st.markdown("\n".join(f"- {reason}" for reason in incomplete_reasons))
-        else:
-            st.markdown("**未完了：なし**")
-        if not teams_enabled:
-            st.caption("対応：config/teams_config.json をローカルに作成し、enabled=true と送信先chat_idを設定してください。")
-        if in_progress:
-            started_at = st.session_state.get("teams_send_started_at") or "日時不明"
-            st.info(
-                f"Teamsへ送信しています。完了まで画面を閉じないでください。\n"
-                f"送信先：{chat_name}\n"
-                f"開始時刻：{started_at}"
+        _clear_stale_warranty_report_send_transient_state(st.session_state, message_for_status, destination_key)
+        already_sent = _warranty_report_already_sent(st.session_state, message_for_status, destination_key)
+        in_progress = _warranty_report_send_in_progress(st.session_state, message_for_status, destination_key)
+        send_failed = _warranty_report_last_send_failed(st.session_state, message_for_status, destination_key)
+        if is_warranty_destination:
+            incomplete_reasons = validate_warranty_report_send_request(
+                form,
+                decision,
+                teams_config,
+                message_for_status,
+                already_sent=already_sent,
+                destination=destination,
             )
-        elif already_sent:
-            sent_at = st.session_state.get("teams_sent_at") or "日時不明"
-            st.success(f"Teamsへ送信しました。\n送信先：{chat_name}\n送信日時：{sent_at}")
-            with st.expander("送信済み本文（確認用）", expanded=False):
-                st.code(st.session_state.get("teams_sent_message", "") or "（なし）", language=None)
-        elif send_failed:
-            error_message = st.session_state.get("teams_send_error_message") or "エラー内容を取得できませんでした"
-            st.error(f"Teams送信に失敗しました：{error_message}")
-        st.caption("テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。")
-
-        def request_teams_send(allow_resend: bool = False):
-            validation_errors = validate_teams_test_send_request(
+            missing_items = get_warranty_report_missing_items(form)
+            send_status = warranty_report_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
+        else:
+            incomplete_reasons = build_teams_test_send_incomplete_reasons(
                 form,
                 teams_config,
-                already_sent=(already_sent and not allow_resend),
-                destination=self_test_destination,
+                already_sent,
+                destination,
             )
+            missing_items = []
+            send_status = teams_test_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
+        if in_progress:
+            started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
+            st.info(f"送信処理中：{started_at}")
+        elif already_sent:
+            sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
+            st.info(f"送信済み：{sent_at}")
+        elif send_failed:
+            error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
+            st.error(f"送信失敗：{error_message}")
+        elif incomplete_reasons:
+            st.warning(f"送信不可：{incomplete_reasons[0]}")
+        elif config_reasons:
+            st.warning(f"送信不可：{config_reasons[0]}")
+        if is_warranty_destination and missing_items and not incomplete_reasons and not already_sent:
+            st.warning("注意：未入力項目があります。内容を確認してから送信してください。")
+            st.markdown("\n".join(f"- {reason}" for reason in missing_items))
+        if is_warranty_destination:
+            message = st.text_area(
+                "送信文プレビュー",
+                value=message_for_status,
+                height=90,
+                key="warranty_report_message_display",
+                help="ワランティ報告専用の送信文です。Teams報告文、ラクテル用テキスト、修理依頼書メモには反映されません。",
+            )
+        else:
+            message = teams_chat_message
+            if teams_preview_lines:
+                st.markdown("送信内容プレビュー：")
+                st.info("\n".join(teams_preview_lines))
+
+        def request_teams_send(allow_resend: bool = False):
+            current_already_sent = _warranty_report_already_sent(st.session_state, message, destination_key)
+            if is_warranty_destination:
+                validation_errors = validate_warranty_report_send_request(
+                    form,
+                    decision,
+                    teams_config,
+                    message,
+                    already_sent=(current_already_sent and not allow_resend),
+                    destination=destination,
+                )
+            else:
+                validation_errors = validate_teams_test_send_request(
+                    {"teams_chat_message": message},
+                    teams_config,
+                    already_sent=(current_already_sent and not allow_resend),
+                    destination=destination,
+                )
             if validation_errors:
-                st.warning("未完了項目があります。通常Teams報告の未完了一覧を確認してください。")
+                st.warning(f"送信不可：{validation_errors[0]}")
                 return
-            if already_sent and not allow_resend:
+            if current_already_sent and not allow_resend:
                 st.warning("すでに送信済みです。再送する場合のみ実行してください。")
                 return
             if in_progress:
                 st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
                 return
 
-            _mark_teams_send_requested(st.session_state, form, allow_resend=allow_resend)
+            _mark_warranty_report_send_requested(st.session_state, message, destination_key)
             st.rerun()
 
         def execute_requested_teams_send():
-            teams_send_body = _get_teams_send_body(form)
-            with st.spinner("Teamsへ送信中です... Microsoft Graph / PowerShell の応答待ちです。"):
+            if is_warranty_destination:
+                teams_send_body = teams_plain_text_to_html(message)
+                log_action = "Teamsワランティ送信"
+            else:
+                teams_send_body = _get_teams_send_body({"rakuteru_no": form.get("rakuteru_no", ""), "teams_chat_message": message})
+                log_action = effective_teams_action
+            with st.spinner("Teamsへ送信中です..."):
                 result = send_teams_message_via_powershell(
                     teams_send_body,
-                    chat_id_override=self_test_destination.get("chat_id", ""),
+                    chat_id_override=destination.get("chat_id", ""),
                 )
             append_teams_send_log(
                 result,
-                teams_chat_message,
+                message,
                 chat_name,
                 form=form,
                 vendor=vendor,
-                teams_action=effective_teams_action,
+                teams_action=log_action,
             )
             if result.get("ok"):
-                _mark_teams_message_sent(st.session_state, form, result=result)
+                _mark_warranty_report_sent(st.session_state, message, result=result, destination_key=destination_key)
                 st.rerun()
             else:
-                _mark_teams_message_send_failed(st.session_state, form, result)
+                _mark_warranty_report_send_failed(st.session_state, message, result, destination_key=destination_key)
                 st.rerun()
             with st.expander("PowerShell実行結果", expanded=not result.get("ok")):
                 st.text("stdout")
@@ -9553,10 +9469,11 @@ def render_tab_after_call():
         elif incomplete_reasons:
             st.button("未完了項目があります", disabled=True, use_container_width=True)
         else:
-            if st.button("自分宛てにテスト送信", disabled=not teams_enabled, type="primary", use_container_width=True):
+            send_button_label = "Teamsワランティへ送信" if is_warranty_destination else "自分宛てにテスト送信"
+            if st.button(send_button_label, disabled=not teams_enabled, type="primary", use_container_width=True):
                 request_teams_send(allow_resend=False)
 
-        if _teams_send_requested(st.session_state, form):
+        if _warranty_report_send_requested(st.session_state, message, destination_key):
             execute_requested_teams_send()
 
         recent_logs = st.session_state.get("teams_send_log", [])[:3]
@@ -9571,11 +9488,8 @@ def render_tab_after_call():
                     if log.get("error_message"):
                         st.caption(log["error_message"])
 
-    render_handover_requirement_panel(decision.get("handover_requirement"))
     render_wrs_handover_action_panel(decision.get("wrs_handover_action"))
     render_wrs_handover_transfer_text(form, decision.get("wrs_handover_action"))
-    st.divider()
-    render_warranty_report_send_panel(form, decision)
 
     st.divider()
     with st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False):

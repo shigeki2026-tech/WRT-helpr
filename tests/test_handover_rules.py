@@ -233,7 +233,7 @@ def test_unclear_self_repair_vendor_candidates_are_left_as_test_memo():
 def test_wrs_handover_panel_renders_basis_text():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     panel_start = source.index("def render_wrs_handover_action_panel")
-    panel_end = source.index("\ndef render_warranty_report_send_panel", panel_start)
+    panel_end = source.index("\ndef build_wrs_handover_transfer_text", panel_start)
     panel_source = source[panel_start:panel_end]
 
     assert "basis_text" in panel_source
@@ -426,12 +426,13 @@ def test_handover_text_stays_out_of_rakutel_teams_and_repair_request_memo():
             assert value not in text
 
 
-def test_handover_panel_is_rendered_before_warranty_report_panel():
+def test_handover_panel_is_rendered_after_unified_teams_send_block():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_source = source[source.index("def render_tab_after_call"):source.index("def _candidate_field")]
 
-    assert "render_handover_requirement_panel(decision.get(\"handover_requirement\"))" in after_source
-    assert after_source.index("render_handover_requirement_panel") < after_source.index("render_warranty_report_send_panel")
+    assert "render_handover_requirement_panel(decision.get(\"handover_requirement\"))" not in after_source
+    assert after_source.index("###### Teams送信") < after_source.index("render_wrs_handover_transfer_text")
+    assert "render_warranty_report_send_panel" not in after_source
 
 
 def test_wrs_transfer_text_for_ai_koumuten_includes_request_and_note():
@@ -484,7 +485,8 @@ def test_after_call_renders_wrs_transfer_after_detail_card():
 
     assert "render_wrs_handover_transfer_text(form, decision.get(\"wrs_handover_action\"))" in after_source
     assert after_source.index("render_wrs_handover_action_panel") < after_source.index("render_wrs_handover_transfer_text")
-    assert after_source.index("render_wrs_handover_transfer_text") < after_source.index("render_warranty_report_send_panel")
+    assert after_source.index("render_wrs_handover_transfer_text") < after_source.index("対応履歴テンプレ")
+    assert "render_warranty_report_send_panel" not in after_source
 
 
 def test_wrs_transfer_text_stays_out_of_rakutel_teams_and_repair_request_memo():
