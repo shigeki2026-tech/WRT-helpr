@@ -7233,7 +7233,7 @@ def render_call_wrs_handover_summary(wrs_action: dict | None) -> None:
 
 
 def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
-    st.markdown("##### 📣 Teamsワランティ送信")
+    st.markdown("##### ワランティ報告チャット送信")
     teams_config = load_teams_config()
     chat_name = teams_config.get("warranty_chat_name") or DEFAULT_TEAMS_CONFIG["warranty_chat_name"]
     if "warranty_report_content_input" in st.session_state:
@@ -7300,6 +7300,7 @@ def render_warranty_report_send_panel(form: dict, decision: dict) -> None:
         else:
             tone = "success"
         pill = "送信可能"
+    st.markdown(f"**送信先：** {chat_name}")
     st.markdown(_status_card_html(tone, pill, chat_name, status_lines), unsafe_allow_html=True)
     if len(incomplete_reasons) > 5 and not already_sent:
         with st.expander("送信不可理由をすべて表示", expanded=False):
@@ -9262,7 +9263,7 @@ def render_tab_after_call():
         if teams_preview_lines:
             st.markdown("送信内容プレビュー：")
             st.info("\n".join(teams_preview_lines))
-        st.markdown("###### Teams送信")
+        st.markdown("###### 通常Teams報告")
         st.caption("送信前チェックと送信状態")
         request_folder = get_request_pdf_folder_info(vendor)
         teams_config = load_teams_config()
@@ -9429,6 +9430,7 @@ def render_tab_after_call():
     render_handover_requirement_panel(decision.get("handover_requirement"))
     render_wrs_handover_action_panel(decision.get("wrs_handover_action"))
     render_wrs_handover_transfer_text(form, decision.get("wrs_handover_action"))
+    st.divider()
     render_warranty_report_send_panel(form, decision)
 
     st.divider()

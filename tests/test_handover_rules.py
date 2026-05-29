@@ -2,9 +2,63 @@
 from pathlib import Path
 
 import app
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+NEW_WRS_HANDOVER_CASES = (
+    ("ニッテイライフ", "ニッテイライフ"),
+    ("トレス", "トレス"),
+    ("MED Communications", "MED Communications"),
+    ("MEDコミュニケーションズ", "MED Communications"),
+    ("キューハウ", "キューハウ / Comfo home"),
+    ("Comfo home", "キューハウ / Comfo home"),
+    ("住宅資材センター", "住宅資材センター"),
+    ("大成有楽", "大成有楽"),
+    ("相鉄不動産", "相鉄不動産"),
+    ("オンレイ", "オンレイ"),
+    ("フュディアル", "フュディアル"),
+    ("株式会社ミツウロコヴェッセル", "株式会社ミツウロコヴェッセル"),
+    ("ミツウロコヴェッセル", "株式会社ミツウロコヴェッセル"),
+    ("クリーンリバー", "クリーンリバー"),
+    ("ケィ・マックインダストリー", "ケィ・マックインダストリー"),
+    ("ケイマックインダストリー", "ケィ・マックインダストリー"),
+    ("株式会社三建", "株式会社三建"),
+    ("三建", "株式会社三建"),
+    ("FUTAEDA", "FUTAEDA"),
+    ("フタエダ", "FUTAEDA"),
+    ("木場(こば)家電住宅設備", "木場家電住宅設備"),
+    ("こば家電住宅設備", "木場家電住宅設備"),
+    ("ぽちる", "ぽちる"),
+)
+
+
+SELF_REPAIR_VENDOR_CASES = (
+    ("株式会社三建", "", "株式会社三建"),
+    ("三建", "", "株式会社三建"),
+    ("住宅資材センター", "", "住宅資材センター"),
+    ("キューハウ", "", "株式会社キューハウ"),
+    ("フュディアル", "住設業務", "㈱リファテック"),
+)
+
+
+UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES = (
+    "ニッテイライフ",
+    "トレス",
+    "MED Communications",
+    "Comfo home",
+    "大成有楽（TOKAI/リファテック/ユナイト条件分岐あり）",
+    "相鉄不動産",
+    "オンレイ",
+    "株式会社ミツウロコヴェッセル",
+    "クリーンリバー",
+    "ケィ・マックインダストリー",
+    "FUTAEDA",
+    "木場(こば)家電住宅設備",
+    "ぽちる",
+)
 
 
 def make_form(**overrides):
@@ -109,6 +163,43 @@ def test_normal_case_has_no_wrs_handover_and_keeps_no7_unite_fallback():
     assert "ユナイト" in decision["vendor"]
     assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
     assert wrs["needs_wrs_handover"] is False
+
+
+@pytest.mark.parametrize(("keyword", "expected_rule_name"), NEW_WRS_HANDOVER_CASES)
+def test_added_wrs_handover_targets_are_matched(keyword, expected_rule_name):
+    form_values = {"operating_company": keyword}
+    if expected_rule_name == "フュディアル":
+        form_values["appliance_type"] = "住設"
+    result = wrs_handover(make_form(**form_values))
+
+    assert result["needs_wrs_handover"] is True
+    assert result["rule_name"] == expected_rule_name
+    assert result["action_type"] == "受付報告"
+    assert result["handover_request_content"] == "【BKK】WRS（福岡）へ対応依頼"
+
+
+def test_fudial_wrs_handover_is_limited_to_jusetsu_cases():
+    result = wrs_handover(make_form(operating_company="フュディアル", appliance_type="家電"))
+
+    assert result["needs_wrs_handover"] is False
+
+
+@pytest.mark.parametrize(("store_name", "call_line", "expected_vendor"), SELF_REPAIR_VENDOR_CASES)
+def test_clear_self_repair_vendor_rules_take_priority_over_no7(store_name, call_line, expected_vendor):
+    result = app.determine_vendor_from_rules(
+        make_form(store_name=store_name, call_line=call_line),
+        "出張修理",
+    )
+
+    assert result["matched"] is True
+    assert result["vendor_name"] == expected_vendor
+    assert result["priority"] < 900
+
+
+def test_unclear_self_repair_vendor_candidates_are_left_as_test_memo():
+    assert "大成有楽（TOKAI/リファテック/ユナイト条件分岐あり）" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
+    assert "Comfo home" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
+    assert "株式会社ミツウロコヴェッセル" in UNCLEAR_SELF_REPAIR_VENDOR_CANDIDATES
 
 
 def test_wrs_handover_panel_renders_basis_text():

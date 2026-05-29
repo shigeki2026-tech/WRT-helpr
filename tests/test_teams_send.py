@@ -717,8 +717,10 @@ def test_warranty_report_panel_buttons_have_unique_keys():
     panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
     panel_source = source[panel_start:panel_end]
 
+    assert "##### ワランティ報告チャット送信" in panel_source
     assert "Teamsワランティ送信" in panel_source
     assert "ワランティ報告送信" not in panel_source
+    assert 'st.markdown(f"**送信先：** {chat_name}")' in panel_source
     assert '"確認内容"' in panel_source
     assert 'key="warranty_report_content_input"' in panel_source
     assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
@@ -2222,16 +2224,39 @@ def test_teams_area_source_does_not_render_drive_link():
 def test_teams_auto_send_panel_heading_exists():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "###### Teams送信" in source
+    assert "###### 通常Teams報告" in source
     assert "送信前チェックと送信状態" in source
 
 
 def test_teams_report_and_send_have_separate_headings():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     report_index = source.index("##### 💬 Teams報告文")
-    send_index = source.index("###### Teams送信")
+    send_index = source.index("###### 通常Teams報告")
 
     assert report_index < send_index
+
+
+def test_after_call_teams_send_blocks_show_distinct_headings_and_destinations():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    panel_start = source.index("def render_warranty_report_send_panel")
+    panel_end = source.index("\ndef render_decision_tags_panel", panel_start)
+    panel_source = source[panel_start:panel_end]
+
+    normal_index = after_source.index("###### 通常Teams報告")
+    handover_index = after_source.index("render_handover_requirement_panel", normal_index)
+    transfer_index = after_source.index("render_wrs_handover_transfer_text", handover_index)
+    divider_index = after_source.index("st.divider()", transfer_index)
+    warranty_call_index = after_source.index("render_warranty_report_send_panel", divider_index)
+
+    assert normal_index < handover_index < transfer_index < divider_index < warranty_call_index
+    assert 'st.markdown(f"**送信先：** {chat_name}")' in after_source[normal_index:handover_index]
+    assert "##### ワランティ報告チャット送信" in panel_source
+    assert 'st.markdown(f"**送信先：** {chat_name}")' in panel_source
+    assert "WRS引き継ぎ表 転記用" in source
+    assert "按钮" not in after_source
 
 
 def test_teams_auto_send_heading_is_not_duplicated():
@@ -3056,7 +3081,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     ]
     teams_area = after_source[
         after_source.index('teams_chat_message = st.text_area('):
-        after_source.index("###### Teams送信")
+        after_source.index("###### 通常Teams報告")
     ]
 
     assert "st.code(" not in memo_area
