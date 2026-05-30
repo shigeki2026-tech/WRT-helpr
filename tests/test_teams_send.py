@@ -279,9 +279,9 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert "memo_title_col, memo_regen_col, memo_copy_col" not in after_source
     assert "rakutel_title_col, rakutel_regen_col, rakutel_copy_col" not in after_source
     assert "teams_title_col, teams_regen_col, teams_copy_col" not in after_source
-    assert "memo_regen_col, memo_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
-    assert "rakutel_regen_col, rakutel_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
-    assert "teams_regen_col, teams_copy_col = st.columns([1, 1], gap=\"small\")" in after_source
+    assert "memo_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
+    assert "rakutel_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
+    assert "teams_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
     assert "st.columns([5, 2], gap=\"large\")" not in after_source
 
     memo_heading_area = after_source[
@@ -312,10 +312,10 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
         after_source.index("##### 💬 Teams報告文"):
         after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
     ]
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"Teams報告文に入れる対応内容"')
+    assert '"Teams報告文に入れる対応内容"' not in teams_section
+    assert teams_section.index("with teams_action_col:") < teams_section.index('"###### Teams送信"')
     assert '"送信内容と送信先を確認しました"' not in teams_section
     assert '"Teams報告アクションを確定しました"' not in teams_section
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"###### Teams送信"')
     assert "テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。" not in teams_section
     assert "追加候補に入れる" not in after_source
     assert "選択中リスト" not in after_source
@@ -905,10 +905,10 @@ def test_teams_report_block_contains_destination_selection_and_unified_send_cont
     assert 'st.markdown(f"**送信先：** {destination_label}")' not in panel_source
     assert 'default_destination = teams_config.get("default_destination") or "warranty"' in panel_source
     assert 'destination_options.index(WARRANTY_REPORT_DESTINATION_LABELS[default_destination])' in panel_source
-    assert '"確認内容"' in panel_source
+    assert '"ワランティ報告メモ"' in panel_source
     assert 'key="warranty_report_content_input"' in panel_source
     assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
-    assert "注意：未入力項目があります。内容を確認してから送信してください。" in panel_source
+    assert "未入力項目あり。必要に応じて確認してください。" in panel_source
     assert '"Teamsワランティへ送信"' in panel_source
     assert '"自分宛てにテスト送信"' in panel_source
     assert "自動判定：" not in panel_source
@@ -1120,6 +1120,7 @@ def test_pdf_storage_confirmation_required_for_sendable_wrt_cer():
 def test_request_pdf_folder_info_returns_drive_links():
     wrt = app.get_request_pdf_folder_info("WRT修理センター")
     cer = app.get_request_pdf_folder_info("CER候補（担当確認）")
+    other = app.get_request_pdf_folder_info("ユナイトサービス㈱")
 
     assert wrt["required"] is True
     assert wrt["name"] == "WRT修理受付センター"
@@ -1127,6 +1128,8 @@ def test_request_pdf_folder_info_returns_drive_links():
     assert cer["required"] is True
     assert cer["name"] == "CER"
     assert cer["url"] == "https://drive.google.com/drive/u/0/folders/1zatFuNMucZWxwGQkketgjicfngo_9wEP"
+    assert other["required"] is False
+    assert other["url"] == ""
 
 
 def test_drive_url_is_not_in_teams_message_or_send_body():
@@ -2110,7 +2113,8 @@ def test_case_basic_widget_initial_values_use_current_form_values():
     panel_source = source[panel_index:panel_end]
 
     assert 'value=form.get("product", "")' in panel_source
-    assert 'value=form.get("product_price", "")' in panel_source
+    assert "product_price_display = product_price_value_for_case_basic_ui(product_price_original)" in panel_source
+    assert "value=product_price_display" in panel_source
     assert 'current_manufacturer = form.get("manufacturer", "")' in panel_source
     assert 'value=form.get("store_name", "")' in panel_source
     assert 'form["prefecture"] = st.selectbox(' in panel_source
@@ -2132,7 +2136,7 @@ def test_case_basic_fields_do_not_show_required_optional_badges():
     assert "render_field_label(" not in panel_source
     assert 'st.selectbox(\n            "回線名"' in panel_source
     assert 'st.selectbox(\n            "都道府県"' in panel_source
-    assert 'st.text_input(\n            "商品価格"' in panel_source
+    assert 'st.text_input(\n            "商品価格（円）"' in panel_source
     assert 'st.text_input(\n            "保証プラン名"' in panel_source
 
 
@@ -2165,10 +2169,20 @@ def test_case_basic_product_price_is_editable_in_common_basic_panel():
     aux_index = source.index("with st.expander(\"補助情報を開く\"")
     aux_source = source[aux_index:source.index("sync_hearing_widget_state_to_form(form)", aux_index)]
 
-    assert 'form["product_price"] = st.text_input(' in panel_source
+    assert "product_price_input = st.text_input(" in panel_source
+    assert 'form["product_price"] = (' in panel_source
     assert 'case_basic_widget_key("product_price", revision)' in panel_source
     assert '"product_price": "case_basic_product_price"' in source
-    assert "商品価格は「案件基本（共通）」で編集します。" in aux_source
+    assert '"商品価格（円）"' in panel_source
+    assert "product_price_value_for_case_basic_ui(product_price_original)" in panel_source
+    assert 'placeholder="329,000"' in panel_source
+    assert "商品価格は「案件情報」で編集します。" in aux_source
+
+
+def test_case_basic_product_price_ui_strips_trailing_yen_only():
+    assert app.product_price_value_for_case_basic_ui("329,000円") == "329,000"
+    assert app.product_price_value_for_case_basic_ui("329,000 円 ") == "329,000"
+    assert app.product_price_value_for_case_basic_ui("329,000") == "329,000"
 
 
 def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
@@ -2197,7 +2211,7 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     assert state[app.case_basic_widget_key("product", revision)] == "食器洗い乾燥機"
     assert state[app.case_basic_widget_key("manufacturer", revision)] == "三菱電機"
     assert state[app.case_basic_widget_key("store_name", revision)] == "ライフデザイン・カバヤ株式会社"
-    assert state[app.case_basic_widget_key("product_price", revision)] == "36,300円"
+    assert state[app.case_basic_widget_key("product_price", revision)] == "36,300"
 
 
 def test_global_case_basic_manual_widget_edit_updates_form():
@@ -2421,6 +2435,10 @@ def test_call_direction_ui_is_near_rakutel_section():
     old_label = 'st.selectbox(\n            "発信者区分"'
 
     assert rakutel_heading_index < direction_index < counterparty_index
+    assert 'call_direction_cols = st.columns([1.0, 3.0], gap="small")' in source
+    assert "with call_direction_cols[0]:" in source
+    assert 'party_type_cols = st.columns([1.0, 3.0], gap="small")' in source
+    assert "with party_type_cols[0]:" in source
     assert old_label not in source
 
 
@@ -2505,14 +2523,14 @@ def test_teams_chat_message_never_includes_drive_url_for_cer():
     assert "folders/" not in message
 
 
-def test_teams_area_source_does_not_render_drive_link():
+def test_teams_area_source_renders_cer_drive_link():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     teams_index = source.index("##### 💬 Teams報告文")
     send_button_index = source.index("send_button_label =", teams_index)
     teams_area = source[teams_index:send_button_index]
 
-    assert "Google Drive を開く" not in teams_area
-    assert "依頼書PDF格納先" not in teams_area
+    assert "CERドライブ：リンクを開く" in teams_area
+    assert "get_request_pdf_folder_info(vendor)" in teams_area
 
 
 def test_teams_auto_send_panel_heading_exists():
@@ -2589,7 +2607,8 @@ def test_teams_send_disabled_message_is_specific():
 def test_teams_action_input_label_is_teams_report_content():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert '"Teams報告文に入れる対応内容"' in source
+    assert '"Teams報告文に入れる対応内容"' not in source
+    assert '"ワランティ報告メモ"' in source
     assert 'st.caption(f"自動判定：{auto_teams_action_display}")' not in source
     assert "自動判定と異なる場合のみ変更" not in source
     assert '"Teams報告アクション（手入力優先）"' not in source
@@ -2970,9 +2989,9 @@ def test_global_case_basic_common_section_exists_before_tabs():
     after_source = source[after_index:source.index("def render_tab_master", after_index)]
 
     assert top_index < basic_index < tabs_index
-    assert "##### 🧾 案件基本（共通）" in source
+    assert "##### 🧾 案件情報" in source
     assert "render_global_case_basic_panel" in source
-    assert "案件基本（共通）" not in after_source
+    assert "案件基本" not in after_source
 
 
 def test_global_case_basic_widget_keys_are_single_global_set():
@@ -3010,6 +3029,30 @@ def test_global_case_basic_panel_updates_shared_form_fields():
     assert '"住設（新築）"' in source
     assert '"住設（既築）"' in source
     assert "st.session_state.form = form" in panel_source
+
+
+def test_case_basic_panel_uses_two_row_weighted_layout():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    panel_index = source.index("def render_shared_case_basic_editor")
+    panel_end = source.index("def render_global_case_basic_panel", panel_index)
+    panel_source = source[panel_index:panel_end]
+
+    assert 'st.markdown("##### 🧾 案件情報")' in panel_source
+    assert "row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap=\"small\")" in panel_source
+    assert "row2 = st.columns([1.2, 2.8, 2.5], gap=\"small\")" in panel_source
+    row1_start = panel_source.index("with row1[0]:")
+    row2_start = panel_source.index("with row2[0]:")
+    row1_source = panel_source[row1_start:row2_start]
+    row2_source = panel_source[row2_start:panel_source.index("if show_template_result:")]
+    assert "with row1[5]:" in panel_source
+    assert "with row2[2]:" not in panel_source
+    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"製品"', '"商品価格（円）"', '"販売店"']:
+        assert label in row1_source
+    for label in ['"メーカー"', '"保証プラン名"']:
+        assert label in row2_source
+    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"商品価格（円）"', '"製品"', '"メーカー"', '"販売店"', '"保証プラン名"']:
+        assert label in panel_source
+    assert 'placeholder="329,000"' in panel_source
 
 
 def test_call_tab_does_not_render_duplicate_case_basic_fields():
@@ -3073,7 +3116,7 @@ def test_case_clear_controls_are_near_case_basic_heading_not_copy_import():
     assert 'render_case_clear_controls("after")' not in source
     assert 'with st.expander("案件操作", expanded=False):' not in basic_source
     assert 'render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)' in basic_source
-    heading_index = basic_source.index('st.markdown("##### 🧾 案件基本（共通）")')
+    heading_index = basic_source.index('st.markdown("##### 🧾 案件情報")')
     clear_index = basic_source.index('render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)')
     first_field_index = basic_source.index('form["call_line"] = normalize_call_line_for_display')
     assert heading_index < clear_index < first_field_index
@@ -3107,6 +3150,8 @@ def test_after_call_template_auto_and_candidate_display_exists():
     assert after_source.index("summary[\"template_reason\"]") < after_source.index("summary[\"vendor_reason\"]")
     assert "理由：" in after_source
     assert '"テンプレート候補"' in after_source
+    assert 'template_cols = st.columns([2.0, 3.0], gap="small")' in after_source
+    assert "with template_cols[0]:" in after_source
     assert "selected_option_val = st.selectbox(" in after_source
     assert "候補テンプレートの詳細を見る" in after_source
     assert "選択可能テンプレート：" in after_source
@@ -3429,6 +3474,15 @@ def test_after_call_regeneration_buttons_are_independent():
     ]
 
     assert attention_button < rakutel_button < teams_button
+    assert 'memo_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
+    assert 'rakutel_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
+    assert 'teams_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
+    assert "with memo_button_cols[0]:" in after_source
+    assert "with memo_button_cols[1]:" in after_source
+    assert "with rakutel_button_cols[0]:" in after_source
+    assert "with rakutel_button_cols[1]:" in after_source
+    assert "with teams_button_cols[0]:" in after_source
+    assert "with teams_button_cols[1]:" in after_source
     assert 'form["teams_chat_message"] = generated_teams_message' not in rakutel_section
     assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_section
 
@@ -3475,17 +3529,20 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     ]
 
     assert "st.code(" not in memo_area
+    assert "use_container_width=True" not in memo_area
     assert "コピー用：修理依頼書メモ" not in memo_area
     assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
     assert memo_and_snippet_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_and_snippet_area.index("copy_attention_memo")
     assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("定型文を追記する")
 
     assert "st.code(" not in rakutel_area
+    assert "use_container_width=True" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area
     assert 'render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
     assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
 
     assert "st.code(" not in teams_text_area
+    assert "use_container_width=True" not in teams_text_area
     assert "コピー用：Teams報告文" not in teams_text_area
     assert "height=160" in teams_text_area
     assert "送信内容プレビュー：" in teams_area
@@ -3674,14 +3731,14 @@ def test_rakuteru_no_input_before_teams_regeneration_button():
     assert teams_heading_index < rakuteru_no_index < text_area_index
 
 
-def test_teams_action_input_before_teams_regeneration_button():
+def test_teams_action_manual_input_is_removed_from_teams_panel():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     teams_heading_index = source.index("##### 💬 Teams報告文")
-    teams_action_index = source.index('key="teams_action_input"', teams_heading_index)
     text_area_index = source.index('teams_chat_message = st.text_area(', teams_heading_index)
 
-    assert teams_heading_index < teams_action_index < text_area_index
+    assert 'key="teams_action_input"' not in source[teams_heading_index:text_area_index]
+    assert "auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)" in source[teams_heading_index:text_area_index]
 
 
 def test_rakuteru_no_not_in_template_col1():

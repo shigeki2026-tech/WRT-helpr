@@ -458,7 +458,7 @@ def _script_tag_for_form(form: dict) -> tuple[dict, dict]:
     decision = app.run_decision(form)
     script_reference = app.build_script_reference_info(decision)
     tags = app.build_decision_tag_items(decision, form, script_reference)
-    return tags[3], script_reference
+    return tags[1], script_reference
 
 
 def test_script_tag_uses_reference_route_for_kaden_lines():
@@ -568,9 +568,9 @@ def test_script_tag_missing_only_when_script_reference_confidence_none():
     assert script_reference["confidence"] == "none"
 
     tags = app.build_decision_tag_items(decision, {}, script_reference)
-    script_tag = tags[3]
+    script_tag = tags[1]
 
-    assert script_tag["title"] == "スクリプト"
+    assert script_tag["title"] == "参照スクリプト"
     assert script_tag["primary"] == "未判定"
     assert script_tag["color"] == app.TAG_COLOR_MISSING
 
@@ -636,13 +636,13 @@ def test_initial_decision_tags_are_unjudged_with_missing_items():
     script_reference = app.build_script_reference_info(decision)
     tags = app.build_decision_tag_items(decision, form, script_reference)
 
-    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "未判定", "不要"]
-    assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags[:4])
+    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "確認中", "不要"]
+    assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags[:3])
+    assert tags[3]["color"] == app.TAG_COLOR_WARNING
     assert tags[4]["color"] == app.TAG_COLOR_NEUTRAL
     assert "保証期間" in tags[0]["secondary"]
-    assert "製品" in tags[1]["secondary"]
-    assert "住所/都道府県" in tags[2]["secondary"]
-    assert "回線名" in tags[3]["secondary"]
+    assert "回線名" in tags[1]["secondary"]
+    assert "製品" in tags[2]["secondary"]
 
 
 def test_decision_tags_confirm_only_when_required_information_is_present():
@@ -663,41 +663,39 @@ def test_decision_tags_confirm_only_when_required_information_is_present():
 
     assert tags[0]["primary"] == "保証期間内"
     assert tags[0]["color"] != app.TAG_COLOR_MISSING
-    assert tags[1]["primary"] == "出張修理"
+    assert tags[1]["primary"] == "参照スクリプト"
     assert tags[1]["color"] != app.TAG_COLOR_MISSING
-    assert tags[2]["primary"]
+    assert tags[2]["primary"] == "出張修理"
     assert tags[2]["color"] != app.TAG_COLOR_MISSING
-    assert tags[3]["primary"] == "参照スクリプト"
-    assert tags[3]["secondary"] == "0099回線（家電/新築）"
+    assert tags[3]["primary"]
+    assert tags[3]["title"] == "概算費用"
     assert tags[3]["color"] != app.TAG_COLOR_MISSING
 
 
 def test_repair_tag_shows_missing_manufacturer_and_model_when_needed():
     ac_form = make_form(product="エアコン", model_number="AN123")
     ac_decision = app.run_decision(ac_form)
-    ac_repair_tag = app.build_decision_tag_items(ac_decision, ac_form)[1]
+    ac_repair_tag = app.build_decision_tag_items(ac_decision, ac_form)[2]
     assert ac_repair_tag["primary"] == "出張修理"
     assert "メーカー" not in ac_repair_tag["secondary"]
     assert ac_repair_tag["color"] != app.TAG_COLOR_MISSING
 
     printer_form = make_form(product="プリンター", manufacturer="キヤノン")
     printer_decision = app.run_decision(printer_form)
-    printer_repair_tag = app.build_decision_tag_items(printer_decision, printer_form)[1]
+    printer_repair_tag = app.build_decision_tag_items(printer_decision, printer_form)[2]
     assert "型番" in printer_repair_tag["secondary"]
 
 
-def test_vendor_tag_shows_missing_prefecture_when_vendor_needs_area():
+def test_vendor_tag_is_not_in_upper_decision_tags_when_vendor_needs_area():
     form = make_form(product="エアコン", manufacturer="ダイキン", model_number="AN123", appliance_type="家電")
     decision = app.run_decision(form)
-    vendor_tag = app.build_decision_tag_items(decision, form)[2]
+    tags = app.build_decision_tag_items(decision, form)
 
-    assert vendor_tag["primary"] == "未判定"
-    assert "都道府県" in vendor_tag["secondary"]
-    assert vendor_tag["tertiary"].startswith("根拠：")
-    assert "不足" in vendor_tag["tertiary"]
+    assert "拠点対応" not in [tag["title"] for tag in tags]
+    assert decision["vendor_result"]
 
 
-def test_vendor_tag_includes_reason_when_vendor_is_confirmed():
+def test_confirmed_vendor_is_not_in_upper_decision_tags():
     form = make_form(
         product="エアコン",
         manufacturer="ダイキン",
@@ -707,12 +705,10 @@ def test_vendor_tag_includes_reason_when_vendor_is_confirmed():
         call_line="家電",
     )
     decision = app.run_decision(form)
-    vendor_tag = app.build_decision_tag_items(decision, form)[2]
+    tags = app.build_decision_tag_items(decision, form)
 
-    assert vendor_tag["title"] == "拠点対応"
-    assert vendor_tag["secondary"] == "確定"
-    assert vendor_tag["tertiary"].startswith("根拠：")
-    assert vendor_tag["tertiary"] != "根拠："
+    assert "拠点対応" not in [tag["title"] for tag in tags]
+    assert decision["vendor"]
 
 
 def test_call_line_is_not_auto_filled_from_copy_or_residential_evidence():
@@ -2257,9 +2253,9 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     )
     script_reference = app.build_script_reference_info(decision)
     tags = app.build_decision_tag_items(decision, form, script_reference)
-    repair_tag = next(tag for tag in tags if tag["title"] == "修理方針")
-    vendor_tag = next(tag for tag in tags if tag["title"] == "拠点対応")
-    script_tag = next(tag for tag in tags if tag["title"] == "スクリプト")
+    repair_tag = next(tag for tag in tags if tag["title"] == "修理形態")
+    cost_tag = next(tag for tag in tags if tag["title"] == "概算費用")
+    script_tag = next(tag for tag in tags if tag["title"] == "参照スクリプト")
     teams_message = app._build_teams_chat_message(
         decision["working_form"],
         decision["vendor"],
@@ -2288,9 +2284,8 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     assert "アイ工務店上位5社案件はユナイトサービスへ依頼" not in str(summary)
     assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
     check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
-    check("AI工務店 repair tag cost", repair_tag["secondary"], "5,000円～7,000円前後")
-    check("AI工務店 vendor tag primary", vendor_tag["primary"], "ユナイトサービス㈱")
-    check("AI工務店 vendor tag secondary", vendor_tag["secondary"], "確定")
+    check("AI工務店 cost tag primary", cost_tag["primary"], "5,000円～7,000円前後")
+    assert "拠点対応" not in [tag["title"] for tag in tags]
     check("AI工務店 script tag primary", script_tag["primary"], "参照スクリプト")
     check("AI工務店 script tag matches reference", script_tag["secondary"], script_reference["display"])
     assert "ユナイトサービス㈱へFAX済み" in teams_message
@@ -3142,7 +3137,7 @@ def test_decision_tags_are_split_structured_items():
     d = app.run_decision(form)
     tags = app.build_decision_tag_items(d, form)
 
-    assert [tag["title"] for tag in tags] == ["受付可否", "修理方針", "拠点対応", "スクリプト", "引継要否"]
+    assert [tag["title"] for tag in tags] == ["受付可否", "参照スクリプト", "修理形態", "概算費用", "引継要否"]
     assert all(" / " not in tag["title"] for tag in tags)
     assert all(tag["primary"] for tag in tags)
     assert all(tag["secondary"] for tag in tags)
@@ -3272,8 +3267,8 @@ def test_tc_script_tag_includes_url_and_link_text():
     })
     tags = app.build_decision_tag_items(decision, {}, script_reference)
 
-    script_tag = tags[3]
-    assert script_tag["title"] == "スクリプト"
+    script_tag = tags[1]
+    assert script_tag["title"] == "参照スクリプト"
     assert "url" in script_tag
     assert "link_text" in script_tag
     assert "matched" in script_tag
@@ -3300,7 +3295,7 @@ def test_tc_script_tag_matched_url_builds_open_link():
     with patch("app.build_script_reference_info", return_value=script_reference):
         tags = app.build_decision_tag_items(decision, {}, script_reference)
 
-    script_tag = tags[3]
+    script_tag = tags[1]
     assert script_tag["matched"] is True
     assert script_tag["url"] == "https://example.com/script"
     assert "該当箇所を開く" in script_tag["link_text"]
@@ -3322,7 +3317,7 @@ def test_tc_script_tag_unmatched_shows_url_unregistered():
 
     tags = app.build_decision_tag_items(decision, {}, script_reference)
 
-    script_tag = tags[3]
+    script_tag = tags[1]
     assert script_tag["primary"] == "未判定"
     assert script_tag["color"] == app.TAG_COLOR_MISSING
 

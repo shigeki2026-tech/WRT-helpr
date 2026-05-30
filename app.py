@@ -6092,7 +6092,9 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "secondary": product_display,
             "tertiary": warranty_plan or "保証プラン未入力",
             "quaternary": f"商品価格　{product_price}" if product_price else "商品価格　未入力",
-            "color": summary["warranty"]["color"],
+            "color": TAG_COLOR_OK if warranty_status == "active"
+            else TAG_COLOR_ERROR if warranty_status in ("before_start", "expired")
+            else TAG_COLOR_NEUTRAL,
             "compact": True,
         }
 
@@ -6104,18 +6106,31 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             else "未判定"
         )
         repair_tag = (
-            _missing_tag("修理方針", missing["修理方針"], f"確認：{repair_reason}")
+            _missing_tag("修理形態", missing["修理方針"], f"確認：{repair_reason}")
             if repair_primary == "未判定"
-            else _attention_tag("修理方針", repair_primary, missing["修理方針"], repair_reason)
+            else _attention_tag("修理形態", repair_primary, missing["修理方針"], repair_reason)
         )
     else:
         repair_tag = {
-            "title": "修理方針",
+            "title": "修理形態",
             "primary": summary["repair"]["value"],
-            "secondary": summary["cost"]["value"],
+            "secondary": summary["repair"]["status"],
             "tertiary": _decision_tag_short_note("判定理由: ", repair_reason),
-            "color": summary["repair"]["color"],
+            "color": TAG_COLOR_OK if decision.get("repair_type") in ("出張修理", "持込修理") else TAG_COLOR_WARNING,
         }
+
+    cost_status = summary.get("cost_status", "")
+    cost_color = TAG_COLOR_OK
+    if cost_status in ("pending", "escalation"):
+        cost_color = TAG_COLOR_WARNING
+    elif cost_status == "unavailable":
+        cost_color = TAG_COLOR_ERROR
+    cost_tag = {
+        "title": "概算費用",
+        "primary": summary["cost"]["value"],
+        "secondary": summary["cost"]["status"],
+        "color": cost_color,
+    }
 
     vendor_reason = vendor_tag_reason_for_display(decision, missing["拠点対応"])
     if missing["拠点対応"]:
@@ -6132,7 +6147,7 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
 
     script_has_candidate = _script_reference_has_candidate(script_reference)
     if not script_has_candidate:
-        script_tag = _missing_tag("スクリプト", missing["スクリプト"] or ["call_line"])
+        script_tag = _missing_tag("参照スクリプト", missing["スクリプト"] or ["call_line"])
     else:
         script_tertiary = f"根拠：{script_reference.get('basis', '')}" if script_reference.get("basis") else ""
         script_quaternary = f"confidence: {script_reference.get('confidence', '')}" if script_reference.get("confidence") else ""
@@ -6144,13 +6159,13 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             script_quinary = f"confidence: {script_reference.get('confidence', '')}" if script_reference.get("confidence") else ""
         script_color = TAG_COLOR_WARNING if script_reference.get("confidence") in ("needs_url", "needs_selection") else TAG_COLOR_OK
         script_tag = {
-            "title": "スクリプト",
+            "title": "参照スクリプト",
             "primary": "参照スクリプト",
             "secondary": script_reference.get("display", ""),
             "tertiary": script_tertiary,
             "quaternary": script_quaternary,
             "quinary": script_quinary,
-            "color": script_color,
+            "color": script_color if script_color == TAG_COLOR_WARNING else TAG_COLOR_ACTION,
             "url": script_reference.get("url", ""),
             "link_text": (script_reference.get("link_text", "") + " 該当箇所を開く")
                          if script_reference.get("matched")
@@ -6190,9 +6205,9 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
 
     return [
         warranty_tag,
-        repair_tag,
-        vendor_tag,
         script_tag,
+        repair_tag,
+        cost_tag,
         handover_tag,
     ]
 
@@ -6859,7 +6874,7 @@ body {
 }
 .wrt-app-header-title {
     color: #111827;
-    font-size: 1.05rem;
+    font-size: 1.18rem;
     font-weight: 800;
     line-height: 1.15;
 }
@@ -7010,39 +7025,46 @@ body {
     overflow: hidden;
 }
 .wrt-decision-tag.ok {
+    /* 緑：確定・OK */
     background: #ffffff;
     border-color: #bbf7d0;
     border-left-color: #16a34a;
 }
 .wrt-decision-tag.warning {
+    /* 黄：注意・要確認 */
     background: #ffffff;
     border-color: #fde68a;
     border-left-color: #d97706;
 }
 .wrt-decision-tag.missing {
+    /* 灰：未判定（後方互換クラス） */
     background: #ffffff;
-    border-color: #fecaca;
-    border-left-color: #dc2626;
+    border-color: #cbd5e1;
+    border-left-color: #64748b;
 }
 .wrt-decision-tag.error {
+    /* 赤：受付不可・停止 */
     background: #ffffff;
     border-color: #fecaca;
     border-left-color: #dc2626;
 }
 .wrt-decision-tag.neutral {
+    /* 灰：未判定 */
     background: #ffffff;
     border-color: #cbd5e1;
     border-left-color: #64748b;
 }
 .wrt-decision-tag.action {
+    /* 青：案内・参照 */
     background: #ffffff;
     border-color: #bfdbfe;
     border-left-color: #2563eb;
 }
 .wrt-decision-tag.dp {
+    /* 黄：注意・要確認（後方互換クラス） */
     background: #ffffff;
-    border-color: #e9d5ff;
-    border-left-color: #9333ea;
+    border-color: #fde68a;
+    border-left-color: #d97706;
 }
 .wrt-decision-link {
     margin-top: 5px;
@@ -7095,7 +7117,6 @@ def render_app_header() -> None:
 <div class="wrt-app-header">
   <div>
     <div class="wrt-app-header-title">修理受付 支援ツール</div>
-    <div class="wrt-app-header-subtitle">WRT-helpr MVP / ローカル判定補助</div>
   </div>
 </div>
 """,
@@ -7179,14 +7200,14 @@ def render_step_list(title: str, steps: list[str]):
         st.markdown(f"**{idx}.** {step}")
 
 
-# ── 判定タグ色定数 ────────────────────────────────────────────────
-TAG_COLOR_NEUTRAL = "#566573"   # 受付可否（未確認・中立）
-TAG_COLOR_OK      = "#1E8449"   # 受付OK・拠点確定
-TAG_COLOR_WARNING = "#7D6608"   # 要確認・エスカ
-TAG_COLOR_ACTION  = "#1A5276"   # 修理方針・スクリプト（通常）
-TAG_COLOR_DP      = "#6C3483"   # ダブルプロテクト案件
-TAG_COLOR_ERROR   = "#922B21"   # 受付不可・エラー
-TAG_COLOR_MISSING = "#B03A2E"   # 未入力・未判定・不足あり
+# ── 判定タグ色定数（灰=未判定 / 緑=確定OK / 黄=注意 / 赤=停止 / 青=案内参照） ──
+TAG_COLOR_NEUTRAL = "#566573"   # 灰：未判定
+TAG_COLOR_OK      = "#1E8449"   # 緑：確定・OK
+TAG_COLOR_WARNING = "#7D6608"   # 黄：注意・要確認
+TAG_COLOR_ERROR   = "#922B21"   # 赤：受付不可・停止
+TAG_COLOR_ACTION  = "#1A5276"   # 青：案内・参照
+TAG_COLOR_MISSING = TAG_COLOR_NEUTRAL
+TAG_COLOR_DP      = TAG_COLOR_WARNING
 # ─────────────────────────────────────────────────────────────────
 
 
@@ -7202,16 +7223,12 @@ def _decision_tag_tone(bg_color: str) -> str:
     color = (bg_color or "").lower()
     if color == TAG_COLOR_OK.lower():
         return "ok"
-    if color == TAG_COLOR_MISSING.lower():
-        return "missing"
     if color == TAG_COLOR_ERROR.lower():
         return "error"
     if color == TAG_COLOR_WARNING.lower():
         return "warning"
     if color == TAG_COLOR_ACTION.lower():
         return "action"
-    if color == TAG_COLOR_DP.lower():
-        return "dp"
     return "neutral"
 
 
@@ -7459,7 +7476,7 @@ def render_decision_tags_panel(form: dict) -> None:
     for idx, tag in enumerate(tags):
         with tag_cols[idx]:
             link = None
-            if tag.get("title") == "スクリプト":
+            if tag.get("title") == "参照スクリプト":
                 if tag.get("matched") and tag.get("url"):
                     link = {"url": tag["url"], "text": tag["link_text"]}
                 else:
@@ -7584,10 +7601,11 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
     next_synced = {}
     for widget_key, field in case_basic_widget_to_field_map(session_state=session_state).items():
         form_value = form.get(field, "")
+        widget_form_value = product_price_value_for_case_basic_ui(form_value) if field == "product_price" else form_value
         if widget_key in session_state:
             widget_value = session_state.get(widget_key, "")
             last_value = last_synced.get(widget_key)
-            if widget_value == form_value:
+            if widget_value == widget_form_value:
                 pass
             elif last_value is not None and widget_value != last_value:
                 if field == "call_line":
@@ -7598,8 +7616,11 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
                 form[field] = widget_value
                 form_value = widget_value
             else:
-                session_state[widget_key] = form_value
-        next_synced[widget_key] = form.get(field, "")
+                session_state[widget_key] = widget_form_value
+        next_synced[widget_key] = (
+            product_price_value_for_case_basic_ui(form.get(field, ""))
+            if field == "product_price" else form.get(field, "")
+        )
     form = apply_appliance_category_to_form(form)
     session_state["_case_basic_widget_synced_values"] = next_synced
     session_state["form"] = form
@@ -7608,7 +7629,10 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
 
 def remember_case_basic_widget_synced_values(form: dict, session_state) -> None:
     session_state["_case_basic_widget_synced_values"] = {
-        widget_key: form.get(field, "")
+        widget_key: (
+            product_price_value_for_case_basic_ui(form.get(field, ""))
+            if field == "product_price" else form.get(field, "")
+        )
         for widget_key, field in case_basic_widget_to_field_map(session_state=session_state).items()
     }
 
@@ -7943,13 +7967,14 @@ def render_inline_vendor_rule_registration(form: dict, decision: dict) -> None:
             _send_inline_candidate_to_master({"vendor_rule": row, "source_fields": source_fields}, "inline_vendor_send_master_v2")
 
 
+def product_price_value_for_case_basic_ui(value: str) -> str:
+    return re.sub(r"\s*円\s*$", "", (value or "").strip())
+
+
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
     header_col, action_col = st.columns([2.2, 1])
     with header_col:
-        if show_template_result:
-            st.markdown("##### 🧾 案件基本（共通）")
-        else:
-            st.markdown("##### 案件基本")
+        st.markdown("##### 🧾 案件情報")
     with action_col:
         render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)
 
@@ -7969,8 +7994,9 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             st.session_state[appliance_widget_key] = form.get("appliance_category", "")
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
-    col_a, col_b, col_c = st.columns(3, gap="medium")
-    with col_a:
+    row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap="small")
+    row2 = st.columns([1.2, 2.8, 2.5], gap="small")
+    with row1[0]:
         form["call_line"] = st.selectbox(
             "回線名",
             call_line_opts,
@@ -7978,20 +8004,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             if form.get("call_line", "") in call_line_opts else 0,
             key=case_basic_widget_key("call_line", revision),
         )
-        pref_opts = [""] + PREFECTURES
-        form["prefecture"] = st.selectbox(
-            "都道府県",
-            pref_opts,
-            index=pref_opts.index(form.get("prefecture", ""))
-            if form.get("prefecture", "") in pref_opts else 0,
-            key=case_basic_widget_key("prefecture", revision),
-        )
-        form["product"] = st.text_input(
-            "製品",
-            value=form.get("product", ""),
-            key=case_basic_widget_key("product", revision),
-        )
-    with col_b:
+    with row1[1]:
         form["appliance_category"] = st.selectbox(
             "案件分類",
             APPLIANCE_CATEGORY_OPTIONS,
@@ -8000,6 +8013,42 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             key=case_basic_widget_key("appliance_category", revision),
         )
         form = apply_appliance_category_to_form(form)
+    with row1[2]:
+        pref_opts = [""] + PREFECTURES
+        form["prefecture"] = st.selectbox(
+            "都道府県",
+            pref_opts,
+            index=pref_opts.index(form.get("prefecture", ""))
+            if form.get("prefecture", "") in pref_opts else 0,
+            key=case_basic_widget_key("prefecture", revision),
+        )
+    with row1[3]:
+        form["product"] = st.text_input(
+            "製品",
+            value=form.get("product", ""),
+            key=case_basic_widget_key("product", revision),
+        )
+    with row1[4]:
+        product_price_original = form.get("product_price", "")
+        product_price_display = product_price_value_for_case_basic_ui(product_price_original)
+        product_price_input = st.text_input(
+            "商品価格（円）",
+            value=product_price_display,
+            placeholder="329,000",
+            key=case_basic_widget_key("product_price", revision),
+        )
+        form["product_price"] = (
+            product_price_original
+            if product_price_input == product_price_display and product_price_original != product_price_display
+            else product_price_input
+        )
+    with row1[5]:
+        form["store_name"] = st.text_input(
+            "販売店",
+            value=form.get("store_name", ""),
+            key=case_basic_widget_key("store_name", revision),
+        )
+    with row2[0]:
         manufacturer_opts = get_manufacturer_options()
         current_manufacturer = form.get("manufacturer", "")
         if current_manufacturer and current_manufacturer not in manufacturer_opts:
@@ -8014,38 +8063,28 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         )
         if form.get("manufacturer") in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN) and form.get("manufacturer_original"):
             st.caption(f"原文：{form.get('manufacturer_original')}")
-    with col_c:
-        form["store_name"] = st.text_input(
-            "販売店",
-            value=form.get("store_name", ""),
-            key=case_basic_widget_key("store_name", revision),
-        )
-        form["product_price"] = st.text_input(
-            "商品価格",
-            value=form.get("product_price", ""),
-            key=case_basic_widget_key("product_price", revision),
-        )
+    with row2[1]:
         form["warranty_plan"] = st.text_input(
             "保証プラン名",
             value=form.get("warranty_plan", ""),
             key=case_basic_widget_key("warranty_plan", revision),
         )
-        if show_template_result:
-            preview_decision = run_decision(form)
-            template_display = build_case_basic_template_display(
-                form,
-                preview_decision.get("repair_type", ""),
-            )
-            st.markdown("**修理依頼文テンプレ**")
-            st.info(template_display)
-            df_tpl = load_template_codes()
-            template_selection = select_template_for_form(
-                form,
-                preview_decision.get("repair_type", ""),
-                form.get("warranty_plan", ""),
-                df_tpl,
-            )
-            render_inline_store_rule_registration(form, template_selection)
+    if show_template_result:
+        preview_decision = run_decision(form)
+        template_display = build_case_basic_template_display(
+            form,
+            preview_decision.get("repair_type", ""),
+        )
+        st.markdown("**修理依頼文テンプレ**")
+        st.info(template_display)
+        df_tpl = load_template_codes()
+        template_selection = select_template_for_form(
+            form,
+            preview_decision.get("repair_type", ""),
+            form.get("warranty_plan", ""),
+            df_tpl,
+        )
+        render_inline_store_rule_registration(form, template_selection)
 
     render_inline_manufacturer_registration(form)
     render_inline_product_alias_registration(form)
@@ -8479,7 +8518,7 @@ def render_tab_call():
                 )
             else:
                 form["pc_manufacturer_type"] = PC_MANUFACTURER_TYPE_UNKNOWN
-            st.caption("商品価格は「案件基本（共通）」で編集します。")
+            st.caption("商品価格は「案件情報」で編集します。")
             form["wrt_no"]        = st.text_input("WRT-NO",       form.get("wrt_no",""))
             form["customer_code"] = st.text_input("お客様コード", form.get("customer_code",""))
             form["customer_name"] = st.text_input("お客様名",     form.get("customer_name",""))
@@ -9038,12 +9077,14 @@ def render_tab_after_call():
     st.markdown("###### 修理依頼文テンプレ")
     if template_candidates:
         template_idx = template_labels.index(template_current_option) if template_current_option in template_labels else 0
-        selected_option_val = st.selectbox(
-            "テンプレート候補",
-            template_labels,
-            index=template_idx,
-            key="tpl_label_select_after",
-        )
+        template_cols = st.columns([2.0, 3.0], gap="small")
+        with template_cols[0]:
+            selected_option_val = st.selectbox(
+                "テンプレート候補",
+                template_labels,
+                index=template_idx,
+                key="tpl_label_select_after",
+            )
         if selected_option_val:
             row = template_option_rows.get(selected_option_val, {})
             selected_code = normalize_template_code(row.get("template_code"))
@@ -9125,17 +9166,16 @@ def render_tab_after_call():
         )
         form["attention_memo"] = sanitize_generated_body_text(memo_display)
         st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
-        memo_regen_col, memo_copy_col = st.columns([1, 1], gap="small")
-        with memo_regen_col:
+        memo_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")
+        with memo_button_cols[0]:
             if st.button(
                 "再生成",
                 key="regenerate_attention_memo",
                 help="現在の修理依頼書メモを上書きして再生成します。",
-                use_container_width=True,
             ):
                 st.session_state["_pending_regenerate_attention_memo"] = True
                 st.rerun()
-        with memo_copy_col:
+        with memo_button_cols[1]:
             render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
         if not snippets_df.empty:
             with st.expander("定型文を追記する", expanded=False):
@@ -9201,22 +9241,26 @@ def render_tab_after_call():
     with rakutel_action_col:
         rakutel_regen_message_slot = st.empty()
         call_direction_options = ["受電", "架電"]
-        call_direction = st.selectbox(
-            "通話方向",
-            call_direction_options,
-            index=call_direction_options.index(form.get("call_direction", "受電"))
-            if form.get("call_direction", "受電") in call_direction_options else 0,
-            key="call_direction_select",
-        )
+        call_direction_cols = st.columns([1.0, 3.0], gap="small")
+        with call_direction_cols[0]:
+            call_direction = st.selectbox(
+                "通話方向",
+                call_direction_options,
+                index=call_direction_options.index(form.get("call_direction", "受電"))
+                if form.get("call_direction", "受電") in call_direction_options else 0,
+                key="call_direction_select",
+            )
         counterparty_options = ["加入者", "販売店", "メーカー", "担当エスカ", "修理拠点", "その他"]
         default_counterparty = form.get("counterparty_type") or form.get("caller_type", "加入者")
-        counterparty_type = st.selectbox(
-            "相手区分",
-            counterparty_options,
-            index=counterparty_options.index(default_counterparty)
-            if default_counterparty in counterparty_options else 0,
-            key="counterparty_type_select",
-        )
+        party_type_cols = st.columns([1.0, 3.0], gap="small")
+        with party_type_cols[0]:
+            counterparty_type = st.selectbox(
+                "相手区分",
+                counterparty_options,
+                index=counterparty_options.index(default_counterparty)
+                if default_counterparty in counterparty_options else 0,
+                key="counterparty_type_select",
+            )
         counterparty_detail = st.text_input(
             "相手名・担当者名（任意）",
             value=form.get("counterparty_detail", ""),
@@ -9270,12 +9314,12 @@ def render_tab_after_call():
         )
     form["rakutel_text"] = rakutel_text_display
     with rakutel_text_col:
-        rakutel_regen_col, rakutel_copy_col = st.columns([1, 1], gap="small")
-        with rakutel_regen_col:
-            if st.button("再生成", key="regenerate_rakutel_text", use_container_width=True):
+        rakutel_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")
+        with rakutel_button_cols[0]:
+            if st.button("再生成", key="regenerate_rakutel_text"):
                 st.session_state["_pending_regenerate_rakutel_text"] = True
                 st.rerun()
-        with rakutel_copy_col:
+        with rakutel_button_cols[1]:
             render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")
 
     # ── Teams報告文 ──
@@ -9291,12 +9335,7 @@ def render_tab_after_call():
         )
         form["rakuteru_no"] = rakuteru_val
         auto_teams_action = resolve_teams_request_action(form, vendor, contact_type)
-        form["teams_action"] = st.text_input(
-            "Teams報告文に入れる対応内容",
-            value=form.get("teams_action", ""),
-            placeholder=auto_teams_action,
-            key="teams_action_input",
-        )
+        form["teams_action"] = form.get("teams_action") or auto_teams_action
     st.session_state.form = form
     teams_generation_form = form_for_current_teams_generation(form, vendor, contact_type)
     generated_teams_message = _build_teams_chat_message(teams_generation_form, vendor, contact_type)
@@ -9323,16 +9362,19 @@ def render_tab_after_call():
     form["teams_chat_message"] = teams_chat_message
     teams_preview_lines = build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))
     with teams_text_col:
-        teams_regen_col, teams_copy_col = st.columns([1, 1], gap="small")
-        with teams_regen_col:
-            if st.button("再生成", key="regenerate_teams_chat_message", use_container_width=True):
+        teams_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")
+        with teams_button_cols[0]:
+            if st.button("再生成", key="regenerate_teams_chat_message"):
                 st.session_state["_pending_regenerate_teams_chat_message"] = True
                 st.rerun()
-        with teams_copy_col:
+        with teams_button_cols[1]:
             render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")
     st.session_state.form = form
 
     with teams_action_col:
+        cer_request_folder = get_request_pdf_folder_info(vendor)
+        if cer_request_folder.get("required") and cer_request_folder.get("name") == "CER":
+            st.markdown(f"[CERドライブ：リンクを開く]({cer_request_folder.get('url', '')})")
         st.markdown("###### Teams送信")
         teams_config = load_teams_config()
         teams_send_mode = (teams_config.get("send_mode") or "").strip()
@@ -9366,7 +9408,7 @@ def render_tab_after_call():
             if "warranty_report_content_input" in st.session_state:
                 form["warranty_report_content"] = st.session_state.get("warranty_report_content_input", "")
             warranty_report_content = st.text_input(
-                "確認内容",
+                "ワランティ報告メモ",
                 value=form.get("warranty_report_content", ""),
                 key="warranty_report_content_input",
                 placeholder="例：ユナイトへFAX送信済 / 担当確認お願いします",
@@ -9426,8 +9468,7 @@ def render_tab_after_call():
         elif config_reasons:
             st.warning(f"送信不可：{config_reasons[0]}")
         if is_warranty_destination and missing_items and not incomplete_reasons and not already_sent:
-            st.warning("注意：未入力項目があります。内容を確認してから送信してください。")
-            st.markdown("\n".join(f"- {reason}" for reason in missing_items))
+            st.warning("未入力項目あり。必要に応じて確認してください。")
         if is_warranty_destination:
             message = st.text_area(
                 "送信文プレビュー",

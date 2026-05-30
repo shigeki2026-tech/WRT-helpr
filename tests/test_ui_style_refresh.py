@@ -32,7 +32,9 @@ def test_dashboard_header_css_and_html_classes_exist():
     assert ".wrt-app-header" in source
     assert "wrt-app-header-title" in source
     assert "修理受付 支援ツール" in source
-    assert "WRT-helpr MVP / ローカル判定補助" in source
+    assert "WRT-helpr MVP / ローカル判定補助" not in source
+    assert "font-size: 1.18rem;" in source
+    assert "font-weight: 800;" in source
 
 
 def test_top_dashboard_layout_css_classes_exist():
@@ -57,8 +59,18 @@ def test_decision_tag_basic_wording_is_not_changed_by_card_html():
     assert "未判定" in html
     assert "不足：保証期間 / 保証プラン" in html
     assert "確認：要確認" in html
-    assert "wrt-decision-tag missing" in html
+    assert "wrt-decision-tag neutral" in html
     assert "color:white" not in html
+
+
+def test_decision_tag_color_meaning_comments_exist():
+    source = _source()
+
+    assert "灰：未判定" in source
+    assert "緑：確定・OK" in source
+    assert "黄：注意・要確認" in source
+    assert "赤：受付不可・停止" in source
+    assert "青：案内・参照" in source
 
 
 def test_wrs_handover_simple_display_and_transfer_remain():
