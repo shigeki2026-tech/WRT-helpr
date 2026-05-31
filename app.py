@@ -9100,7 +9100,6 @@ def render_tab_after_call():
     with memo_col:
         memo_display = st.text_area(
             "修理依頼書メモ",
-            memo_value,
             height=260,
             key=memo_widget_key,
             label_visibility="collapsed",

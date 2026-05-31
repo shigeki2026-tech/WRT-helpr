@@ -3658,6 +3658,12 @@ def test_after_call_memo_widget_key_is_not_modified_after_text_area_instantiatio
 
     assert 'key="memo_after"' not in memo_area
     assert 'key=memo_widget_key' in memo_area
+    text_area_call = after_source[
+        after_source.index('memo_display = st.text_area('):
+        after_source.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)')
+    ]
+    assert "memo_value," not in text_area_call
+    assert "value=memo_value" not in text_area_call
     assert 'st.session_state[memo_widget_key] =' not in after_widget
     assert 'st.session_state["memo_after_widget"] =' not in after_widget
     assert 'st.session_state["memo_after"] =' not in after_source
