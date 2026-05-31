@@ -431,7 +431,7 @@ def test_handover_panel_is_rendered_after_unified_teams_send_block():
     after_source = source[source.index("def render_tab_after_call"):source.index("def _candidate_field")]
 
     assert "render_handover_requirement_panel(decision.get(\"handover_requirement\"))" not in after_source
-    assert after_source.index("###### Teams送信") < after_source.index("render_wrs_handover_transfer_text")
+    assert after_source.index("teams_send_cols = st.columns([1.0, 3.0], gap=\"small\")") < after_source.index("render_wrs_handover_transfer_text")
     assert "render_warranty_report_send_panel" not in after_source
 
 
