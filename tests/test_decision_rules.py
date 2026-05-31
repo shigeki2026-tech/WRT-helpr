@@ -2288,8 +2288,9 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     assert "拠点対応" not in [tag["title"] for tag in tags]
     check("AI工務店 script tag primary", script_tag["primary"], "参照スクリプト")
     check("AI工務店 script tag matches reference", script_tag["secondary"], script_reference["display"])
-    assert "ユナイトサービス㈱へFAX済み" in teams_message
+    assert "ユナイトサービス㈱へFAX済み" not in teams_message
     assert "担当確認依頼済み" not in teams_message
+    assert teams_message.endswith("ご確認お願いします")
     assert "0058 【出張修理】上位5社" in display
     assert "運営会社：株式会社アイ工務店" in display
     assert "表示販売店：\n滋賀支店" in display
@@ -2741,7 +2742,8 @@ def test_tc_dp_after_call_texts_include_dp_notes():
 
     check("DP attention memo note", "物損付 / DP案件" in texts["attention_memo"], True)
     check("DP rakutel note", "物損時の保証金額はシステムにて確認要" in texts["rakutel_text"], True)
-    check("DP teams short note", "DP案件・保証金額確認要" in texts["teams_chat_message"], True)
+    check("DP teams short note removed", "DP案件・保証金額確認要" in texts["teams_chat_message"], False)
+    check("DP teams message simple", texts["teams_chat_message"].endswith("ご確認お願いします"), True)
 
 
 def test_call_time_warning_product_missing_is_separate():
@@ -3415,7 +3417,7 @@ def test_tc_acceptance_tag_compact_primary_uses_shared_css():
 
     assert 'class="wrt-decision-tag-primary"' in compact_primary_block
     assert "font-weight: 800" in primary_css
-    assert "font-size: 1.1rem" in primary_css
+    assert "font-size: 1.04rem" in primary_css
     assert "white-space: nowrap" in primary_css
     assert "-webkit-line-clamp" not in primary_css
 

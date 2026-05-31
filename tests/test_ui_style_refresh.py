@@ -33,8 +33,9 @@ def test_dashboard_header_css_and_html_classes_exist():
     assert "wrt-app-header-title" in source
     assert "修理受付 支援ツール" in source
     assert "WRT-helpr MVP / ローカル判定補助" not in source
-    assert "font-size: 1.18rem;" in source
+    assert "font-size: 1.5rem;" in source
     assert "font-weight: 800;" in source
+    assert "line-height: 1.35;" in source
 
 
 def test_top_dashboard_layout_css_classes_exist():
@@ -102,3 +103,27 @@ def test_generated_message_builders_do_not_depend_on_ui_style_cards():
 
 def test_no_unwanted_chinese_button_text():
     assert "\u6309\u94ae" not in _source()
+
+
+def test_product_price_placeholder_is_empty():
+    source = _source()
+    case_basic_src = _function_source(source, "render_shared_case_basic_editor")
+
+    assert 'placeholder=""' in case_basic_src
+    assert 'placeholder="329,000"' not in case_basic_src
+
+
+def test_app_title_is_larger_than_section_headings():
+    source = _source()
+
+    assert "font-size: 1.5rem;" in source
+    assert "h3 { font-size: 1.18rem !important;" in source
+    assert "h5 { font-size: 0.98rem !important;" in source
+
+
+def test_heading_hierarchy_css_caps_h3_below_title():
+    source = _source()
+    styles_src = _function_source(source, "inject_app_styles")
+
+    assert "h3 { font-size: 1.18rem !important;" in styles_src
+    assert "h2 { font-size: 1.25rem !important;" in styles_src

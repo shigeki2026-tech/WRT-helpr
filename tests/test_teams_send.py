@@ -194,14 +194,13 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
     snippet_source = after_source[
-        after_source.index("定型文を追記する"):
+        after_source.index("##### 定型文追記"):
         after_source.index("##### 📝 ラクテル用テキスト")
     ]
     memo_text_area_index = after_source.index('memo_display = st.text_area(')
     memo_copy_index = after_source.index("copy_attention_memo")
-    snippet_index = after_source.index("定型文を追記する")
+    snippet_index = after_source.index("##### 定型文追記")
     pending_index = after_source.index('pending_snippet_id = str(st.session_state.pop("_pending_append_memo_snippet_id"')
-    template_panel_index = after_source.index("###### 修理依頼文テンプレ")
 
     assert "Choose options" not in source
     assert "Select all" not in source
@@ -213,7 +212,7 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "with memo_action_col:" in after_source
     assert "修理依頼書メモ 操作" not in after_source
     assert "追記候補" not in snippet_source
-    assert "定型文を追記する" in snippet_source
+    assert "##### 定型文追記" in snippet_source
     assert "追記する定型文を選択" in snippet_source
     assert "追記条件" in snippet_source
     assert "追記内容" in snippet_source
@@ -224,7 +223,8 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "選択中リストをクリア" not in source
     assert "選択中の文言を修理依頼書メモへ追記" not in source
     assert "memo_snippet_selectbox" in snippet_source
-    assert "この文言を追記" in snippet_source
+    assert '"追記"' in snippet_source
+    assert "この文言を追記" not in snippet_source
     assert "memo_snippet_append_current_button" in snippet_source
     assert "memo_snippet_selected_ids" not in source
     assert "memo_snippet_add_to_selection_button" not in source
@@ -235,7 +235,7 @@ def test_memo_snippet_ui_uses_single_selectbox_not_multiselect_or_checkboxes():
     assert "st.rerun()" in snippet_source
     assert "append_attention_memo_snippets(form, [selected_snippet_id])" not in snippet_source
     assert "append_attention_memo_snippets(form, [pending_snippet_id])" in after_source
-    assert template_panel_index < pending_index < memo_text_area_index < memo_copy_index < snippet_index
+    assert pending_index < memo_text_area_index < memo_copy_index < snippet_index
 
 
 def test_after_call_operator_name_input_is_compact_with_save_button():
@@ -252,7 +252,9 @@ def test_after_call_operator_name_input_is_compact_with_save_button():
     assert "with name_col:" in operator_area
     assert "with save_col:" in operator_area
     assert 'key="operator_name_input"' in operator_area
+    assert 'label_visibility="collapsed"' in operator_area
     assert 'key="save_default_operator_name"' in operator_area
+    assert "##### 👤 オペレーター" in after_source
     assert "既定値に保存" in operator_area
     assert "この名前を既定値として保存" not in operator_area
     assert "use_container_width=True" not in operator_area
@@ -279,14 +281,14 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
     assert "memo_title_col, memo_regen_col, memo_copy_col" not in after_source
     assert "rakutel_title_col, rakutel_regen_col, rakutel_copy_col" not in after_source
     assert "teams_title_col, teams_regen_col, teams_copy_col" not in after_source
-    assert "memo_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
-    assert "rakutel_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
-    assert "teams_button_cols = st.columns([0.9, 0.45, 3.5], gap=\"small\")" in after_source
+    assert "memo_button_cols = st.columns([4.0, 1.0, 1.1], gap=\"small\")" in after_source
+    assert "rakutel_button_cols = st.columns([4.0, 1.0, 1.1], gap=\"small\")" in after_source
+    assert "teams_button_cols = st.columns([4.0, 1.0, 1.1], gap=\"small\")" in after_source
     assert "st.columns([5, 2], gap=\"large\")" not in after_source
 
     memo_heading_area = after_source[
         after_source.index("##### 📝 修理依頼書メモ"):
-        after_source.index("###### 修理依頼文テンプレ")
+        after_source.index("memo_col, memo_action_col")
     ]
     rakutel_heading_area = after_source[
         after_source.index("##### 📝 ラクテル用テキスト"):
@@ -313,7 +315,8 @@ def test_after_call_major_text_sections_use_matching_two_column_layout():
         after_source.index('render_wrs_handover_action_panel(decision.get("wrs_handover_action"))')
     ]
     assert '"Teams報告文に入れる対応内容"' not in teams_section
-    assert teams_section.index("with teams_action_col:") < teams_section.index('"###### Teams送信"')
+    assert '"###### Teams送信"' not in teams_section
+    assert "teams_send_cols = st.columns([1.0, 3.0], gap=\"small\")" in teams_section
     assert '"送信内容と送信先を確認しました"' not in teams_section
     assert '"Teams報告アクションを確定しました"' not in teams_section
     assert "テスト送信のため、楽テルNO・送信内容確認・Teams報告アクション確定は必須ではありません。" not in teams_section
@@ -327,14 +330,14 @@ def test_after_call_record_area_is_full_width_below_top_columns():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    top_left_index = after_source.index("##### 案件サマリー")
     top_right_index = after_source.index("##### 補助情報")
     memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
     record_area = after_source[top_right_index:memo_heading_index]
 
-    assert top_left_index < memo_heading_index
     assert top_right_index < memo_heading_index
-    assert "with col2:" not in record_area
+    # 手配情報は修理依頼書メモの右側へ移動した
+    assert after_source.index("##### 手配情報") > memo_heading_index
+    assert "##### 案件サマリー" not in after_source
     assert "\n    st.markdown(\"##### 📝 記録文\")" not in after_source
     assert after_source.index("memo_col, memo_action_col = st.columns([2, 3], gap=\"large\")") > memo_heading_index
     assert after_source.index("rakutel_text_col, rakutel_action_col = st.columns([2, 3], gap=\"large\")") > memo_heading_index
@@ -348,38 +351,38 @@ def test_after_call_top_summary_keeps_details_collapsed():
     after_source = source[after_index:master_index]
     memo_heading_index = after_source.index("##### 📝 修理依頼書メモ")
 
-    assert "##### 案件サマリー" in after_source
-    assert 'st.expander("送付テンプレート・拠点の詳細を開く", expanded=False)' in after_source
+    # 手配情報は修理依頼書メモの右カラムへ集約され、上部の重複サマリーは削除
+    assert "##### 手配情報" in after_source
+    assert "##### 案件サマリー" not in after_source
+    assert after_source.index("##### 手配情報") > memo_heading_index
+    assert 'st.expander("送付テンプレート・拠点の詳細を開く", expanded=False)' not in after_source
+    assert 'st.expander("候補テンプレートの詳細を見る", expanded=False)' not in after_source
+    # 修理拠点・手配詳細（Drive・連絡先表）は折りたたみで維持
     assert 'st.expander("修理拠点・手配詳細を開く", expanded=False)' in after_source
-    assert 'st.expander("候補テンプレートの詳細を見る", expanded=False)' in after_source
     assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
-    assert after_source.index("##### 案件サマリー") < memo_heading_index
-    assert after_source.index("送付テンプレート・拠点の詳細を開く") < memo_heading_index
     assert after_source.index("修理拠点・手配詳細を開く") < memo_heading_index
 
 
-def test_repair_request_template_is_shown_before_memo_regeneration_button():
+def test_repair_request_template_is_shown_in_case_summary_right_column():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
-    memo_action = after_source[
-        after_source.index("###### 修理依頼文テンプレ"):
-        after_source.index('memo_display = st.text_area(')
-    ]
     memo_display_area = after_source[
         after_source.index('with memo_action_col:'):
         after_source.index("##### 📝 ラクテル用テキスト")
     ]
 
-    assert "修理依頼文テンプレ" in memo_action
-    assert "テンプレート未確定" in memo_action
-    assert "テンプレート候補" in memo_action
-    assert "memo_template_code" in memo_display_area
-    assert "memo_template_label" in memo_display_area
-    assert "build_template_selection_reason(template_selection)" in memo_display_area
-    assert after_source.index("###### 修理依頼文テンプレ") < after_source.index('key="regenerate_attention_memo"')
-    assert after_source.index("###### 修理依頼文テンプレ") < after_source.index('memo_display = st.text_area(')
+    # テンプレート候補という古い文言は使わず、手配情報内で短いラベルの selectbox を表示
+    assert '"テンプレート候補"' not in after_source
+    assert "selected_option_val = st.selectbox(" in memo_display_area
+    assert '"テンプレート"' in memo_display_area
+    assert "tpl_label_select_after" in memo_display_area
+    assert "##### 手配情報" in memo_display_area
+    assert "##### 案件サマリー" not in after_source
+    assert "テンプレート：" not in memo_display_area
+    assert "テンプレート未確定" in memo_display_area
+    assert "修理拠点：" in memo_display_area
 
 
 def test_after_call_history_template_is_collapsed_as_legacy_format():
@@ -428,17 +431,17 @@ def test_decision_tags_have_fixed_height_and_secondary_tertiary_overflow_css():
     tag_height = int(re.search(r"height:\s*(\d+)px", tag_css).group(1))
 
     assert "wrt-decision-tag" in source
-    assert tag_height >= 120
+    assert tag_height >= 112
     assert "height: 96px" not in tag_css
     assert "box-sizing: border-box" in source
-    assert "gap: 4px" in source
+    assert "gap: 3px" in source
     assert "white-space: nowrap" in primary_css
     assert "-webkit-line-clamp" not in primary_css
     assert "overflow: hidden" in secondary_css
-    assert "max-height: 3.0em" in secondary_css
-    assert "font-size: 0.76rem" in secondary_css
+    assert "max-height: 2.56em" in secondary_css
+    assert "font-size: 0.74rem" in secondary_css
     assert "overflow: hidden" in tertiary_css
-    assert "max-height: 2.6em" in tertiary_css
+    assert "max-height: 2.48em" in tertiary_css
     assert "wrt-decision-tag-secondary" in source
     assert "wrt-decision-tag-tertiary" in source
     assert "_decision_tag_short_note" in source
@@ -905,10 +908,11 @@ def test_teams_report_block_contains_destination_selection_and_unified_send_cont
     assert 'st.markdown(f"**送信先：** {destination_label}")' not in panel_source
     assert 'default_destination = teams_config.get("default_destination") or "warranty"' in panel_source
     assert 'destination_options.index(WARRANTY_REPORT_DESTINATION_LABELS[default_destination])' in panel_source
-    assert '"ワランティ報告メモ"' in panel_source
-    assert 'key="warranty_report_content_input"' in panel_source
-    assert "例：ユナイトへFAX送信済 / 担当確認お願いします" in panel_source
-    assert "未入力項目あり。必要に応じて確認してください。" in panel_source
+    assert '"ワランティ報告メモ"' not in panel_source
+    assert 'key="warranty_report_content_input"' not in panel_source
+    assert "例：ユナイトへFAX送信済 / 担当確認お願いします" not in panel_source
+    assert "未入力項目あり。必要に応じて確認してください。" not in panel_source
+    assert "送信文プレビュー" not in panel_source
     assert '"Teamsワランティへ送信"' in panel_source
     assert '"自分宛てにテスト送信"' in panel_source
     assert "自動判定：" not in panel_source
@@ -916,10 +920,10 @@ def test_teams_report_block_contains_destination_selection_and_unified_send_cont
     assert "テスト送信のため、楽テルNO" not in panel_source
     assert "未完了：なし" not in panel_source
     assert "Teams送信：有効" not in panel_source
+    assert "recent_logs = []" in panel_source
     assert "チャット名：" not in panel_source
     for key in [
         'key="warranty_report_destination_label"',
-        'key="warranty_report_message_display"',
     ]:
         assert key in panel_source
 
@@ -1064,11 +1068,13 @@ def test_teams_action_wrt_repair_center_uses_pdf_storage():
 
     message = app._build_teams_chat_message(form, "WRT修理センター")
 
-    assert "WRT修理センターへ依頼書PDF格納済み" in message
-    assert "FAX済み" not in message
+    assert "\n" not in message
+    assert message.startswith("2026_05_0162　")
+    assert message.endswith("ご確認お願いします")
+    assert "ドライヤー" in message
+    assert "WRT修理センターへ依頼書PDF格納済み" not in message
     assert "<br>" not in message
     assert "<b>" not in message
-    assert message.splitlines()[0] == "2026_05_0162"
 
 
 def test_teams_action_wrt_repair_reception_center_uses_pdf_storage():
@@ -1146,7 +1152,8 @@ def test_drive_url_is_not_in_teams_message_or_send_body():
 
     assert "drive.google.com" not in message
     assert "drive.google.com" not in send_body
-    assert "CER候補（担当確認）へ依頼書PDF格納済み" in message
+    assert "依頼書PDF格納済み" not in message
+    assert message.endswith("ご確認お願いします")
 
 
 def test_dp_short_note_is_preserved_with_auto_action():
@@ -1155,8 +1162,9 @@ def test_dp_short_note_is_preserved_with_auto_action():
 
     message = app._build_teams_chat_message(form, "WRT修理センター")
 
-    assert "依頼書PDF格納済み" in message
-    assert "DP案件・保証金額確認要" in message
+    assert "依頼書PDF格納済み" not in message
+    assert "DP案件・保証金額確認要" not in message
+    assert message == "楽テルNO未入力　ご確認お願いします"
 
 
 def test_teams_message_uses_expected_multiline_format():
@@ -1171,15 +1179,9 @@ def test_teams_message_uses_expected_multiline_format():
 
     message = app._build_teams_chat_message(form, "WRT修理センター")
 
-    assert message == "\n".join([
-        "2026_05_0162",
-        "家電",
-        "ドライヤー",
-        "WRT修理センターへ依頼書PDF格納済み",
-        "DP案件・保証金額確認要",
-        "ご確認お願いします。大濱",
-    ])
-    assert "MPG大濱" not in message
+    assert message == "2026_05_0162　家電　ドライヤー　ご確認お願いします"
+    assert "大濱" not in message
+    assert "依頼書PDF格納済み" not in message
 
 
 def test_teams_message_without_dp_omits_dp_line():
@@ -1194,7 +1196,8 @@ def test_teams_message_without_dp_omits_dp_line():
     message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
 
     assert "DP案件・保証金額確認要" not in message
-    assert "ユナイトサービス㈱へFAX済み" in message
+    assert "ユナイトサービス㈱へFAX済み" not in message
+    assert message == "2026_05_0162　家電　ドライヤー　ご確認お願いします"
 
 
 def test_life_design_kabaya_unite_teams_action_is_fax():
@@ -1207,7 +1210,10 @@ def test_life_design_kabaya_unite_teams_action_is_fax():
 
     message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
 
-    assert "ユナイトサービス㈱へFAX済み" in message
+    assert "ユナイトサービス㈱へFAX済み" not in message
+    assert message.startswith("2026_05_0170　")
+    assert "食器洗い乾燥機" in message
+    assert message.endswith("ご確認お願いします")
 
 
 def test_life_design_kabaya_attention_notes_stay_out_of_teams_message():
@@ -1241,11 +1247,10 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
     })
 
     message = app._build_teams_chat_message(form, "担当エスカ（要確認）")
-    lines = message.splitlines()
 
-    assert lines[0] == "家電"
-    assert not message.startswith("<b>")
-    assert "<b>" not in lines[0]
+    assert message == "楽テルNO未入力　家電　ドライヤー　ご確認お願いします"
+    assert "担当エスカ（要確認）" not in message
+    assert "<b>" not in message
 
 
 def test_rakutel_header_never_generates_blank_line_name():
@@ -1290,7 +1295,7 @@ def test_residential_case_keeps_manual_home_line_and_only_infers_appliance_type(
     assert decision["working_form"]["call_line"] == "家電"
     assert "【家電回線に入電】" in rakutel_text
     assert "【住設回線に入電】" not in rakutel_text
-    assert teams_message.splitlines()[0] == "家電"
+    assert teams_message.startswith("楽テルNO未入力　家電")
 
 
 def test_manual_call_line_prevents_residential_auto_call_line_override():
@@ -1318,10 +1323,10 @@ def test_teams_chat_message_is_plain_text_before_send():
 
     message = app._build_teams_chat_message(form, "WRT修理センター")
 
-    assert '2026<&"0162' in message
-    assert "家電 & 住設" in message
+    assert message.startswith('2026<&"0162　')
     assert "ドライヤー<白>" in message
-    assert 'ご確認お願いします。大"濱' in message
+    assert message.endswith("ご確認お願いします")
+    assert '大"濱' not in message
     assert "<b>" not in message
     assert "<br>" not in message
 
@@ -1623,8 +1628,10 @@ def test_escalation_teams_message_uses_confirmation_request_not_pdf_storage():
 
     message = app._build_teams_chat_message(form, "担当エスカ（要確認）")
 
-    assert "担当確認依頼済み" in message
+    assert "担当確認依頼済み" not in message
+    assert "担当エスカ（要確認）" not in message
     assert "依頼書PDF格納済み" not in message
+    assert message == "2026_05_0174　家電　ドライヤー　ご確認お願いします"
 
 
 def test_teams_send_validation_blocks_escalation_pdf_storage_text():
@@ -2175,7 +2182,8 @@ def test_case_basic_product_price_is_editable_in_common_basic_panel():
     assert '"product_price": "case_basic_product_price"' in source
     assert '"商品価格（円）"' in panel_source
     assert "product_price_value_for_case_basic_ui(product_price_original)" in panel_source
-    assert 'placeholder="329,000"' in panel_source
+    assert 'placeholder=""' in panel_source
+    assert 'placeholder="329,000"' not in panel_source
     assert "商品価格は「案件情報」で編集します。" in aux_source
 
 
@@ -2212,6 +2220,24 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     assert state[app.case_basic_widget_key("manufacturer", revision)] == "三菱電機"
     assert state[app.case_basic_widget_key("store_name", revision)] == "ライフデザイン・カバヤ株式会社"
     assert state[app.case_basic_widget_key("product_price", revision)] == "36,300"
+
+
+def test_global_case_basic_blank_form_clears_stale_product_price_widget():
+    form = app.empty_form()
+    revision = 0
+    price_key = app.case_basic_widget_key("product_price", revision)
+    state = SessionState({
+        "case_basic_revision": revision,
+        price_key: "329,000",
+        "_case_basic_widget_synced_values": {
+            price_key: "329,000",
+        },
+    })
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+
+    assert synced["product_price"] == ""
+    assert state[price_key] == ""
 
 
 def test_global_case_basic_manual_widget_edit_updates_form():
@@ -2271,8 +2297,9 @@ def test_regenerated_teams_message_reflects_late_operator_name():
         "",
     )
 
-    assert "大濱" in texts["teams_chat_message"]
-    assert "2026_05_0143" in texts["teams_chat_message"]
+    assert "大濱" not in texts["teams_chat_message"]
+    assert texts["teams_chat_message"].startswith("2026_05_0143　")
+    assert texts["teams_chat_message"].endswith("ご確認お願いします")
 
 
 def test_regenerated_teams_message_reflects_rakuteru_and_manual_action():
@@ -2287,8 +2314,9 @@ def test_regenerated_teams_message_reflects_rakuteru_and_manual_action():
 
     message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
 
-    assert message.splitlines()[0] == "2026_05_0470"
-    assert "FAX済み" in message
+    assert message.startswith("2026_05_0470　")
+    assert "FAX済み" not in message
+    assert message.endswith("ご確認お願いします")
     assert "<b>" not in message
     assert "<br>" not in message
 
@@ -2435,10 +2463,11 @@ def test_call_direction_ui_is_near_rakutel_section():
     old_label = 'st.selectbox(\n            "発信者区分"'
 
     assert rakutel_heading_index < direction_index < counterparty_index
-    assert 'call_direction_cols = st.columns([1.0, 3.0], gap="small")' in source
-    assert "with call_direction_cols[0]:" in source
-    assert 'party_type_cols = st.columns([1.0, 3.0], gap="small")' in source
-    assert "with party_type_cols[0]:" in source
+    assert 'call_cols = st.columns([1.0, 1.0, 2.0], gap="small")' in source
+    assert "with call_cols[0]:" in source
+    assert "with call_cols[1]:" in source
+    assert "call_direction_cols = st.columns" not in source
+    assert "party_type_cols = st.columns" not in source
     assert old_label not in source
 
 
@@ -2536,17 +2565,16 @@ def test_teams_area_source_renders_cer_drive_link():
 def test_teams_auto_send_panel_heading_exists():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
-    assert "###### Teams送信" in source
+    assert "###### Teams送信" not in source
     assert "###### 通常Teams報告" not in source
     assert "送信先を選択して、本番または自分宛てテストへ送信します。" not in source
 
 
-def test_teams_report_and_send_have_separate_headings():
+def test_teams_report_and_send_do_not_have_separate_send_heading():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    report_index = source.index("##### 💬 Teams報告文")
-    send_index = source.index("###### Teams送信")
 
-    assert report_index < send_index
+    assert "##### 💬 Teams報告文" in source
+    assert "###### Teams送信" not in source
 
 
 def test_after_call_teams_send_blocks_show_distinct_headings_and_destinations():
@@ -2555,11 +2583,13 @@ def test_after_call_teams_send_blocks_show_distinct_headings_and_destinations():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    normal_index = after_source.index("###### Teams送信")
+    normal_index = after_source.index("teams_send_cols = st.columns([1.0, 3.0], gap=\"small\")")
     transfer_index = after_source.index("render_wrs_handover_transfer_text", normal_index)
 
     assert normal_index < transfer_index
     assert 'key="warranty_report_destination_label"' in after_source[normal_index:transfer_index]
+    assert '"楽テルNO"' in after_source[normal_index:transfer_index]
+    assert '"送信先"' in after_source[normal_index:transfer_index]
     assert 'st.markdown(f"**送信先：** {destination_label}")' not in after_source[normal_index:transfer_index]
     assert '"Teamsワランティへ送信"' in after_source[normal_index:transfer_index]
     assert '"自分宛てにテスト送信"' in after_source[normal_index:transfer_index]
@@ -2608,7 +2638,7 @@ def test_teams_action_input_label_is_teams_report_content():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     assert '"Teams報告文に入れる対応内容"' not in source
-    assert '"ワランティ報告メモ"' in source
+    assert '"ワランティ報告メモ"' not in source
     assert 'st.caption(f"自動判定：{auto_teams_action_display}")' not in source
     assert "自動判定と異なる場合のみ変更" not in source
     assert '"Teams報告アクション（手入力優先）"' not in source
@@ -2624,6 +2654,41 @@ def test_teams_send_panel_status_labels_are_minimal():
     assert "状態：テスト送信可能" not in source
     assert "Teams送信：有効" not in source
     assert "未完了：なし" not in source
+
+
+def test_rakuteru_no_input_is_not_full_width():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+
+    assert 'teams_send_cols = st.columns([1.0, 3.0], gap="small")' in source
+    rakutel_cols_index = source.index("teams_send_cols = st.columns")
+    rakuteru_input_index = source.index('"楽テルNO"', rakutel_cols_index)
+    destination_index = source.index('"送信先"', rakutel_cols_index)
+    with_index = source.index("with teams_send_cols[0]:", rakutel_cols_index)
+    destination_with_index = source.index("with teams_send_cols[1]:", rakutel_cols_index)
+    assert with_index < rakuteru_input_index
+    assert destination_with_index < destination_index
+
+
+def test_teams_report_message_uses_simple_unified_format():
+    base = app.empty_form()
+    base.update({
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "マッサージチェア",
+    })
+
+    with_no = dict(base)
+    with_no["rakuteru_no"] = "2026_05_2408"
+    message_with_no = app._build_teams_chat_message(with_no, "担当エスカ（要確認）")
+    assert message_with_no == "2026_05_2408　家電　マッサージチェア　ご確認お願いします"
+
+    without_no = dict(base)
+    message_without_no = app._build_teams_chat_message(without_no, "担当エスカ（要確認）")
+    assert message_without_no == "楽テルNO未入力　家電　マッサージチェア　ご確認お願いします"
+
+    for message in (message_with_no, message_without_no):
+        assert "担当エスカ（要確認）" not in message
+        assert "担当確認依頼済み" not in message
+        assert "\n" not in message
 
 
 def test_teams_send_success_ui_hides_normal_primary_send_button():
@@ -3052,7 +3117,8 @@ def test_case_basic_panel_uses_two_row_weighted_layout():
         assert label in row2_source
     for label in ['"回線名"', '"案件分類"', '"都道府県"', '"商品価格（円）"', '"製品"', '"メーカー"', '"販売店"', '"保証プラン名"']:
         assert label in panel_source
-    assert 'placeholder="329,000"' in panel_source
+    assert 'placeholder=""' in panel_source
+    assert 'placeholder="329,000"' not in panel_source
 
 
 def test_call_tab_does_not_render_duplicate_case_basic_fields():
@@ -3141,22 +3207,27 @@ def test_after_call_template_auto_and_candidate_display_exists():
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
+    summary_source = after_source[
+        after_source.index("with memo_action_col:"):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
 
-    assert "**テンプレート：**" in after_source
-    assert "**修理拠点：**" in after_source
-    assert after_source.index("**テンプレート：**") < after_source.index("**修理拠点：**")
-    assert "summary[\"template_reason\"]" in after_source
-    assert "summary[\"vendor_reason\"]" in after_source
-    assert after_source.index("summary[\"template_reason\"]") < after_source.index("summary[\"vendor_reason\"]")
-    assert "理由：" in after_source
-    assert '"テンプレート候補"' in after_source
-    assert 'template_cols = st.columns([2.0, 3.0], gap="small")' in after_source
-    assert "with template_cols[0]:" in after_source
-    assert "selected_option_val = st.selectbox(" in after_source
-    assert "候補テンプレートの詳細を見る" in after_source
-    assert "選択可能テンプレート：" in after_source
-    assert after_source.index("候補テンプレートの詳細を見る") < after_source.index("選択可能テンプレート：")
-    assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" in after_source
+    # 手配情報に手動選択テンプレートと修理拠点を表示し、テンプレートの重複表示はしない
+    assert "##### 手配情報" in summary_source
+    assert "##### 案件サマリー" not in after_source
+    assert '"テンプレート"' in summary_source
+    assert "tpl_label_select_after" in summary_source
+    assert "テンプレート：" not in summary_source
+    assert "テンプレート未確定" in summary_source
+    assert "修理拠点：" in summary_source
+    assert summary_source.index("tpl_label_select_after") < summary_source.index("修理拠点：")
+    assert "理由：" not in summary_source
+    # 旧候補ラベル・単独コード表示・生成説明文は廃止
+    assert '"テンプレート候補"' not in after_source
+    assert "selected_option_val = st.selectbox(" in summary_source
+    assert "候補テンプレートの詳細を見る" not in after_source
+    assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" not in after_source
+    assert "st.code(selected_code" not in after_source
 
 
 def test_after_call_template_selection_is_not_blocked_by_unconfirmed_vendor():
@@ -3164,16 +3235,11 @@ def test_after_call_template_selection_is_not_blocked_by_unconfirmed_vendor():
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
-    detail_source = after_source[
-        after_source.index("送付テンプレート・拠点の詳細を開く"):
-        after_source.index("修理拠点・手配詳細を開く")
-    ]
 
-    assert "テンプレートは選択可能です。修理拠点は別途確認してください。" in after_source
-    assert "候補なし：回線名・製品・保証種別を確認してください" in after_source
-    assert "if template_candidates:" in detail_source
-    assert 'if (call_line_val or template_selection.get("label"))' not in detail_source
-    assert "disabled=True" not in detail_source
+    assert "テンプレートは選択可能です。修理拠点は別途確認してください。" not in after_source
+    assert "テンプレート未確定" in after_source
+    assert "if template_candidates:" in after_source
+    assert 'if (call_line_val or template_selection.get("label"))' not in after_source
 
 
 def test_after_call_template_and_vendor_reasons_are_separated_for_ai_koumuten():
@@ -3239,14 +3305,8 @@ def test_ai_koumuten_teams_regeneration_uses_current_unite_vendor_not_stale_esca
         decision["vendor_result"].get("contact_type", ""),
     )
 
-    assert "ユナイトサービス㈱" in message
-    assert "ユナイトサービス㈱へFAX済み" in message
-    assert message == "\n".join([
-        "2026_05_0490",
-        "システムキッチン",
-        "ユナイトサービス㈱へFAX済み",
-        "ご確認お願いします。大濱",
-    ])
+    assert "ユナイトサービス㈱へFAX済み" not in message
+    assert message == "2026_05_0490　システムキッチン　ご確認お願いします"
     assert "担当エスカ（要確認）" not in message
     assert "担当確認依頼済み" not in message
 
@@ -3342,13 +3402,13 @@ def test_repair_request_memo_sanitizes_stale_body_emoji_for_display_and_copy():
     after_source = source[after_index:master_index]
     memo_area = after_source[
         after_source.index('memo_display = st.text_area('):
-        after_source.index("定型文を追記する")
+        after_source.index("##### 定型文追記")
     ]
 
     assert 'key=memo_widget_key' in memo_area
     assert '"memo_after_widget"' in after_source
     assert 'form["attention_memo"] = sanitize_generated_body_text(memo_display)' in memo_area
-    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
+    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
 
 
 def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
@@ -3402,7 +3462,7 @@ def test_after_call_display_uses_repair_request_memo_not_attention_memo():
     assert "##### 📝 修理依頼書メモ" in after_source
     assert "修理依頼書メモ 操作" not in after_source
     assert 'key="regenerate_attention_memo"' in after_source
-    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
+    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
 
 
 def test_contact_phone_input_is_inside_rakutel_section_only():
@@ -3431,10 +3491,10 @@ def test_template_result_is_not_rendered_in_common_basic_panel_and_after_call_te
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert basic_panel_index < source.index("修理依頼文テンプレ")
+    assert basic_panel_index < source.index("##### 📝 修理依頼書メモ")
     assert basic_call_index < tabs_index
     assert "show_template_result=False" in source[source.index("def render_global_case_basic_panel"):tabs_index]
-    assert "修理依頼文テンプレ" in after_source
+    assert "##### 📝 修理依頼書メモ" in after_source
 
 
 def test_after_call_regeneration_uses_current_global_form_after_basic_panel():
@@ -3474,15 +3534,15 @@ def test_after_call_regeneration_buttons_are_independent():
     ]
 
     assert attention_button < rakutel_button < teams_button
-    assert 'memo_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
-    assert 'rakutel_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
-    assert 'teams_button_cols = st.columns([0.9, 0.45, 3.5], gap="small")' in after_source
-    assert "with memo_button_cols[0]:" in after_source
+    assert 'memo_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")' in after_source
+    assert 'rakutel_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")' in after_source
+    assert 'teams_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")' in after_source
     assert "with memo_button_cols[1]:" in after_source
-    assert "with rakutel_button_cols[0]:" in after_source
+    assert "with memo_button_cols[2]:" in after_source
     assert "with rakutel_button_cols[1]:" in after_source
-    assert "with teams_button_cols[0]:" in after_source
+    assert "with rakutel_button_cols[2]:" in after_source
     assert "with teams_button_cols[1]:" in after_source
+    assert "with teams_button_cols[2]:" in after_source
     assert 'form["teams_chat_message"] = generated_teams_message' not in rakutel_section
     assert 'form["rakutel_text"] = generated_rakutel_text' not in teams_section
 
@@ -3509,7 +3569,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
 
     memo_area = after_source[
         after_source.index('memo_display = st.text_area('):
-        after_source.index("定型文を追記する")
+        after_source.index("##### 定型文追記")
     ]
     memo_and_snippet_area = after_source[
         after_source.index('memo_display = st.text_area('):
@@ -3531,23 +3591,23 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "st.code(" not in memo_area
     assert "use_container_width=True" not in memo_area
     assert "コピー用：修理依頼書メモ" not in memo_area
-    assert 'render_copy_button("📋 コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
+    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
     assert memo_and_snippet_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_and_snippet_area.index("copy_attention_memo")
-    assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("定型文を追記する")
+    assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("##### 定型文追記")
 
     assert "st.code(" not in rakutel_area
     assert "use_container_width=True" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area
-    assert 'render_copy_button("📋 コピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
+    assert 'render_copy_button("コピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
     assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
 
     assert "st.code(" not in teams_text_area
     assert "use_container_width=True" not in teams_text_area
     assert "コピー用：Teams報告文" not in teams_text_area
     assert "height=160" in teams_text_area
-    assert "送信内容プレビュー：" in teams_area
-    assert 'build_teams_send_preview_lines(teams_chat_message, form.get("rakuteru_no", ""))' in teams_area
-    assert 'render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
+    assert "送信内容プレビュー：" not in teams_area
+    assert "送信文プレビュー" not in teams_area
+    assert 'render_copy_button("コピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
     assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
 
 
@@ -3558,7 +3618,7 @@ def test_teams_copy_button_uses_plain_text_without_drive_url_source():
     copy_end_index = source.index("st.session_state.form = form", teams_copy_index)
     teams_copy_area = source[teams_copy_index:copy_end_index]
 
-    assert 'render_copy_button("📋 コピー", teams_chat_message, "copy_teams_chat_message")' in teams_copy_area
+    assert 'render_copy_button("コピー", teams_chat_message, "copy_teams_chat_message")' in teams_copy_area
     assert "_get_teams_send_body" not in teams_copy_area
     assert "teams_plain_text_to_html" not in teams_copy_area
     assert "<b>" not in teams_copy_area
@@ -3698,6 +3758,55 @@ def test_nav_tabs_has_three_labels():
     assert '"通話中判定"' in main_source
     assert '"終話後処理"' in main_source
     assert '"マスタ管理"' in main_source
+
+
+def test_after_call_tab_has_no_redundant_subheader():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    # タブ名で分かるため、タブ内の大見出し「終話後処理」は表示しない
+    assert 'st.subheader("終話後処理")' not in after_source
+    assert "終話後処理" not in after_source
+
+
+def test_after_call_snippet_appender_is_in_memo_right_column():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    memo_left = after_source[
+        after_source.index("with memo_col:"):
+        after_source.index("with memo_action_col:")
+    ]
+    memo_right = after_source[
+        after_source.index("with memo_action_col:"):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+
+    # 定型文追記は本文左カラムではなく手配情報右カラムに配置
+    assert "##### 定型文追記" not in memo_left
+    assert "##### 定型文追記" in memo_right
+
+
+def test_after_call_memo_has_no_template_banner_or_generation_note():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    # 0009 単独表示欄・生成説明文・常時表示の備考バナーは廃止
+    assert "st.code(selected_code, language=None)" not in after_source
+    assert "修理依頼書メモは 0009 【出張修理】自然故障テンプレートから生成されます。" not in after_source
+    assert 'st.info(f"📋 備考: {selected_notes}")' not in after_source
+    # 備考は手配情報右カラムで控えめに表示
+    memo_right = after_source[
+        after_source.index("with memo_action_col:"):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+    assert 'st.caption(f"注意：{selected_notes}")' in memo_right
 
 
 def test_nav_tabs_do_not_use_red_tinted_emoji_labels():
