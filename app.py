@@ -182,7 +182,7 @@ def render_copy_button(label: str, text: str, key: str):
     text_json = json.dumps(text or "", ensure_ascii=False)
     label_json = json.dumps(label, ensure_ascii=False)
     key_json = json.dumps(key, ensure_ascii=False)
-    st.iframe(
+    st.components.v1.html(
         f"""
 <div id="copy-root"></div>
 <script>
@@ -8944,19 +8944,22 @@ def render_tab_after_call():
             form, repair_type_val, warranty_plan_val, df_tpl)
         template_candidates = []
         template_option_rows = {}
-        template_labels = [""]
+        template_labels = ["選択してください"]
         template_current_option = ""
         template_auto_option = ""
         if not df_tpl.empty:
             template_candidates = template_selection.get("candidates") or build_template_candidates_for_form(
                 form, repair_type_val, warranty_plan_val, df_tpl, template_selection
             )
+            if not template_candidates:
+                for _, row in df_tpl.iterrows():
+                    _append_template_candidate(template_candidates, row)
             template_option_rows = {_template_option_label(candidate): candidate for candidate in template_candidates}
             template_auto_option = _template_option_label({
                 "template_code": template_selection.get("template_code", ""),
                 "label": template_selection.get("label", ""),
             })
-            template_labels = [""] + list(template_option_rows.keys())
+            template_labels = ["選択してください"] + list(template_option_rows.keys())
             current_code = normalize_template_code(form.get("template_code"))
             current_label = form.get("template_label", "") or template_selection.get("label", "")
             for option_label, candidate in template_option_rows.items():
@@ -9028,16 +9031,17 @@ def render_tab_after_call():
 
     template_data_erase_required = False
     template_cost_guidance_blocked = False
-    if template_candidates:
+    auto_option = "選択してください"
+    if template_option_rows:
         session_template_option = st.session_state.get("tpl_label_select_after", "")
         auto_option = (
             session_template_option
             if session_template_option in template_option_rows
-            else template_current_option or template_auto_option or next(iter(template_option_rows), "")
+            else template_current_option or (
+                template_auto_option if template_auto_option in template_option_rows else ""
+            ) or next(iter(template_option_rows), "")
         )
         row = template_option_rows.get(auto_option, {})
-        if not row and template_candidates:
-            row = template_candidates[0]
         selected_code = normalize_template_code(row.get("template_code"))
         selected_label_val = row.get("label", "")
         selected_notes = (row.get("notes") or "").strip()
@@ -9120,35 +9124,32 @@ def render_tab_after_call():
 
     with memo_action_col:
         st.markdown("##### 手配情報")
-        if template_candidates:
-            template_idx = template_labels.index(auto_option) if auto_option in template_labels else 0
-            selected_option_val = st.selectbox(
-                "テンプレート",
-                template_labels,
-                index=template_idx,
-                key="tpl_label_select_after",
-            )
-            selected_row = template_option_rows.get(selected_option_val, {})
-            if selected_row:
-                selected_code = normalize_template_code(selected_row.get("template_code"))
-                selected_label_val = selected_row.get("label", "")
-                selected_notes = (selected_row.get("notes") or "").strip()
-                template_data_erase_required = selected_row.get("data_erase_required") == "条件付き"
-                template_cost_guidance_blocked = selected_row.get("cost_guidance_allowed") == "不可"
-                form["template_code"] = selected_code
-                form["template_label"] = selected_label_val
-                st.session_state.form = form
-            elif not selected_option_val:
-                selected_code = ""
-                selected_label_val = ""
-                selected_notes = ""
-                template_data_erase_required = False
-                template_cost_guidance_blocked = False
-                form["template_code"] = ""
-                form["template_label"] = ""
-                st.session_state.form = form
-        if not template_candidates:
-            st.caption("テンプレート未確定")
+        template_idx = template_labels.index(auto_option) if auto_option in template_labels else 0
+        selected_option_val = st.selectbox(
+            "テンプレート",
+            template_labels,
+            index=template_idx,
+            key="tpl_label_select_after",
+        )
+        selected_row = template_option_rows.get(selected_option_val, {})
+        if selected_row:
+            selected_code = normalize_template_code(selected_row.get("template_code"))
+            selected_label_val = selected_row.get("label", "")
+            selected_notes = (selected_row.get("notes") or "").strip()
+            template_data_erase_required = selected_row.get("data_erase_required") == "条件付き"
+            template_cost_guidance_blocked = selected_row.get("cost_guidance_allowed") == "不可"
+            form["template_code"] = selected_code
+            form["template_label"] = selected_label_val
+            st.session_state.form = form
+        elif selected_option_val == "選択してください":
+            selected_code = ""
+            selected_label_val = ""
+            selected_notes = ""
+            template_data_erase_required = False
+            template_cost_guidance_blocked = False
+            form["template_code"] = ""
+            form["template_label"] = ""
+            st.session_state.form = form
         st.markdown(f"修理拠点：{vendor or '未確定'}")
         if vendor_card.get("arrangement_method"):
             st.caption(f"手配方法：{vendor_card['arrangement_method']}")

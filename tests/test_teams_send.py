@@ -381,7 +381,8 @@ def test_repair_request_template_is_shown_in_case_summary_right_column():
     assert "##### 手配情報" in memo_display_area
     assert "##### 案件サマリー" not in after_source
     assert "テンプレート：" not in memo_display_area
-    assert "テンプレート未確定" in memo_display_area
+    assert '"選択してください"' in after_source
+    assert "disabled=not template_candidates" not in memo_display_area
     assert "修理拠点：" in memo_display_area
 
 
@@ -3218,7 +3219,8 @@ def test_after_call_template_auto_and_candidate_display_exists():
     assert '"テンプレート"' in summary_source
     assert "tpl_label_select_after" in summary_source
     assert "テンプレート：" not in summary_source
-    assert "テンプレート未確定" in summary_source
+    assert '"選択してください"' in after_source
+    assert "disabled=not template_candidates" not in summary_source
     assert "修理拠点：" in summary_source
     assert summary_source.index("tpl_label_select_after") < summary_source.index("修理拠点：")
     assert "理由：" not in summary_source
@@ -3237,9 +3239,30 @@ def test_after_call_template_selection_is_not_blocked_by_unconfirmed_vendor():
     after_source = source[after_index:master_index]
 
     assert "テンプレートは選択可能です。修理拠点は別途確認してください。" not in after_source
-    assert "テンプレート未確定" in after_source
-    assert "if template_candidates:" in after_source
+    assert '"選択してください"' in after_source
+    assert "disabled=not template_candidates" not in after_source
     assert 'if (call_line_val or template_selection.get("label"))' not in after_source
+
+
+def test_after_call_template_selectbox_is_always_rendered_and_feeds_regeneration():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    summary_source = after_source[
+        after_source.index("with memo_action_col:"):
+        after_source.index("##### 📝 ラクテル用テキスト")
+    ]
+
+    assert 'template_labels = ["選択してください"]' in after_source
+    assert 'template_labels = ["選択してください"] + list(template_option_rows.keys())' in after_source
+    assert "for _, row in df_tpl.iterrows():" in after_source
+    assert "_append_template_candidate(template_candidates, row)" in after_source
+    assert "selected_option_val = st.selectbox(" in summary_source
+    assert "disabled=not template_candidates" not in summary_source
+    assert "if template_candidates:\n            template_idx" not in summary_source
+    assert after_source.index('session_template_option = st.session_state.get("tpl_label_select_after", "")') < after_source.index("generated_attention_memo = sanitize_generated_body_text(_build_after_call_memo(")
+    assert after_source.index("generated_attention_memo = sanitize_generated_body_text(_build_after_call_memo(") < after_source.index('if st.session_state.pop("_pending_regenerate_attention_memo", False):')
 
 
 def test_after_call_template_and_vendor_reasons_are_separated_for_ai_koumuten():
@@ -3552,8 +3575,8 @@ def test_render_copy_button_helper_exists():
     helper_index = source.index("def render_copy_button")
     helper_source = source[helper_index:source.index("def sort_diagnostic_items", helper_index)]
 
-    assert "st.components.v1.html" not in helper_source
-    assert "st.iframe" in helper_source
+    assert "st.components.v1.html" in helper_source
+    assert "st.iframe" not in helper_source
     assert "json.dumps(text or \"\", ensure_ascii=False)" in helper_source
     assert "navigator.clipboard.writeText(copyText)" in helper_source
     assert 'document.createElement("textarea")' in helper_source
