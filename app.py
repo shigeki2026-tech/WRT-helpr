@@ -182,7 +182,7 @@ def render_copy_button(label: str, text: str, key: str):
     text_json = json.dumps(text or "", ensure_ascii=False)
     label_json = json.dumps(label, ensure_ascii=False)
     key_json = json.dumps(key, ensure_ascii=False)
-    st.components.v1.html(
+    st.iframe(
         f"""
 <div id="copy-root"></div>
 <script>

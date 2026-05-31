@@ -3552,7 +3552,8 @@ def test_render_copy_button_helper_exists():
     helper_index = source.index("def render_copy_button")
     helper_source = source[helper_index:source.index("def sort_diagnostic_items", helper_index)]
 
-    assert "st.components.v1.html" in helper_source
+    assert "st.components.v1.html" not in helper_source
+    assert "st.iframe" in helper_source
     assert "json.dumps(text or \"\", ensure_ascii=False)" in helper_source
     assert "navigator.clipboard.writeText(copyText)" in helper_source
     assert 'document.createElement("textarea")' in helper_source
