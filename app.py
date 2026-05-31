@@ -3486,47 +3486,33 @@ def append_teams_send_log(result: dict, message: str, chat_name: str,
         file_exists = os.path.exists(TEAMS_SEND_LOG_PATH)
         fieldnames = [
             "timestamp",
-            "rakuteru_no",
+            "rakutel_no",
             "wrt_no",
             "vendor",
-            "teams_action",
+            "action",
+            "status",
+            "error",
             "destination_key",
             "destination_label",
             "chat_name",
-            "result",
-            "error_message",
         ]
-        if file_exists:
-            with open(TEAMS_SEND_LOG_PATH, "r", encoding="utf-8-sig", newline="") as f:
-                reader = csv.DictReader(f)
-                existing_fieldnames = reader.fieldnames or []
-                if existing_fieldnames and any(field not in existing_fieldnames for field in fieldnames):
-                    rows = list(reader)
-                    merged_fieldnames = existing_fieldnames + [
-                        field for field in fieldnames if field not in existing_fieldnames
-                    ]
-                    with open(TEAMS_SEND_LOG_PATH, "w", encoding="utf-8-sig", newline="") as rewrite_f:
-                        rewrite_writer = csv.DictWriter(rewrite_f, fieldnames=merged_fieldnames)
-                        rewrite_writer.writeheader()
-                        for row in rows:
-                            rewrite_writer.writerow({field: row.get(field, "") for field in merged_fieldnames})
-                    fieldnames = merged_fieldnames
+        row = {
+            "timestamp": timestamp,
+            "rakutel_no": (form.get("rakuteru_no") or "").strip(),
+            "wrt_no": (form.get("wrt_no") or "").strip(),
+            "vendor": (vendor or "").strip(),
+            "action": (teams_action or form.get("teams_action") or "").strip(),
+            "status": "success" if result.get("ok") else "failure",
+            "error": "" if result.get("ok") else result.get("message", ""),
+            "destination_key": destination_key,
+            "destination_label": destination_label,
+            "chat_name": (chat_name or "").strip(),
+        }
         with open(TEAMS_SEND_LOG_PATH, "a", encoding="utf-8-sig", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             if not file_exists:
                 writer.writeheader()
-            writer.writerow({
-                "timestamp": timestamp,
-                "rakuteru_no": (form.get("rakuteru_no") or "").strip(),
-                "wrt_no": (form.get("wrt_no") or "").strip(),
-                "vendor": (vendor or "").strip(),
-                "teams_action": (teams_action or form.get("teams_action") or "").strip(),
-                "destination_key": destination_key,
-                "destination_label": destination_label,
-                "chat_name": (chat_name or "").strip(),
-                "result": "success" if result.get("ok") else "failure",
-                "error_message": "" if result.get("ok") else result.get("message", ""),
-            })
+            writer.writerow(row)
     except Exception as exc:
         entry["log_error"] = str(exc)
     return st.session_state.teams_send_log

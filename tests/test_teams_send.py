@@ -2937,10 +2937,24 @@ def test_teams_send_log_records_self_test_destination(monkeypatch, tmp_path):
     rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
     assert logs[0]["destination_key"] == "self_test"
     assert logs[0]["destination_label"] == "自分宛てテスト"
+    assert list(rows[0].keys()) == [
+        "timestamp",
+        "rakutel_no",
+        "wrt_no",
+        "vendor",
+        "action",
+        "status",
+        "error",
+        "destination_key",
+        "destination_label",
+        "chat_name",
+    ]
+    assert rows[0]["rakutel_no"] == "2026_05_0001"
     assert rows[0]["destination_key"] == "self_test"
     assert rows[0]["destination_label"] == "自分宛てテスト"
     assert rows[0]["chat_name"] == "自分宛てテスト"
-    assert rows[0]["result"] == "success"
+    assert rows[0]["status"] == "success"
+    assert rows[0]["error"] == ""
 
 
 def test_teams_send_log_records_warranty_destination(monkeypatch, tmp_path):
@@ -2966,16 +2980,19 @@ def test_teams_send_log_records_warranty_destination(monkeypatch, tmp_path):
     assert rows[0]["destination_key"] == "warranty"
     assert rows[0]["destination_label"] == "ワランティ報告用チャット（本番）"
     assert rows[0]["chat_name"] == "ワランティ報告用チャット"
-    assert rows[0]["teams_action"] == "Teamsワランティ送信"
+    assert rows[0]["action"] == "Teamsワランティ送信"
+    assert rows[0]["status"] == "success"
+    assert rows[0]["error"] == ""
 
 
-def test_teams_send_log_upgrades_legacy_columns(monkeypatch, tmp_path):
+def test_teams_send_log_preserves_legacy_rows_and_appends_new_column_order(monkeypatch, tmp_path):
     log_path = tmp_path / "teams_send_log.csv"
     log_path.write_text(
         "timestamp,rakuteru_no,wrt_no,vendor,teams_action,result,error_message\n"
         "2026/05/29 10:00:00,old,,,旧アクション,success,\n",
         encoding="utf-8-sig",
     )
+    before = log_path.read_text(encoding="utf-8-sig")
     original_session_state = app.st.session_state
     monkeypatch.setattr(app, "TEAMS_SEND_LOG_PATH", str(log_path))
     try:
@@ -2991,12 +3008,21 @@ def test_teams_send_log_upgrades_legacy_columns(monkeypatch, tmp_path):
     finally:
         app.st.session_state = original_session_state
 
-    rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
-    assert len(rows) == 2
-    assert "destination_key" in rows[0]
-    assert rows[0]["destination_key"] == ""
-    assert rows[1]["destination_key"] == "self_test"
-    assert rows[1]["destination_label"] == "自分宛てテスト"
+    after = log_path.read_text(encoding="utf-8-sig")
+    assert after.startswith(before)
+    rows = list(csv.reader(log_path.open(encoding="utf-8-sig", newline="")))
+    assert len(rows) == 3
+    assert rows[0] == [
+        "timestamp",
+        "rakuteru_no",
+        "wrt_no",
+        "vendor",
+        "teams_action",
+        "result",
+        "error_message",
+    ]
+    assert rows[1] == ["2026/05/29 10:00:00", "old", "", "", "旧アクション", "success", ""]
+    assert rows[2][5:10] == ["success", "", "self_test", "自分宛てテスト", "自分宛てテスト"]
 
 
 def test_no_standalone_script_reference_block():
