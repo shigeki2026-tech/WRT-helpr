@@ -230,6 +230,27 @@ def test_judge_script_route_store_and_plan_priority_cases():
         assert result["url"]
 
 
+def test_judge_script_route_beavertozan_uses_kohnan_scripts():
+    cases = [
+        (make_form(store_name="ビーバートザン", appliance_category="家電"), "コーナン家電"),
+        (make_form(store_name="ビーバートザン", appliance_category="住設（既築）"), "コーナン住設"),
+        (dict(make_form(appliance_category="家電"), operating_company="ビーバートザン"), "コーナン家電"),
+        (dict(make_form(appliance_category="住設（既築）"), store_company="BEAVERTOZAN"), "コーナン住設"),
+    ]
+    for form, display_name in cases:
+        result = app.judge_script_route(form)
+        assert result["display_name"] == display_name
+        assert result["confidence"] == "high"
+        assert result["url"]
+
+
+def test_judge_script_route_unrelated_store_is_not_kohnan():
+    result = app.judge_script_route(make_form(store_name="無関係ホームセンター", appliance_category="家電"))
+
+    assert result["display_name"] == "未判定"
+    assert result["confidence"] == "none"
+
+
 def test_judge_script_route_line_first_basic_and_store_overrides():
     cases = [
         (make_form(call_line="家電"), "0099回線（家電/新築）", "high", True),
