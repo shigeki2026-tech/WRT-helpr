@@ -170,16 +170,38 @@ def test_master_repair_type_rules_have_required_flags_and_toilet_seat_aliases():
     assert set(rows["manufacturer_required"]) == {"0"}
 
 
-def test_master_script_routes_csv_exists_and_japannext_url_is_unconfirmed():
+def test_master_template_codes_csv_is_utf8_and_keeps_jusetsu_visit_templates():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "data", "master_template_codes.csv")
+    text = Path(path).read_text(encoding="utf-8")
+    assert "�" not in text
+
+    rows = list(app.csv.DictReader(text.splitlines()))
+    jusetsu_rows = [
+        row for row in rows
+        if row["category"] == "住設業務" and row["template_code"] in ("0009", "0010", "0011")
+    ]
+    assert [row["template_code"] for row in jusetsu_rows] == ["0009", "0010", "0011"]
+    assert [row["label"] for row in jusetsu_rows] == [
+        "【出張修理】自然故障",
+        "【出張修理】ダブルプロテクト",
+        "【出張修理】再調達0円表示",
+    ]
+
+
+def test_master_script_routes_csv_disables_japannext_when_url_is_unknown():
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "data", "master_script_routes.csv")
     assert os.path.exists(path)
+    raw = app.pd.read_csv(path, dtype=str).fillna("")
+    raw_row = raw[raw["script_key"] == "japannext_greenhouse"].iloc[0]
+    assert raw_row["enabled"] == "0"
+    assert raw_row["url"] == ""
+    assert raw_row["confidence"] == "needs_url"
+
     df = app.load_script_routes()
-    assert len(df) == 29
-    row = df[df["script_key"] == "japannext_greenhouse"].iloc[0]
-    assert row["display_name"] == "ジャパンネクストorグリーンハウス"
-    assert row["url"] == ""
-    assert row["confidence"] == "needs_url"
+    assert len(df) == 28
+    assert df[df["script_key"] == "japannext_greenhouse"].empty
     assert df[df["script_key"] == "0099_jusetsu"].empty
 
 
@@ -190,6 +212,10 @@ def test_judge_script_route_store_and_plan_priority_cases():
         (make_form(store_name="ビックカメラ", warranty_plan="官舎向け保証"), "ビックカメラ（官舎向け）", "high"),
         (make_form(store_name="コーナン", appliance_category="家電"), "コーナン家電", "high"),
         (make_form(store_name="コーナン", appliance_category="住設（既築）"), "コーナン住設", "high"),
+        (make_form(store_name="ムサシ"), "トライアル/アークランズ", "medium"),
+        (make_form(store_name="スーパービバホーム"), "トライアル/アークランズ", "medium"),
+        (make_form(call_line="ムサシ"), "トライアル/アークランズ", "high"),
+        (make_form(call_line="ビバホーム"), "トライアル/アークランズ", "high"),
         (make_form(call_line="0099", warranty_plan="賃貸住宅プラン"), "0099回線（賃貸）", "high"),
         (make_form(call_line="0099", warranty_plan="既築住宅プラン"), "0099回線（既築/中古）", "high"),
         (make_form(call_line="0099", warranty_plan="中古住宅プラン"), "0099回線（既築/中古）", "high"),
@@ -430,8 +456,8 @@ def test_judge_script_route_product_manufacturer_cancel_and_no_match_cases():
         (make_form(product="V2H"), "◆蓄電池（太陽光・V2H）", "high", True),
         (make_form(manufacturer="LG"), "LG", "high", True),
         (make_form(manufacturer="TOKAI"), "TOKAI", "high", True),
-        (make_form(manufacturer="ジャパンネクスト"), "ジャパンネクストorグリーンハウス", "needs_url", False),
-        (make_form(manufacturer="グリーンハウス"), "ジャパンネクストorグリーンハウス", "needs_url", False),
+        (make_form(manufacturer="ジャパンネクスト"), "未判定", "none", False),
+        (make_form(manufacturer="グリーンハウス"), "未判定", "none", False),
         (make_form(warranty_plan="解約希望"), "解約・返金スクリプト", "medium", True),
         (make_form(warranty_plan="返金相談"), "解約・返金スクリプト", "medium", True),
         (make_form(product="未登録製品", manufacturer="未登録メーカー"), "未判定", "none", False),
@@ -443,15 +469,15 @@ def test_judge_script_route_product_manufacturer_cancel_and_no_match_cases():
         assert bool(result["url"]) is has_url
 
 
-def test_script_reference_for_japannext_greenhouse_keeps_url_unconfirmed_candidate():
+def test_script_reference_for_disabled_japannext_greenhouse_is_not_a_candidate():
     decision = app.run_decision(make_form(manufacturer="JAPANNEXT"))
     info = app.build_script_reference_info(decision)
 
-    assert info["display"] == "ジャパンネクストorグリーンハウス"
-    assert info["confidence"] == "needs_url"
+    assert info["display"] == "SV/担当確認"
+    assert info["confidence"] == "none"
     assert info["matched"] is False
     assert info["url"] == ""
-    assert "URL未確認" in info["message"]
+    assert "URL未登録" in info["message"]
 
 
 def _script_tag_for_form(form: dict) -> tuple[dict, dict]:

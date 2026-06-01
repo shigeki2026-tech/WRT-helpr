@@ -3,7 +3,7 @@
 20,1,bic_sofmap,ビックカメラ・ソフマップ,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=340970062#gid=340970062,,,,ビックカメラ;ソフマップ,ビックカメラ;ソフマップ,,,high,,A26
 30,1,kohnan_kaden,コーナン家電,トークスクリプト,https://docs.google.com/spreadsheets/d/1hZ4Ph0W1dhc37rClwCMOG31FqQNGDJv86A7_oq3OG8Q/edit?pli=1&gid=2012991600#gid=2012991600,,家電,,コーナン,コーナン,,,high,,A30
 31,1,kohnan_jusetsu,コーナン住設,トークスクリプト,https://docs.google.com/spreadsheets/d/1YdVJupRTxaqiaZn1ADAyUqEsCMBxVs6yxAIZ0uzNUqM/edit?gid=1267412413#gid=1267412413,,住設,,コーナン,コーナン,,,high,,A32
-40,1,trial_arclands,トライアル/アークランズ,トークスクリプト,https://docs.google.com/spreadsheets/d/18Ogqmip4IrI1te8FnFeX3zVlQKS9AHG_G2xodzXT5mo/edit?pli=1&gid=975369740#gid=975369740,トライアルカンパニー;トライアル;アークランズ,,,トライアル;アークランズ,トライアル;アークランズ,,,high,,A44
+40,1,trial_arclands,トライアル/アークランズ,トークスクリプト,https://docs.google.com/spreadsheets/d/18Ogqmip4IrI1te8FnFeX3zVlQKS9AHG_G2xodzXT5mo/edit?pli=1&gid=975369740#gid=975369740,トライアルカンパニー;トライアル;アークランズ;ムサシ;ホームセンタームサシ;ビバホーム;スーパービバホーム,,,トライアル;アークランズ;ムサシ;ホームセンタームサシ;ビバホーム;スーパービバホーム,トライアル;アークランズ;ムサシ;ホームセンタームサシ;ビバホーム;スーパービバホーム,,,high,,A44
 50,1,battery_solar_v2h,◆蓄電池（太陽光・V2H）,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1890318217#gid=1890318217,,,,,,蓄電池;太陽光;V2H,,high,,A62
 57,1,fukuya_ys,福屋工務店,トークスクリプト,https://docs.google.com/spreadsheets/d/1TJu7UPC2fX-xvIAt-HM3By89-ngih9BwZ6dCwnY1psU/edit?gid=1674868092#gid=1674868092,福屋工務店,,,,,,,high,福屋工務店専用スクリプト,
 58,1,mitsui_design,三井デザイン,トークスクリプト,https://docs.google.com/spreadsheets/d/16foFt-SuTBNTHILL-J6ApwMOQhLSevY7JmxsVULsoGw/edit#gid=731359438&range=A1,三井デザイン,,,,,,,high,三井デザイン専用スクリプト,
@@ -18,7 +18,7 @@
 200,1,lg,LG,トークスクリプト,https://docs.google.com/spreadsheets/d/1jsDM1ne2Q1CjZspzEVIhOAimVNQfCpXt0GZUBy82SHc/edit?gid=2023604868#gid=2023604868,,,,,LG,,,high,メーカー/販売店/プランにLGがある場合,A38
 210,1,tokai,TOKAI,トークスクリプト,https://docs.google.com/spreadsheets/d/1rxjipBAH5JebfXcGvAw0gDp666cmDOHsCTon2jx9bzQ/edit?gid=975369740#gid=975369740,,,,,TOKAI;東海,,,high,,A40
 220,1,mach_yucaco,マッハ・YUCACO,トークスクリプト,https://docs.google.com/spreadsheets/d/1pjWHtHOOF0S0mTwEATDE4DLBDz1SjbT1bttt8E9IeC0/edit?gid=1054213746#gid=1054213746,マッハのユカコ;マッハユカコ;マッハ・YUCACO;YUCACO,,マッハ;YUCACO,,,,,high,,A42
-230,1,japannext_greenhouse,ジャパンネクストorグリーンハウス,トークスクリプト,,,,,,ジャパンネクスト;JAPANNEXT;グリーンハウス;GREEN HOUSE,,,needs_url,貼り付け/Excel内にリンク未確認。URL確認が必要,A60
+230,0,japannext_greenhouse,ジャパンネクストorグリーンハウス,トークスクリプト,,,,,,ジャパンネクスト;JAPANNEXT;グリーンハウス;GREEN HOUSE,,,needs_url,貼り付け/Excel内にリンク未確認。URL確認が必要,A60
 250,1,life_design_kabaya,ライフデザインカバヤ,トークスクリプト,https://docs.google.com/spreadsheets/d/1uP8WlN--arfCZIJinPhY8WBLeGBPa9vGtOTG4w1rE5w/edit?gid=2002715995#gid=2002715995,,,,ライフデザインカバヤ,ライフデザインカバヤ,,,medium,販売店/運営会社/保証プラン名に該当名が含まれる場合,A34
 250,1,taisei_yuraku,大成有楽不動産,トークスクリプト,https://docs.google.com/spreadsheets/d/1tBm3c9jPWJz-TD_ilf9tno2BIOlcUoeP7b56h4G-ktA/edit?gid=558873968#gid=558873968,,,,大成有楽不動産,大成有楽不動産,,,medium,販売店/運営会社/保証プラン名に該当名が含まれる場合,A36
 250,1,suumo,スーモ,トークスクリプト,https://docs.google.com/spreadsheets/d/10oG_Rs7iNfUpf2VAAogL0FRRdUu-2OY3k9tdiNvJgMg/edit?pli=1&gid=1710738952#gid=1710738952,,,,スーモ,スーモ,,,medium,販売店/運営会社/保証プラン名に該当名が含まれる場合,A46
