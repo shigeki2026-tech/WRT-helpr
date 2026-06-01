@@ -5093,7 +5093,52 @@ def build_vendor_missing_reason(form: dict, repair_type: str) -> str:
     return f"{product} × {manufacturer} × {prefecture} × {repair_type} に一致する修理拠点ルールが未登録です。"
 
 
-def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
+def _form_contains_nakayashiki(form: dict) -> bool:
+    targets = [
+        form.get("store_name", ""),
+        form.get("store_original", ""),
+        form.get("store_name_original", ""),
+        form.get("company_name", ""),
+        form.get("operating_company", ""),
+        form.get("warranty_plan", ""),
+        form.get("call_line", ""),
+        form.get("call_line_original", ""),
+        form.get("line_name", ""),
+    ]
+    text = " ".join(str(target or "") for target in targets)
+    return "なかやしき" in text or "ナカヤシキ" in text or "中屋敷" in text
+
+
+def _nakayashiki_vendor_result(form: dict, warranty_result: dict | None = None) -> dict | None:
+    if not _form_contains_nakayashiki(form):
+        return None
+    status = (warranty_result or {}).get("warranty_status", "unknown")
+    if status == "active":
+        vendor_name = "なかやしき工務"
+        reason = "なかやしき保証期間中"
+        needs_escalation = False
+    elif status == "expired":
+        vendor_name = "ベルホームふくおか"
+        reason = "なかやしき保証終了後"
+        needs_escalation = False
+    else:
+        vendor_name = "担当エスカ（要確認）"
+        reason = "なかやしき保証期間未確定"
+        needs_escalation = True
+    return {
+        "matched": True,
+        "vendor_name": vendor_name,
+        "reason": reason,
+        "contact_type": "",
+        "needs_escalation": needs_escalation,
+        "keyword": "なかやしき",
+        "priority": 30,
+        "csv_name": "",
+        "notes": "保証期間判定に基づくなかやしき専用分岐",
+    }
+
+
+def determine_vendor_from_rules(form: dict, repair_type: str, warranty_result: dict | None = None) -> dict:
     """
     master_vendor_rules.csv を使って修理拠点候補を判定する。
     - call_line / prefecture は完全一致（空=ワイルドカード）
@@ -5114,6 +5159,10 @@ def determine_vendor_from_rules(form: dict, repair_type: str) -> dict:
         (form.get("store_name_original") or "").strip(),
     ]
     store = " ".join(t for t in store_targets if t)
+
+    nakayashiki_result = _nakayashiki_vendor_result(form, warranty_result)
+    if nakayashiki_result is not None:
+        return nakayashiki_result
 
     if not df.empty:
         for _, row in df.iterrows():
@@ -6791,7 +6840,7 @@ def run_decision(form: dict) -> dict:
     needs_data_erase = determine_data_erase_consent(working_form)
 
     # ── Layer 4: 修理拠点候補 ──
-    vendor_result = determine_vendor_from_rules(working_form, repair_type)
+    vendor_result = determine_vendor_from_rules(working_form, repair_type, warranty_result)
     if vendor_result["matched"]:
         vendor = vendor_result["vendor_name"]
     else:

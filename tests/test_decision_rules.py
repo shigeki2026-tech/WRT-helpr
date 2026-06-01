@@ -2399,6 +2399,56 @@ def test_visit_vendor_list_no7_fallback_applies_to_generic_store():
     assert d["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
 
 
+def test_nakayashiki_active_warranty_routes_to_nakayashiki_koumu_before_no7():
+    d = app.run_decision(make_form(
+        store_name="なかやしき",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="福岡県",
+        appliance_type="住設",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2099/12/31",
+    ))
+
+    assert d["warranty_status"] == "active"
+    assert d["vendor"] == "なかやしき工務"
+    assert d["vendor_result"]["reason"] == "なかやしき保証期間中"
+    assert d["vendor_result"]["needs_escalation"] is False
+    assert d["vendor_result"]["reason"] != "依頼先一覧 No.7 上記以外・全国・全メーカー"
+
+
+def test_nakayashiki_expired_warranty_routes_to_bellhome_fukuoka_before_no7():
+    d = app.run_decision(make_form(
+        warranty_plan="なかやしき住宅保証",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="福岡県",
+        appliance_type="住設",
+        warranty_start_date="2010/01/01",
+        warranty_end_date="2011/01/01",
+    ))
+
+    assert d["warranty_status"] == "expired"
+    assert d["vendor"] == "ベルホームふくおか"
+    assert d["vendor_result"]["reason"] == "なかやしき保証終了後"
+    assert d["vendor_result"]["needs_escalation"] is False
+
+
+def test_nakayashiki_unknown_warranty_routes_to_escalation_before_no7():
+    d = app.run_decision(make_form(
+        store_name="中屋敷",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="福岡県",
+        appliance_type="住設",
+    ))
+
+    assert d["warranty_status"] == "unknown"
+    assert d["vendor"] == "担当エスカ（要確認）"
+    assert d["vendor_result"]["reason"] == "なかやしき保証期間未確定"
+    assert d["vendor_result"]["needs_escalation"] is True
+
+
 def test_visit_vendor_list_no7_fallback_does_not_override_priority_rules():
     bic = app.run_decision(make_form(call_line="ビックカメラ", product="冷蔵庫", prefecture="東京都"))
     sofmap = app.run_decision(make_form(call_line="ソフマップ", product="冷蔵庫", prefecture="東京都"))
