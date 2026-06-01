@@ -357,6 +357,9 @@ def test_judge_script_route_keihan_lines_use_dedicated_scripts():
         ("京阪不動産（浦添）", "京阪不動産（浦添）", "keihan_real_estate_urasoe"),
         ("京阪（夜間）", "京阪（夜間）", "keihan_night"),
         ("京阪大津", "京阪（夜間）", "keihan_night"),
+        ("京阪休日", "京阪（夜間）", "keihan_night"),
+        ("京阪（休日）", "京阪（夜間）", "keihan_night"),
+        ("京阪夜間", "京阪（夜間）", "keihan_night"),
     ]
     for call_line, display_name, script_key in cases:
         result = app.judge_script_route(make_form(call_line=call_line))
@@ -366,6 +369,16 @@ def test_judge_script_route_keihan_lines_use_dedicated_scripts():
         assert result["confidence"] == "high"
         assert result["url"]
         assert result["matched_by"] == ["回線名"]
+
+
+def test_judge_script_route_keihan_store_name_does_not_match_night_route():
+    normal = app.judge_script_route(make_form(store_name="京阪不動産"))
+    urasoe = app.judge_script_route(make_form(store_name="京阪不動産（浦添）"))
+
+    assert normal["script_key"] != "keihan_night"
+    assert normal["confidence"] == "none"
+    assert urasoe["script_key"] != "keihan_night"
+    assert urasoe["confidence"] == "none"
 
 
 def test_judge_script_route_fukuya_and_mitsui_lines_use_dedicated_scripts():
