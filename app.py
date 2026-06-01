@@ -10,6 +10,7 @@ import html
 import subprocess
 import tempfile
 import shutil
+import time
 import streamlit as st
 from datetime import date, datetime
 import pandas as pd
@@ -28,6 +29,7 @@ TEAMS_CONFIG_PATH = os.path.join(APP_DIR, "config", "teams_config.json")
 LOCAL_USER_SETTINGS_PATH = os.path.join(APP_DIR, "config", "local_user_settings.json")
 TEAMS_SEND_SCRIPT_PATH = os.path.join(APP_DIR, "scripts", "send_teams_message.ps1")
 TEAMS_SEND_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_log.csv")
+TEAMS_SEND_DEBUG_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_debug_log.csv")
 DEFAULT_TEAMS_CONFIG = {
     "enabled": False,
     "chat_id": "",
@@ -3387,7 +3389,9 @@ def build_system_info_display() -> dict[str, str]:
     }
 
 
-def send_teams_message_via_powershell(message: str, chat_id_override: str = "") -> dict:
+def send_teams_message_via_powershell(message: str, chat_id_override: str = "",
+                                      destination_key: str = "",
+                                      destination_label: str = "") -> dict:
     body = (message or "").strip()
     if not body:
         return {"ok": False, "message": "送信失敗: 送信本文が空です", "stdout": "", "stderr": ""}
@@ -3408,6 +3412,11 @@ def send_teams_message_via_powershell(message: str, chat_id_override: str = "") 
             f.write(body)
             temp_path = f.name
 
+        ps_env = os.environ.copy()
+        ps_env["WRT_TEAMS_DEBUG_LOG_PATH"] = TEAMS_SEND_DEBUG_LOG_PATH
+        ps_env["WRT_TEAMS_DEBUG_DESTINATION_KEY"] = (destination_key or "").strip()
+        ps_env["WRT_TEAMS_DEBUG_DESTINATION_LABEL"] = (destination_label or "").strip()
+
         completed = subprocess.run(
             [
                 "powershell",
@@ -3424,6 +3433,7 @@ def send_teams_message_via_powershell(message: str, chat_id_override: str = "") 
             capture_output=True,
             text=True,
             timeout=60,
+            env=ps_env,
         )
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
@@ -3452,6 +3462,58 @@ def send_teams_message_via_powershell(message: str, chat_id_override: str = "") 
                 os.unlink(temp_path)
             except OSError:
                 pass
+
+
+def teams_send_debug_elapsed_ms(started_at: float | int | None) -> int:
+    try:
+        return max(0, int((time.perf_counter() - float(started_at)) * 1000))
+    except (TypeError, ValueError):
+        return 0
+
+
+def teams_send_spinner_label(destination_key: str = "") -> str:
+    if destination_key == "self_test":
+        return "自分宛てに送信中..."
+    if destination_key == "warranty":
+        return "ワランティへ送信中..."
+    return "Teamsへ送信中..."
+
+
+def append_teams_send_debug_log(destination_key: str = "",
+                                destination_label: str = "",
+                                phase: str = "",
+                                elapsed_ms: int | float = 0,
+                                result: str = "",
+                                note: str = "") -> None:
+    """Append timing-only Teams send diagnostics without sensitive payloads."""
+    fieldnames = [
+        "timestamp",
+        "destination_key",
+        "destination_label",
+        "phase",
+        "elapsed_ms",
+        "result",
+        "note",
+    ]
+    row = {
+        "timestamp": datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
+        "destination_key": (destination_key or "").strip(),
+        "destination_label": (destination_label or "").strip(),
+        "phase": (phase or "").strip(),
+        "elapsed_ms": str(max(0, int(float(elapsed_ms or 0)))),
+        "result": (result or "").strip(),
+        "note": (note or "").replace("\r", " ").replace("\n", " ").strip()[:120],
+    }
+    try:
+        os.makedirs(os.path.dirname(TEAMS_SEND_DEBUG_LOG_PATH), exist_ok=True)
+        file_exists = os.path.exists(TEAMS_SEND_DEBUG_LOG_PATH)
+        with open(TEAMS_SEND_DEBUG_LOG_PATH, "a", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+    except Exception:
+        pass
 
 
 def append_teams_send_log(result: dict, message: str, chat_name: str,
@@ -9431,21 +9493,65 @@ def render_tab_after_call():
                 st.warning("Teams送信処理中です。完了まで画面を閉じないでください。")
                 return
 
+            debug_started_at = time.perf_counter()
+            st.session_state["_teams_send_debug_started_at"] = debug_started_at
+            append_teams_send_debug_log(
+                destination_key=destination_key,
+                destination_label=destination_label,
+                phase="streamlit_send_start",
+                elapsed_ms=0,
+                result="start",
+            )
             _mark_warranty_report_send_requested(st.session_state, message, destination_key)
             st.rerun()
 
         def execute_requested_teams_send():
+            debug_started_at = st.session_state.get("_teams_send_debug_started_at")
+            if debug_started_at is None:
+                debug_started_at = time.perf_counter()
+                st.session_state["_teams_send_debug_started_at"] = debug_started_at
+            append_teams_send_debug_log(
+                destination_key=destination_key,
+                destination_label=destination_label,
+                phase="teams_send_start",
+                elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                result="start",
+            )
             if is_warranty_destination:
                 teams_send_body = teams_plain_text_to_html(message)
                 log_action = "Teamsワランティ送信"
             else:
                 teams_send_body = _get_teams_send_body({"rakuteru_no": form.get("rakuteru_no", ""), "teams_chat_message": message})
                 log_action = effective_teams_action
-            with st.spinner("Teamsへ送信中です..."):
+            with st.spinner(teams_send_spinner_label(destination_key)):
+                append_teams_send_debug_log(
+                    destination_key=destination_key,
+                    destination_label=destination_label,
+                    phase="powershell_start",
+                    elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                    result="start",
+                )
                 result = send_teams_message_via_powershell(
                     teams_send_body,
                     chat_id_override=destination.get("chat_id", ""),
+                    destination_key=destination_key,
+                    destination_label=destination_label,
                 )
+                send_result = "success" if result.get("ok") else "failure"
+                append_teams_send_debug_log(
+                    destination_key=destination_key,
+                    destination_label=destination_label,
+                    phase="powershell_end",
+                    elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                    result=send_result,
+                )
+            append_teams_send_debug_log(
+                destination_key=destination_key,
+                destination_label=destination_label,
+                phase="streamlit_result",
+                elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                result=send_result,
+            )
             append_teams_send_log(
                 result,
                 message,
@@ -9456,10 +9562,33 @@ def render_tab_after_call():
                 destination_key=destination_key,
                 destination_label=destination_label,
             )
+            append_teams_send_debug_log(
+                destination_key=destination_key,
+                destination_label=destination_label,
+                phase="teams_send_log_appended",
+                elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                result=send_result,
+            )
             if result.get("ok"):
+                append_teams_send_debug_log(
+                    destination_key=destination_key,
+                    destination_label=destination_label,
+                    phase="streamlit_success",
+                    elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                    result="success",
+                )
+                st.session_state.pop("_teams_send_debug_started_at", None)
                 _mark_warranty_report_sent(st.session_state, message, result=result, destination_key=destination_key)
                 st.rerun()
             else:
+                append_teams_send_debug_log(
+                    destination_key=destination_key,
+                    destination_label=destination_label,
+                    phase="streamlit_failure",
+                    elapsed_ms=teams_send_debug_elapsed_ms(debug_started_at),
+                    result="failure",
+                )
+                st.session_state.pop("_teams_send_debug_started_at", None)
                 _mark_warranty_report_send_failed(st.session_state, message, result, destination_key=destination_key)
                 st.rerun()
             with st.expander("PowerShell実行結果", expanded=not result.get("ok")):

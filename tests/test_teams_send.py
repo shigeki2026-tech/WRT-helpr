@@ -2721,10 +2721,17 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
 
     assert "teams_send_in_progress_body_hash" in source
     assert "teams_send_requested_body_hash" in source
-    assert "Teamsへ送信中です..." in after_source
+    assert "teams_send_spinner_label(destination_key)" in after_source
     assert "Microsoft Graph / PowerShell の応答待ちです。" not in after_source
     assert disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
+
+
+def test_teams_send_spinner_label_uses_destination_specific_text():
+    assert app.teams_send_spinner_label("self_test") == "自分宛てに送信中..."
+    assert app.teams_send_spinner_label("warranty") == "ワランティへ送信中..."
+    assert app.teams_send_spinner_label("unknown") == "Teamsへ送信中..."
+    assert app.teams_send_spinner_label("") == "Teamsへ送信中..."
 
 
 def test_teams_send_incomplete_ui_hides_normal_primary_send_button():
@@ -2806,7 +2813,7 @@ def test_send_teams_message_success(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
 
-    def fake_run(args, capture_output, text, timeout):
+    def fake_run(args, capture_output, text, timeout, env=None):
         message_file = Path(args[-1])
         assert message_file.read_text(encoding="utf-8") == "hello teams"
         return SimpleNamespace(returncode=0, stdout="SUCCESS message-001\n", stderr="")
@@ -2828,16 +2835,23 @@ def test_send_teams_message_uses_chat_id_and_message_file_arguments(monkeypatch,
     monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
 
-    def fake_run(args, capture_output, text, timeout):
+    def fake_run(args, capture_output, text, timeout, env=None):
         assert args[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
         assert args[5] == str(script_path)
         assert args[6:9] == ["-ChatId", "chat-456", "-MessageFile"]
         assert Path(args[9]).read_text(encoding="utf-8") == "hello teams"
+        assert env["WRT_TEAMS_DEBUG_LOG_PATH"] == app.TEAMS_SEND_DEBUG_LOG_PATH
+        assert env["WRT_TEAMS_DEBUG_DESTINATION_KEY"] == "self_test"
+        assert env["WRT_TEAMS_DEBUG_DESTINATION_LABEL"] == "自分宛てテスト"
         return SimpleNamespace(returncode=0, stdout="SUCCESS message-001\n", stderr="")
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
 
-    result = app.send_teams_message_via_powershell("hello teams")
+    result = app.send_teams_message_via_powershell(
+        "hello teams",
+        destination_key="self_test",
+        destination_label="自分宛てテスト",
+    )
 
     assert result["ok"] is True
 
@@ -2869,7 +2883,7 @@ def test_send_teams_message_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
     monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
 
-    def fake_run(args, capture_output, text, timeout):
+    def fake_run(args, capture_output, text, timeout, env=None):
         return SimpleNamespace(returncode=1, stdout="ERROR denied\n", stderr="denied")
 
     monkeypatch.setattr(app.subprocess, "run", fake_run)
@@ -2895,6 +2909,39 @@ def test_send_teams_message_script_documents_graph_contract():
     assert "exit 0" in source
     assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
     assert "exit 1" in source
+
+
+def test_send_teams_message_script_writes_timing_debug_log_without_stdout_noise():
+    source = (ROOT / "scripts" / "send_teams_message.ps1").read_text(encoding="utf-8")
+
+    for phase in [
+        "ps_script_start",
+        "module_import_start",
+        "module_import_end",
+        "graph_context_check_start",
+        "graph_context_check_end",
+        "graph_connect_start",
+        "graph_connect_end",
+        "graph_send_start",
+        "graph_send_end",
+        "ps_script_end",
+    ]:
+        assert phase in source
+
+    assert "WRT_TEAMS_DEBUG_LOG_PATH" in source
+    assert "WRT_TEAMS_DEBUG_DESTINATION_KEY" in source
+    assert "WRT_TEAMS_DEBUG_DESTINATION_LABEL" in source
+    assert "Export-Csv" in source
+    assert "Diagnostic logging must never affect Teams sending" in source
+    assert 'Write-Output ("SUCCESS " + $message.Id)' in source
+    assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
+    debug_function = source[
+        source.index("function Write-TeamsDebugLog"):
+        source.index('Write-TeamsDebugLog -Phase "ps_script_start"')
+    ]
+    assert "Write-Output" not in debug_function
+    assert "$messageBody" not in debug_function
+    assert "$ChatId" not in debug_function
 
 
 def test_teams_send_log_includes_preview(monkeypatch):
@@ -3023,6 +3070,59 @@ def test_teams_send_log_preserves_legacy_rows_and_appends_new_column_order(monke
     ]
     assert rows[1] == ["2026/05/29 10:00:00", "old", "", "", "旧アクション", "success", ""]
     assert rows[2][5:10] == ["success", "", "self_test", "自分宛てテスト", "自分宛てテスト"]
+
+
+def test_teams_send_debug_log_records_timing_only(monkeypatch, tmp_path):
+    log_path = tmp_path / "teams_send_debug_log.csv"
+    monkeypatch.setattr(app, "TEAMS_SEND_DEBUG_LOG_PATH", str(log_path))
+
+    app.append_teams_send_debug_log(
+        destination_key="self_test",
+        destination_label="自分宛てテスト",
+        phase="powershell_end",
+        elapsed_ms=34120,
+        result="success",
+        note="completed",
+    )
+
+    rows = list(csv.DictReader(log_path.open(encoding="utf-8-sig", newline="")))
+    assert list(rows[0].keys()) == [
+        "timestamp",
+        "destination_key",
+        "destination_label",
+        "phase",
+        "elapsed_ms",
+        "result",
+        "note",
+    ]
+    assert rows[0]["destination_key"] == "self_test"
+    assert rows[0]["destination_label"] == "自分宛てテスト"
+    assert rows[0]["phase"] == "powershell_end"
+    assert rows[0]["elapsed_ms"] == "34120"
+    assert rows[0]["result"] == "success"
+    assert "本文" not in log_path.read_text(encoding="utf-8-sig")
+    assert "chat_id" not in log_path.read_text(encoding="utf-8-sig")
+
+
+def test_teams_send_debug_log_source_has_no_message_or_chat_id_payload():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    helper_index = source.index("def append_teams_send_debug_log")
+    helper_source = source[helper_index:source.index("def append_teams_send_log", helper_index)]
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "message:" not in helper_source
+    assert "chat_id" not in helper_source
+    assert "TEAMS_SEND_DEBUG_LOG_PATH" in helper_source
+    assert "streamlit_send_start" in after_source
+    assert "powershell_start" in after_source
+    assert "powershell_end" in after_source
+    assert "streamlit_result" in after_source
+    assert "teams_send_log_appended" in after_source
+    assert "streamlit_success" in after_source
+    assert "streamlit_failure" in after_source
+    assert after_source.index("append_teams_send_log(") < after_source.index('phase="teams_send_log_appended"')
 
 
 def test_no_standalone_script_reference_block():
