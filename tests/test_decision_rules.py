@@ -355,8 +355,8 @@ def test_judge_script_route_keihan_lines_use_dedicated_scripts():
     cases = [
         ("京阪不動産", "京阪不動産", "keihan_real_estate"),
         ("京阪不動産（浦添）", "京阪不動産（浦添）", "keihan_real_estate_urasoe"),
+        ("京阪夜間・休日", "京阪（夜間）", "keihan_night"),
         ("京阪（夜間）", "京阪（夜間）", "keihan_night"),
-        ("京阪大津", "京阪（夜間）", "keihan_night"),
         ("京阪休日", "京阪（夜間）", "keihan_night"),
         ("京阪（休日）", "京阪（夜間）", "keihan_night"),
         ("京阪夜間", "京阪（夜間）", "keihan_night"),
