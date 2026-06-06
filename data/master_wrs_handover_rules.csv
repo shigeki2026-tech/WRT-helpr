@@ -30,3 +30,5 @@ priority,enabled,rule_name,match_line,match_store_keywords,match_company_keyword
 290,1,コジマ（CHIKYUJIN）,コジマ;CHIKYUJIN;地球人,コジマ;CHIKYUJIN;地球人,コジマ;CHIKYUJIN;地球人,,,,,受付報告,【BKK】WRS（福岡）へ対応依頼,根拠：コジマ（CHIKYUJIN）案件に一致,,1
 300,1,チャオ,チャオ,チャオ,チャオ,,,,,受付報告,【BKK】WRS（福岡）へ対応依頼,根拠：チャオ案件に一致,,1
 310,1,WM案件（M停止）,WM案件;M停止,WM案件;M停止,WM案件;M停止,,,,,受付報告,【BKK】WRS（福岡）へ対応依頼,根拠：WM案件（M停止）に一致,,1
+320,1,Bosch,,,,,Bosch,,,受付報告,【BKK】WRS（福岡）へ対応依頼,根拠：Bosch案件に一致,,1
+330,1,松﨑電機 / エアコンのマツ,松﨑電機;松崎電機;エアコンのマツ,松﨑電機;松崎電機;エアコンのマツ,松﨑電機;松崎電機;エアコンのマツ,,,,,受付報告,【BKK】WRS（福岡）へ対応依頼,根拠：松﨑電機 / エアコンのマツ案件に一致,,1

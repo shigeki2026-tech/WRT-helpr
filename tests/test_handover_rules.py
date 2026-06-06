@@ -40,6 +40,9 @@ NEW_WRS_HANDOVER_CASES = (
     ("チャオ", "チャオ"),
     ("WM案件", "WM案件（M停止）"),
     ("M停止", "WM案件（M停止）"),
+    ("松﨑電機", "松﨑電機 / エアコンのマツ"),
+    ("松崎電機", "松﨑電機 / エアコンのマツ"),
+    ("エアコンのマツ", "松﨑電機 / エアコンのマツ"),
 )
 
 
@@ -207,6 +210,21 @@ def test_densan_wrs_handover_is_limited_to_jusetsu_cases():
     assert residential["needs_wrs_handover"] is True
     assert residential["rule_name"] == "電算システム案件"
     assert appliance["needs_wrs_handover"] is False
+
+
+def test_bosch_wrs_handover_matches_manufacturer_without_changing_vendor():
+    form = make_form(
+        manufacturer="Bosch",
+        product="食器洗い乾燥機",
+        appliance_type="住設",
+        prefecture="東京都",
+    )
+    decision = app.run_decision(form)
+
+    assert decision["wrs_handover_action"]["needs_wrs_handover"] is True
+    assert decision["wrs_handover_action"]["rule_name"] == "Bosch"
+    assert decision["wrs_handover_action"]["handover_request_content"] == "【BKK】WRS（福岡）へ対応依頼"
+    assert decision["vendor"] != decision["wrs_handover_action"]["handover_request_content"]
 
 
 @pytest.mark.parametrize(("store_name", "call_line", "expected_vendor"), SELF_REPAIR_VENDOR_CASES)
