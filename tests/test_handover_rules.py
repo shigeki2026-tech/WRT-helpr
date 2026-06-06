@@ -227,6 +227,31 @@ def test_bosch_wrs_handover_matches_manufacturer_without_changing_vendor():
     assert decision["vendor"] != decision["wrs_handover_action"]["handover_request_content"]
 
 
+@pytest.mark.parametrize(
+    "form_values",
+    [
+        {"operating_company": "株式会社日新"},
+        {"store_name": "株式会社日新"},
+        {"appliance_type": "住設"},
+        {"warranty_plan": "賃貸"},
+        {"warranty_plan": "中古"},
+        {"appliance_type": "住設", "warranty_plan": "賃貸"},
+        {"appliance_type": "住設", "warranty_plan": "中古"},
+    ],
+)
+def test_pending_wrs_handover_targets_do_not_match_broad_conditions(form_values):
+    result = wrs_handover(make_form(**form_values))
+
+    assert result["needs_wrs_handover"] is False
+
+
+def test_pending_wrs_handover_guard_keeps_clear_targets_matching():
+    result = wrs_handover(make_form(operating_company="株式会社アイ工務店"))
+
+    assert result["needs_wrs_handover"] is True
+    assert result["rule_name"] == "アイ工務店"
+
+
 @pytest.mark.parametrize(("store_name", "call_line", "expected_vendor"), SELF_REPAIR_VENDOR_CASES)
 def test_clear_self_repair_vendor_rules_take_priority_over_no7(store_name, call_line, expected_vendor):
     result = app.determine_vendor_from_rules(
