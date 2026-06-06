@@ -1598,6 +1598,87 @@ def test_teams_send_panel_status_sendable_and_sent():
     assert app.teams_send_status_label(["楽テルNO未入力"], already_sent=False, send_failed=True) == "送信不可"
 
 
+def test_teams_send_ui_state_success_is_clear_and_not_error():
+    state = SessionState({
+        "warranty_report_sent_at": "2026/05/08 12:34:56",
+        "warranty_report_sent_message": "送信済み本文",
+        "warranty_report_send_error_message": "古い失敗",
+    })
+
+    ui_state = app.build_teams_send_ui_state(
+        state,
+        "現在本文",
+        in_progress=False,
+        already_sent=True,
+        send_failed=True,
+        incomplete_reasons=[],
+        config_reasons=[],
+    )
+
+    assert ui_state["kind"] == "success"
+    assert ui_state["message"] == "Teamsへ送信しました。"
+    assert ui_state["caption"] == "送信日時：2026/05/08 12:34:56"
+    assert ui_state["sent_message"] == "送信済み本文"
+    assert "この本文は送信済みです" in ui_state["duplicate_notice"]
+
+
+def test_teams_send_ui_state_duplicate_is_not_fatal_error():
+    state = SessionState({"warranty_report_sent_at": "2026/05/08 12:34:56"})
+
+    ui_state = app.build_teams_send_ui_state(
+        state,
+        "現在本文",
+        in_progress=False,
+        already_sent=True,
+        send_failed=False,
+        incomplete_reasons=["送信済み（二重送信防止）"],
+        config_reasons=[],
+    )
+
+    assert ui_state["kind"] == "success"
+    assert "再送する場合" in ui_state["duplicate_notice"]
+
+
+def test_teams_send_ui_state_failure_is_error_without_success():
+    state = SessionState({"warranty_report_send_error_message": "送信失敗: denied"})
+
+    ui_state = app.build_teams_send_ui_state(
+        state,
+        "現在本文",
+        in_progress=False,
+        already_sent=False,
+        send_failed=True,
+        incomplete_reasons=[],
+        config_reasons=[],
+    )
+
+    assert ui_state == {"kind": "error", "message": "送信失敗：送信失敗: denied"}
+
+
+def test_teams_send_ui_state_pre_send_warning_only_when_blocked():
+    blocked_state = app.build_teams_send_ui_state(
+        SessionState(),
+        "現在本文",
+        in_progress=False,
+        already_sent=False,
+        send_failed=False,
+        incomplete_reasons=["Teams報告文が空"],
+        config_reasons=[],
+    )
+    ready_state = app.build_teams_send_ui_state(
+        SessionState(),
+        "現在本文",
+        in_progress=False,
+        already_sent=False,
+        send_failed=False,
+        incomplete_reasons=[],
+        config_reasons=[],
+    )
+
+    assert blocked_state == {"kind": "warning", "message": "送信不可：Teams報告文が空"}
+    assert ready_state == {"kind": "ready", "message": "送信可能"}
+
+
 def test_teams_send_panel_reasons_include_duplicate_send_state():
     form = {
         "rakuteru_no": "2026_05_0174",
@@ -2698,12 +2779,15 @@ def test_teams_send_success_ui_hides_normal_primary_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    already_sent_index = after_source.index("if already_sent:")
+    already_sent_index = after_source.index("elif already_sent:")
     sent_button_index = after_source.index('st.button("送信済み"', already_sent_index)
     resend_button_index = after_source.index('st.button("同じ内容を再送する"', sent_button_index)
     normal_button_index = after_source.index("st.button(send_button_label", resend_button_index)
 
-    assert "送信済み：" in after_source
+    assert 'st.success(send_ui_state["message"])' in after_source
+    assert "Teamsへ送信しました。" in source
+    assert "送信日時：" in source
+    assert "送信済み本文" in after_source
     assert sent_button_index < resend_button_index < normal_button_index
     assert 'type="primary"' not in after_source[sent_button_index:resend_button_index]
 
@@ -2715,13 +2799,14 @@ def test_teams_send_in_progress_ui_hides_normal_primary_send_button():
     after_source = source[after_index:master_index]
 
     in_progress_index = after_source.index("if in_progress:")
-    message_index = after_source.index("送信処理中：", in_progress_index)
-    disabled_button_index = after_source.index('st.button("送信処理中..."', message_index)
+    disabled_button_index = after_source.index('st.button("送信処理中..."', in_progress_index)
     normal_button_index = after_source.index("st.button(send_button_label", disabled_button_index)
 
     assert "teams_send_in_progress_body_hash" in source
     assert "teams_send_requested_body_hash" in source
     assert "teams_send_spinner_label(destination_key)" in after_source
+    assert "送信処理中：" in source
+    assert 'st.info(send_ui_state["message"])' in after_source
     assert "Microsoft Graph / PowerShell の応答待ちです。" not in after_source
     assert disabled_button_index < normal_button_index
     assert 'type="primary"' not in after_source[disabled_button_index:normal_button_index]
@@ -2755,10 +2840,11 @@ def test_teams_send_failure_ui_keeps_error_and_normal_send_button():
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    failure_index = after_source.index("elif send_failed:")
-    error_index = after_source.index("送信失敗：", failure_index)
+    failure_index = after_source.index('elif send_ui_state["kind"] == "error":')
+    error_index = after_source.index('st.error(send_ui_state["message"])', failure_index)
     normal_button_index = after_source.index("st.button(send_button_label", error_index)
 
+    assert "送信失敗：" in source
     assert failure_index < error_index < normal_button_index
     assert "_mark_warranty_report_send_failed" in after_source
 

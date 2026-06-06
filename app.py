@@ -3064,6 +3064,39 @@ def teams_send_status_label(incomplete_reasons: list[str], already_sent: bool,
     return "送信可能"
 
 
+def build_teams_send_ui_state(
+    session_state,
+    message: str,
+    in_progress: bool,
+    already_sent: bool,
+    send_failed: bool,
+    incomplete_reasons: list[str],
+    config_reasons: list[str] | None = None,
+) -> dict:
+    config_reasons = config_reasons or []
+    if in_progress:
+        started_at = session_state.get("warranty_report_send_started_at") or "日時不明"
+        return {"kind": "info", "message": f"送信処理中：{started_at}"}
+    if already_sent:
+        sent_at = session_state.get("warranty_report_sent_at") or "日時不明"
+        sent_message = (session_state.get("warranty_report_sent_message") or message or "").strip()
+        return {
+            "kind": "success",
+            "message": "Teamsへ送信しました。",
+            "caption": f"送信日時：{sent_at}",
+            "duplicate_notice": "この本文は送信済みです。再送する場合は「同じ内容を再送する」を実行してください。",
+            "sent_message": sent_message,
+        }
+    if send_failed:
+        error_message = session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
+        return {"kind": "error", "message": f"送信失敗：{error_message}"}
+    if incomplete_reasons:
+        return {"kind": "warning", "message": f"送信不可：{incomplete_reasons[0]}"}
+    if config_reasons:
+        return {"kind": "warning", "message": f"送信不可：{config_reasons[0]}"}
+    return {"kind": "ready", "message": "送信可能"}
+
+
 def load_local_user_settings(path: str | None = None) -> dict:
     settings_path = path or LOCAL_USER_SETTINGS_PATH
     if not os.path.exists(settings_path):
@@ -9501,20 +9534,34 @@ def render_tab_after_call():
                 destination,
             )
             send_status = teams_test_send_status_label(incomplete_reasons, already_sent, send_failed, in_progress)
-        if in_progress:
-            started_at = st.session_state.get("warranty_report_send_started_at") or "日時不明"
-            st.info(f"送信処理中：{started_at}")
-        elif already_sent:
-            sent_at = st.session_state.get("warranty_report_sent_at") or "日時不明"
-            st.info(f"送信済み：{sent_at}")
-        elif send_failed:
-            error_message = st.session_state.get("warranty_report_send_error_message") or "エラー内容を取得できませんでした"
-            st.error(f"送信失敗：{error_message}")
-        elif incomplete_reasons:
-            st.warning(f"送信不可：{incomplete_reasons[0]}")
-        elif config_reasons:
-            st.warning(f"送信不可：{config_reasons[0]}")
         message = teams_chat_message
+        send_ui_state = build_teams_send_ui_state(
+            st.session_state,
+            message,
+            in_progress,
+            already_sent,
+            send_failed,
+            incomplete_reasons,
+            config_reasons,
+        )
+        if send_ui_state["kind"] == "info":
+            st.info(send_ui_state["message"])
+        elif send_ui_state["kind"] == "success":
+            st.success(send_ui_state["message"])
+            st.caption(send_ui_state["caption"])
+            st.info(send_ui_state["duplicate_notice"])
+            with st.expander("送信済み本文", expanded=False):
+                st.text_area(
+                    "送信済み本文",
+                    send_ui_state["sent_message"],
+                    height=160,
+                    disabled=True,
+                    key=f"teams_sent_message_preview_{destination_key}",
+                )
+        elif send_ui_state["kind"] == "error":
+            st.error(send_ui_state["message"])
+        elif send_ui_state["kind"] == "warning":
+            st.warning(send_ui_state["message"])
 
         def request_teams_send(allow_resend: bool = False):
             current_already_sent = _warranty_report_already_sent(st.session_state, message, destination_key)
