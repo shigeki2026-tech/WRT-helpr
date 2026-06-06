@@ -529,7 +529,7 @@ def test_teams_config_example_exists():
     example = json.loads(example_path.read_text(encoding="utf-8"))
     assert example == {
         "enabled": False,
-        "chat_id": "REPLACE_WITH_TEAMS_CHAT_ID",
+        "chat_id": "",
         "chat_name": "WRT報告用チャット",
         "send_mode": "powershell_graph",
         "warranty_enabled": True,
@@ -3939,6 +3939,27 @@ def test_teams_config_json_is_gitignored_and_not_tracked():
 
     assert "config/teams_config.json" in gitignore_lines
     assert tracked.stdout.strip() == ""
+
+
+def test_teams_runtime_logs_are_gitignored():
+    gitignore_lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert "logs/" in gitignore_lines
+
+
+def test_teams_send_setup_doc_documents_secret_handling_and_manual_test():
+    doc_path = ROOT / "docs" / "teams_send_setup.md"
+    assert doc_path.is_file()
+    source = doc_path.read_text(encoding="utf-8")
+
+    assert "config/teams_config.example.json" in source
+    assert "config/teams_config.json" in source
+    assert "Git 管理対象外" in source or "Git管理対象外" in source
+    assert "本番 `chat_id`" in source
+    assert "cd \"$env:USERPROFILE\\Documents\\Projects\\WRT-helpr\"" in source
+    assert "Connect-MgGraph -Scopes \"ChatMessage.Send\"" in source
+    assert ".\\scripts\\send_teams_message.ps1" in source
+    assert "本番Teams送信テストは自動テストでは行わない" in source
 
 
 def test_after_call_regeneration_dirty_state_helpers():
