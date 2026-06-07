@@ -357,9 +357,10 @@ def test_after_call_top_summary_keeps_details_collapsed():
     assert after_source.index("##### 手配情報") > memo_heading_index
     assert 'st.expander("送付テンプレート・拠点の詳細を開く", expanded=False)' not in after_source
     assert 'st.expander("候補テンプレートの詳細を見る", expanded=False)' not in after_source
-    # 修理拠点・手配詳細（Drive・連絡先表）は折りたたみで維持
+    # 修理拠点・手配詳細は折りたたみで維持し、連絡先表は入れ子 expander を避けて通常表示する
     assert 'st.expander("修理拠点・手配詳細を開く", expanded=False)' in after_source
-    assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
+    assert 'with st.expander("手配方法・連絡先の詳細"' not in after_source
+    assert 'st.markdown("###### 手配方法・連絡先の詳細")' in after_source
     assert after_source.index("修理拠点・手配詳細を開く") < memo_heading_index
 
 
@@ -400,14 +401,17 @@ def test_after_call_history_template_is_collapsed_as_legacy_format():
     assert after_source.index('render_copy_button("📋 コピー", history_tmpl, "copy_history_after_template")') > history_index
 
 
-def test_after_call_contact_method_table_is_collapsed_by_default():
+def test_after_call_contact_method_table_avoids_nested_expander():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert "###### 手配方法・連絡先" not in after_source
-    assert 'st.expander("手配方法・連絡先の詳細", expanded=False)' in after_source
+    assert 'with st.expander("手配方法・連絡先の詳細"' not in after_source
+    assert 'with st.expander("送信済み本文"' not in after_source
+    assert 'st.markdown("###### 手配方法・連絡先の詳細")' in after_source
+    assert "送信済み本文" in after_source
+    assert 'st.text_area(\n                "送信済み本文"' in after_source
 
 
 def test_after_call_uses_shared_status_card_css_classes():
@@ -2785,9 +2789,12 @@ def test_teams_send_success_ui_hides_normal_primary_send_button():
     normal_button_index = after_source.index("st.button(send_button_label", resend_button_index)
 
     assert 'st.success(send_ui_state["message"])' in after_source
+    assert 'st.info(send_ui_state["duplicate_notice"])' in after_source
     assert "Teamsへ送信しました。" in source
     assert "送信日時：" in source
     assert "送信済み本文" in after_source
+    assert 'with st.expander("送信済み本文"' not in after_source
+    assert 'st.text_area(\n                "送信済み本文"' in after_source
     assert sent_button_index < resend_button_index < normal_button_index
     assert 'type="primary"' not in after_source[sent_button_index:resend_button_index]
 

@@ -9130,7 +9130,8 @@ def render_tab_after_call():
                 st.caption("依頼書PDF格納先：")
                 st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
 
-            with st.expander("手配方法・連絡先の詳細", expanded=False):
+            st.markdown("###### 手配方法・連絡先の詳細")
+            with st.container():
                 st.markdown(
                     """| 拠点 | 手配方法 | 連絡先 |
 |------|----------|--------|
@@ -9550,14 +9551,14 @@ def render_tab_after_call():
             st.success(send_ui_state["message"])
             st.caption(send_ui_state["caption"])
             st.info(send_ui_state["duplicate_notice"])
-            with st.expander("送信済み本文", expanded=False):
-                st.text_area(
-                    "送信済み本文",
-                    send_ui_state["sent_message"],
-                    height=160,
-                    disabled=True,
-                    key=f"teams_sent_message_preview_{destination_key}",
-                )
+            st.caption("送信済み本文")
+            st.text_area(
+                "送信済み本文",
+                send_ui_state["sent_message"],
+                height=160,
+                disabled=True,
+                key=f"teams_sent_message_preview_{destination_key}",
+            )
         elif send_ui_state["kind"] == "error":
             st.error(send_ui_state["message"])
         elif send_ui_state["kind"] == "warning":
