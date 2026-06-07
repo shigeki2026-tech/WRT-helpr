@@ -11,3 +11,4 @@ __pycache__/
 config/teams_config.json
 config/local_user_settings.json
 logs/
+backups/

@@ -998,15 +998,111 @@ def _safe_master_csv_path(filename: str, data_dir: str | None = None) -> str:
     return path
 
 
-def _master_backup_path(filename: str, data_dir: str | None = None) -> str:
+def _master_project_dir(data_dir: str | None = None) -> str:
+    if data_dir is None:
+        return APP_DIR
     base_dir = _master_data_dir(data_dir)
-    backup_dir = os.path.abspath(os.path.join(base_dir, "_backup"))
-    if os.path.dirname(backup_dir) != base_dir:
-        raise ValueError("Backup writes are limited to data/_backup")
-    os.makedirs(backup_dir, exist_ok=True)
-    stem = os.path.splitext(filename)[0]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return os.path.join(backup_dir, f"{stem}_{timestamp}.csv")
+    return os.path.abspath(os.path.dirname(base_dir))
+
+
+def build_master_backup_path(
+    filename: str,
+    data_dir: str | None = None,
+    timestamp: datetime | None = None,
+) -> str:
+    if filename not in MASTER_APPEND_TARGETS:
+        raise ValueError(f"Unsupported master CSV: {filename}")
+    project_dir = _master_project_dir(data_dir)
+    backup_dir = os.path.abspath(os.path.join(project_dir, "backups", "master_csv"))
+    expected_parent = os.path.abspath(os.path.join(project_dir, "backups"))
+    if os.path.dirname(backup_dir) != expected_parent:
+        raise ValueError("Backup writes are limited to backups/master_csv")
+    stamp = (timestamp or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    return os.path.join(backup_dir, f"{filename}.{stamp}.bak")
+
+
+def _master_backup_path(filename: str, data_dir: str | None = None) -> str:
+    backup_path = build_master_backup_path(filename, data_dir)
+    os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+    if os.path.exists(backup_path):
+        root, ext = os.path.splitext(backup_path)
+        counter = 1
+        while os.path.exists(f"{root}.{counter}{ext}"):
+            counter += 1
+        backup_path = f"{root}.{counter}{ext}"
+    return backup_path
+
+
+def backup_master_csv(filename: str, data_dir: str | None = None) -> str:
+    path = _safe_master_csv_path(filename, data_dir)
+    columns = MASTER_APPEND_TARGETS[filename]
+    backup_path = _master_backup_path(filename, data_dir)
+    if os.path.exists(path):
+        shutil.copy2(path, backup_path)
+    else:
+        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerow(columns)
+    return backup_path
+
+
+def _master_edit_log_path(data_dir: str | None = None) -> str:
+    project_dir = _master_project_dir(data_dir)
+    log_dir = os.path.abspath(os.path.join(project_dir, "logs"))
+    if os.path.dirname(log_dir) != project_dir:
+        raise ValueError("Log writes are limited to logs/")
+    return os.path.join(log_dir, "master_edit_log.csv")
+
+
+def _master_operator_name() -> str:
+    try:
+        form = getattr(st, "session_state", {}).get("form") or {}
+        operator = str(form.get("operator_name") or "").strip()
+        if operator:
+            return operator
+    except Exception:
+        pass
+    return os.environ.get("USERNAME") or os.environ.get("USER") or "unknown"
+
+
+def append_master_edit_log(
+    *,
+    filename: str,
+    action: str,
+    rows_before: int,
+    rows_after: int,
+    backup_path: str,
+    operator: str | None = None,
+    note: str = "",
+    data_dir: str | None = None,
+) -> str:
+    log_path = _master_edit_log_path(data_dir)
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    exists = os.path.exists(log_path)
+    columns = [
+        "timestamp",
+        "file",
+        "action",
+        "rows_before",
+        "rows_after",
+        "backup_path",
+        "operator",
+        "note",
+    ]
+    with open(log_path, "a", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "file": filename,
+            "action": action,
+            "rows_before": rows_before,
+            "rows_after": rows_after,
+            "backup_path": backup_path,
+            "operator": operator or _master_operator_name(),
+            "note": note,
+        })
+    return log_path
 
 
 def _read_master_csv_rows(filename: str, columns: list[str], data_dir: str | None = None) -> tuple[list[str], list[dict]]:
@@ -1052,6 +1148,7 @@ def _append_master_csv_row(
         return {"ok": False, "reason": "missing_required", "missing": missing, "row": clean_row}
 
     header, rows = _read_master_csv_rows(filename, columns, data_dir)
+    rows_before = len(rows)
     duplicate_key = tuple(_normalize_duplicate_value(clean_row.get(col)) for col in duplicate_cols)
     for existing in rows:
         existing_key = tuple(_normalize_duplicate_value(existing.get(col)) for col in duplicate_cols)
@@ -1065,25 +1162,30 @@ def _append_master_csv_row(
 
     path = _safe_master_csv_path(filename, data_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    backup_path = _master_backup_path(filename, data_dir)
-    if os.path.exists(path):
-        shutil.copy2(path, backup_path)
-    else:
-        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
-            csv.writer(f).writerow(columns)
+    backup_path = backup_master_csv(filename, data_dir)
 
     output_columns = [col for col in header if col] or columns
     for col in columns:
         if col not in output_columns:
             output_columns.append(col)
     rows.append(clean_row)
+    rows_after = len(rows)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
+    log_path = append_master_edit_log(
+        filename=filename,
+        action="append",
+        rows_before=rows_before,
+        rows_after=rows_after,
+        backup_path=backup_path,
+        note="master csv append",
+        data_dir=data_dir,
+    )
     _clear_streamlit_cache()
-    return {"ok": True, "reason": "appended", "row": clean_row, "backup_path": backup_path, "path": path}
+    return {"ok": True, "reason": "appended", "row": clean_row, "backup_path": backup_path, "path": path, "log_path": log_path}
 
 
 def _upsert_master_csv_row(
@@ -1104,6 +1206,7 @@ def _upsert_master_csv_row(
         return {"ok": False, "reason": "missing_required", "missing": missing, "row": clean_row}
 
     header, rows = _read_master_csv_rows(filename, columns, data_dir)
+    rows_before = len(rows)
     clean_key = tuple(_normalize_duplicate_value(clean_row.get(col)) for col in key_cols)
     updated = False
     for index, existing in enumerate(rows):
@@ -1119,22 +1222,28 @@ def _upsert_master_csv_row(
 
     path = _safe_master_csv_path(filename, data_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    backup_path = _master_backup_path(filename, data_dir)
-    if os.path.exists(path):
-        shutil.copy2(path, backup_path)
-    else:
-        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
-            csv.writer(f).writerow(columns)
+    backup_path = backup_master_csv(filename, data_dir)
 
     output_columns = [col for col in header if col] or columns
     for col in columns:
         if col not in output_columns:
             output_columns.append(col)
+    rows_after = len(rows)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
+    action = "update" if updated else "append"
+    log_path = append_master_edit_log(
+        filename=filename,
+        action=action,
+        rows_before=rows_before,
+        rows_after=rows_after,
+        backup_path=backup_path,
+        note="master csv upsert",
+        data_dir=data_dir,
+    )
     _clear_streamlit_cache()
     return {
         "ok": True,
@@ -1142,6 +1251,7 @@ def _upsert_master_csv_row(
         "row": clean_row,
         "backup_path": backup_path,
         "path": path,
+        "log_path": log_path,
     }
 
 
@@ -1231,6 +1341,7 @@ def append_master_manufacturer_group(row: dict, data_dir: str | None = None) -> 
         return {"ok": False, "reason": "missing_required", "missing": ["manufacturers"], "row": row}
 
     header, rows = _read_master_csv_rows("master_manufacturer_groups.csv", _MFR_GROUP_COLS, data_dir)
+    rows_before = len(rows)
     target = None
     for existing in rows:
         if _normalize_duplicate_value(existing.get("group_name")) == _normalize_duplicate_value(group_name):
@@ -1246,12 +1357,7 @@ def append_master_manufacturer_group(row: dict, data_dir: str | None = None) -> 
 
     path = _safe_master_csv_path("master_manufacturer_groups.csv", data_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    backup_path = _master_backup_path("master_manufacturer_groups.csv", data_dir)
-    if os.path.exists(path):
-        shutil.copy2(path, backup_path)
-    else:
-        with open(backup_path, "w", encoding="utf-8-sig", newline="") as f:
-            csv.writer(f).writerow(_MFR_GROUP_COLS)
+    backup_path = backup_master_csv("master_manufacturer_groups.csv", data_dir)
 
     if target:
         merged = _split_master_manufacturers(target.get("manufacturers", "")) + additions
@@ -1265,13 +1371,23 @@ def append_master_manufacturer_group(row: dict, data_dir: str | None = None) -> 
     for col in _MFR_GROUP_COLS:
         if col not in output_columns:
             output_columns.append(col)
+    rows_after = len(rows)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=output_columns, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
+    log_path = append_master_edit_log(
+        filename="master_manufacturer_groups.csv",
+        action="update" if target else "append",
+        rows_before=rows_before,
+        rows_after=rows_after,
+        backup_path=backup_path,
+        note="master manufacturer group edit",
+        data_dir=data_dir,
+    )
     _clear_streamlit_cache()
-    return {"ok": True, "reason": "updated", "row": {"group_name": group_name, "manufacturers": ";".join(additions), "notes": notes}, "backup_path": backup_path, "path": path}
+    return {"ok": True, "reason": "updated", "row": {"group_name": group_name, "manufacturers": ";".join(additions), "notes": notes}, "backup_path": backup_path, "path": path, "log_path": log_path}
 
 
 def master_csv_has_duplicate(filename: str, row: dict, duplicate_cols: list[str], data_dir: str | None = None) -> bool:
@@ -1279,6 +1395,58 @@ def master_csv_has_duplicate(filename: str, row: dict, duplicate_cols: list[str]
     _, rows = _read_master_csv_rows(filename, columns, data_dir)
     key = tuple(_normalize_duplicate_value(row.get(col)) for col in duplicate_cols)
     return any(tuple(_normalize_duplicate_value(existing.get(col)) for col in duplicate_cols) == key for existing in rows)
+
+
+MASTER_DUPLICATE_CHECK_COLS = [
+    "rule_name",
+    "call_line_code",
+    "template_code",
+    "vendor_name",
+    "match_line",
+    "match_store_keywords",
+    "match_company_keywords",
+]
+
+
+def detect_master_duplicate_warnings(
+    filename: str,
+    rows: list[dict] | pd.DataFrame | None = None,
+    data_dir: str | None = None,
+) -> list[dict]:
+    columns = MASTER_APPEND_TARGETS.get(filename, [])
+    if rows is None:
+        _, source_rows = _read_master_csv_rows(filename, columns, data_dir)
+    elif isinstance(rows, pd.DataFrame):
+        source_rows = rows.fillna("").astype(str).to_dict("records")
+    else:
+        source_rows = rows
+
+    warnings = []
+    for col in MASTER_DUPLICATE_CHECK_COLS:
+        if col not in columns:
+            continue
+        seen: dict[str, int] = {}
+        samples: dict[str, str] = {}
+        for row in source_rows:
+            raw = str((row or {}).get(col) or "").strip()
+            if not raw:
+                continue
+            key = _normalize_duplicate_value(raw)
+            seen[key] = seen.get(key, 0) + 1
+            samples.setdefault(key, raw)
+        duplicates = [
+            {"value": samples[key], "count": count}
+            for key, count in sorted(seen.items())
+            if count > 1
+        ]
+        if duplicates:
+            warnings.append({
+                "filename": filename,
+                "column": col,
+                "duplicates": duplicates,
+                "severity": "error" if col in {"rule_name", "call_line_code", "template_code"} else "warning",
+            })
+    return warnings
 
 
 def _short_store_keyword(store_name: str) -> str:
@@ -9761,8 +9929,59 @@ def _preview_master_row(row: dict, columns: list[str]) -> None:
     st.dataframe(pd.DataFrame([{col: row.get(col, "") for col in columns}]), use_container_width=True)
 
 
+def _show_master_save_plan(
+    *,
+    filename: str,
+    row: dict,
+    key_cols: list[str],
+    action: str = "append",
+    data_dir: str | None = None,
+) -> None:
+    columns = MASTER_APPEND_TARGETS[filename]
+    _, rows = _read_master_csv_rows(filename, columns, data_dir)
+    key_values = {col: row.get(col, "") for col in key_cols if col in columns}
+    rows_before = len(rows)
+    rows_after = rows_before + 1
+    if action == "upsert":
+        target_key = tuple(_normalize_duplicate_value(row.get(col)) for col in key_cols)
+        exists = any(
+            tuple(_normalize_duplicate_value(existing.get(col)) for col in key_cols) == target_key
+            for existing in rows
+        )
+        rows_after = rows_before if exists else rows_before + 1
+
+    st.info(
+        f"保存対象: {filename} / 予定: {'変更' if rows_after == rows_before else '追加'} "
+        f"{abs(rows_after - rows_before) or 1}行 / 保存するとCSVを上書きします。"
+    )
+    if key_values:
+        st.caption("主要キー: " + ", ".join(f"{k}={v}" for k, v in key_values.items()))
+    st.caption(f"行数: {rows_before} -> {rows_after}")
+
+
+def _show_master_duplicate_warnings(filename: str, rows: list[dict] | pd.DataFrame | None = None) -> bool:
+    warnings = detect_master_duplicate_warnings(filename, rows)
+    has_blocking_error = False
+    for warning in warnings:
+        text = "; ".join(
+            f"{item['value']} ({item['count']}件)"
+            for item in warning["duplicates"][:5]
+        )
+        message = f"{filename}: {warning['column']} に重複候補があります: {text}"
+        if warning["severity"] == "error":
+            has_blocking_error = True
+            st.error(message)
+        else:
+            st.warning(message)
+    return has_blocking_error
+
+
 def _show_master_append_result(result: dict) -> None:
     if result.get("ok"):
+        st.success("保存しました。バックアップ作成済みです。キャッシュをクリアしました。必要なら再判定してください。")
+        st.caption(f"バックアップ: {result.get('backup_path', '')}")
+        if result.get("log_path"):
+            st.caption(f"保存ログ: {result.get('log_path', '')}")
         st.success(f"CSVへ1行追加しました。バックアップ: {os.path.basename(result.get('backup_path', ''))}")
     elif result.get("reason") == "duplicate":
         st.warning("同じキーの行が既にあるため追加しませんでした。既存行を確認してください。")
@@ -9783,6 +10002,7 @@ def _render_product_alias_append_ui() -> None:
         "notes": st.text_input("備考 notes", value=_candidate_field("product_alias", "notes"), key="master_alias_notes"),
     }
     _preview_master_row(row, _ALIAS_COLS)
+    _show_master_save_plan(filename="master_product_alias.csv", row=row, key_cols=["keyword"])
     duplicate = bool(row["keyword"]) and master_csv_has_duplicate("master_product_alias.csv", row, ["keyword"])
     if duplicate:
         st.warning("同一 keyword が既にあります。原則追加しません。")
@@ -9817,6 +10037,7 @@ def _render_repair_type_append_ui() -> None:
     }
     _preview_master_row(row, _REPAIR_TYPE_COLS)
     duplicate_cols = ["product_keyword", "manufacturer_keyword", "model_keyword", "condition_keyword"]
+    _show_master_save_plan(filename="master_repair_type_rules.csv", row=row, key_cols=duplicate_cols)
     duplicate = bool(row["product_keyword"]) and master_csv_has_duplicate("master_repair_type_rules.csv", row, duplicate_cols)
     if duplicate:
         st.warning("同一 product_keyword + manufacturer_keyword + model_keyword + condition_keyword が既にあります。")
@@ -9839,6 +10060,7 @@ def _render_store_rule_append_ui() -> None:
         "notes": st.text_input("備考 notes", value=_candidate_field("store_rule", "notes"), key="master_store_notes"),
     }
     _preview_master_row(row, _STORE_RULE_COLS)
+    _show_master_save_plan(filename="master_store_rules.csv", row=row, key_cols=["store_keyword"])
     duplicate = bool(row["store_keyword"]) and master_csv_has_duplicate("master_store_rules.csv", row, ["store_keyword"])
     if duplicate:
         st.warning("同一 store_keyword が既にあります。原則追加しません。")
@@ -9870,8 +10092,13 @@ def _render_vendor_rule_append_ui() -> None:
         "contact_type": st.text_input("連絡種別 contact_type", value=_candidate_field("vendor_rule", "contact_type"), key="master_vendor_contact"),
     }
     _preview_master_row(row, _VENDOR_COLS)
+    duplicate_cols = ["call_line", "prefecture", "area_group", "manufacturer_keyword", "product_keyword", "store_keyword", "repair_type", "is_over_10years"]
+    _show_master_save_plan(filename="master_vendor_rules.csv", row=row, key_cols=duplicate_cols + ["vendor_name"])
+    duplicate = bool(row["repair_type"]) and master_csv_has_duplicate("master_vendor_rules.csv", row, duplicate_cols)
+    if duplicate:
+        st.warning("同じ修理拠点ルールの候補が既にあります。保存できません。")
     confirmed = st.checkbox("保存前確認", key="master_vendor_confirm")
-    disabled = not confirmed or not row["repair_type"].strip() or not row["vendor_name"].strip()
+    disabled = not confirmed or not row["repair_type"].strip() or not row["vendor_name"].strip() or duplicate
     if st.button("修理拠点ルールを追加", key="master_vendor_add", type="primary", disabled=disabled):
         _show_master_append_result(append_master_vendor_rule(row))
         st.rerun()
@@ -9889,6 +10116,7 @@ def _render_manufacturer_group_append_ui() -> None:
         "notes": st.text_input("備考 notes", value=str(mfr_candidate.get("notes") or "インライン登録候補"), key="master_mfr_notes"),
     }
     _preview_master_row(row, _MFR_GROUP_COLS)
+    _show_master_save_plan(filename="master_manufacturer_groups.csv", row=row, key_cols=["group_name", "manufacturers"], action="upsert")
     disabled = not row["group_name"].strip() or not row["manufacturers"].strip() or row["manufacturers"].strip() in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
     if st.button("メーカーグループへ追加", key="master_mfr_add", type="primary", disabled=disabled):
         _show_master_append_result(append_master_manufacturer_group(row))
@@ -9923,6 +10151,7 @@ def _render_call_line_master_edit_ui() -> None:
         "aliases": st.text_input("aliases（; 区切り）", value=str(selected_row.get("aliases", "") or ""), key="call_line_master_aliases"),
     }
     _preview_master_row(row, _CALL_LINE_COLS)
+    _show_master_save_plan(filename="master_call_lines.csv", row=row, key_cols=["call_line_code"], action="upsert")
     display = row["display_name"].strip()
     code = (row["call_line_code"] or display).strip()
     duplicate_display = False
@@ -9973,6 +10202,7 @@ def _render_vendor_send_template_edit_ui() -> None:
         "notes": st.text_input("notes", value=str(selected_row.get("notes", "") or ""), key="vendor_send_tpl_notes"),
     }
     _preview_master_row(row, _VENDOR_SEND_TEMPLATE_COLS)
+    _show_master_save_plan(filename="master_vendor_send_templates.csv", row=row, key_cols=["template_code"], action="upsert")
     preview_context = build_vendor_send_template_context(
         st.session_state.get("form") or {},
         {},

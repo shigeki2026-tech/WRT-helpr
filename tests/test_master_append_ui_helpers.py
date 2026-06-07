@@ -2,6 +2,7 @@
 
 import csv
 import os
+import re
 import sys
 import unittest.mock as mock
 import uuid
@@ -68,6 +69,39 @@ def test_product_alias_append_adds_one_row_and_backup():
     assert rows[0]["enabled"] == "1"
     assert rows[0]["keyword"] == "電気調理器・調理圧力鍋"
     assert os.path.exists(result["backup_path"])
+
+
+def test_master_backup_path_uses_expected_master_backup_format():
+    data_dir = _make_data_dir()
+    backup_path = app.build_master_backup_path(
+        "master_product_alias.csv",
+        data_dir=str(data_dir),
+        timestamp=app.datetime(2026, 6, 7, 19, 30, 0),
+    )
+
+    assert backup_path.endswith(
+        os.path.join("backups", "master_csv", "master_product_alias.csv.20260607_193000.bak")
+    )
+    assert re.search(r"master_product_alias\.csv\.\d{8}_\d{6}\.bak$", backup_path)
+
+
+def test_master_append_writes_edit_log():
+    data_dir = _make_data_dir()
+    _write_master_csv(data_dir, "master_product_alias.csv", app._ALIAS_COLS)
+
+    result = app.append_master_product_alias(
+        {"keyword": "log-test", "normalized_product": "product"},
+        data_dir=str(data_dir),
+    )
+
+    assert result["ok"] is True
+    assert os.path.exists(result["log_path"])
+    rows = _read_rows(Path(result["log_path"]))
+    assert rows[-1]["file"] == "master_product_alias.csv"
+    assert rows[-1]["action"] == "append"
+    assert rows[-1]["rows_before"] == "0"
+    assert rows[-1]["rows_after"] == "1"
+    assert rows[-1]["backup_path"] == result["backup_path"]
 
 
 def test_product_alias_duplicate_keyword_is_detected():
@@ -393,6 +427,27 @@ def test_call_line_master_upsert_updates_row_and_creates_backup(monkeypatch):
     assert "家電保証対応業務（24時間）" in rows[0]["aliases"]
     assert os.path.exists(result["backup_path"])
     clear_mock.assert_called_once()
+
+
+def test_detect_master_duplicate_warnings_for_blocking_key():
+    warnings = app.detect_master_duplicate_warnings(
+        "master_call_lines.csv",
+        [
+            {"call_line_code": "home", "display_name": "A"},
+            {"call_line_code": " HOME ", "display_name": "B"},
+        ],
+    )
+
+    assert warnings
+    assert warnings[0]["column"] == "call_line_code"
+    assert warnings[0]["severity"] == "error"
+    assert warnings[0]["duplicates"][0]["count"] == 2
+
+
+def test_backups_dir_is_gitignored():
+    gitignore = Path(app.APP_DIR, ".gitignore").read_text(encoding="utf-8")
+
+    assert "backups/" in gitignore.splitlines()
 
 
 def test_vendor_send_template_upsert_creates_backup_and_clears_cache(monkeypatch):
