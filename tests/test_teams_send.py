@@ -612,6 +612,45 @@ def test_teams_config_supports_destination_map(monkeypatch, tmp_path):
     assert self_test["label"] == "自分宛てテスト"
 
 
+def test_teams_config_reads_bom_and_allows_self_test_destination_chat_id(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    config_path.write_text(
+        "\ufeff" + json.dumps({
+            "enabled": True,
+            "chat_id": "",
+            "send_mode": "powershell_graph",
+            "default_destination": "self_test",
+            "destinations": {
+                "self_test": {
+                    "enabled": True,
+                    "chat_name": "self test",
+                    "chat_id": "self-chat",
+                },
+                "warranty": {
+                    "enabled": False,
+                    "chat_name": "warranty",
+                    "chat_id": "warranty-chat",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("WRT_TEAMS_CHAT_ID", raising=False)
+
+    config = app.load_teams_config()
+    self_test = app.resolve_warranty_report_destination(config, "self_test")
+    warranty = app.resolve_warranty_report_destination(config, "warranty")
+
+    assert config["enabled"] is True
+    assert config["default_destination"] == "self_test"
+    assert self_test["enabled"] is True
+    assert self_test["chat_id"] == "self-chat"
+    assert app.teams_test_config_unavailable_reasons(config, self_test) == []
+    assert warranty["enabled"] is False
+    assert app.warranty_teams_config_unavailable_reasons(config, warranty)
+
+
 def test_legacy_teams_config_still_resolves_warranty_and_self_test_destinations():
     config = warranty_config(enabled=True, chat_id="warranty-chat")
     config.update({
@@ -627,6 +666,103 @@ def test_legacy_teams_config_still_resolves_warranty_and_self_test_destinations(
     assert warranty["enabled"] is True
     assert self_test["chat_id"] == "self-chat"
     assert self_test["enabled"] is True
+
+
+def test_self_test_destination_requires_destination_chat_id():
+    config = {
+        "enabled": True,
+        "chat_id": "",
+        "send_mode": "powershell_graph",
+        "destinations": {
+            "self_test": {
+                "enabled": True,
+                "chat_name": "self test",
+                "chat_id": "",
+            },
+        },
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    assert destination["enabled"] is False
+    assert destination["chat_id"] == ""
+    assert any(
+        "chat_id" in reason
+        for reason in app.teams_test_config_unavailable_reasons(config, destination)
+    )
+
+
+def test_warranty_destination_stays_disabled_when_destination_disabled():
+    config = {
+        "enabled": True,
+        "chat_id": "self-chat",
+        "send_mode": "powershell_graph",
+        "destinations": {
+            "warranty": {
+                "enabled": False,
+                "chat_name": "warranty",
+                "chat_id": "warranty-chat",
+            },
+        },
+    }
+    destination = app.resolve_warranty_report_destination(config, "warranty")
+
+    assert destination["enabled"] is False
+    assert app.warranty_teams_config_unavailable_reasons(config, destination)
+
+
+def test_self_test_not_sendable_when_root_disabled():
+    # root enabled=False の場合は self_test に chat_id があっても送信不可になること。
+    config = {
+        "enabled": False,
+        "chat_id": "",
+        "send_mode": "powershell_graph",
+        "destinations": {
+            "self_test": {
+                "enabled": True,
+                "chat_name": "self test",
+                "chat_id": "self-chat",
+            },
+        },
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    reasons = app.teams_test_config_unavailable_reasons(config, destination)
+    assert reasons  # 送信不可（理由あり）
+    assert any("無効" in reason for reason in reasons)
+
+    incomplete = app.build_teams_test_send_incomplete_reasons(
+        {"teams_chat_message": "hello"}, config, False, destination
+    )
+    assert "自分宛てテスト送信設定が未完了" in incomplete
+
+
+def test_self_test_incomplete_reason_absent_when_destination_chat_id_set():
+    # 新形式: destinations.self_test.chat_id が設定済みなら
+    # UI上の「自分宛てテスト送信設定が未完了」が出ないこと（root chat_id は空でも可）。
+    config = {
+        "enabled": True,
+        "chat_id": "",
+        "send_mode": "powershell_graph",
+        "default_destination": "self_test",
+        "destinations": {
+            "self_test": {
+                "enabled": True,
+                "chat_name": "自分宛てテスト",
+                "chat_id": "self-chat",
+            },
+        },
+    }
+    destination = app.resolve_warranty_report_destination(config, "self_test")
+
+    assert destination["enabled"] is True
+    assert destination["chat_id"] == "self-chat"
+    assert app.teams_test_config_unavailable_reasons(config, destination) == []
+
+    incomplete = app.build_teams_test_send_incomplete_reasons(
+        {"teams_chat_message": "hello"}, config, False, destination
+    )
+    assert "自分宛てテスト送信設定が未完了" not in incomplete
+    assert incomplete == []
 
 
 def test_teams_config_enabled_false_is_disabled(monkeypatch, tmp_path):

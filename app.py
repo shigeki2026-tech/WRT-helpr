@@ -3338,7 +3338,7 @@ def load_teams_config() -> dict:
 
     if config_exists:
         try:
-            with open(TEAMS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(TEAMS_CONFIG_PATH, "r", encoding="utf-8-sig") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 config.update({k: v for k, v in loaded.items() if k in config})
@@ -3364,7 +3364,16 @@ def load_teams_config() -> dict:
                 config["warranty_enabled"] = True
 
     if not config.get("chat_id"):
-        config["enabled"] = False
+        destinations = config.get("destinations")
+        has_destination_chat_id = False
+        if isinstance(destinations, dict):
+            has_destination_chat_id = any(
+                isinstance(destination, dict)
+                and bool((destination.get("chat_id") or "").strip())
+                for destination in destinations.values()
+            )
+        if not has_destination_chat_id:
+            config["enabled"] = False
 
     return config
 
