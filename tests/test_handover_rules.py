@@ -252,6 +252,52 @@ def test_pending_wrs_handover_guard_keeps_clear_targets_matching():
     assert result["rule_name"] == "アイ工務店"
 
 
+@pytest.mark.parametrize(
+    "form_values",
+    [
+        {"product": "メガネ"},
+        {"manufacturer": "SKY"},
+        {"product": "SKY"},
+        {"product": "コジマ製品"},
+        {"manufacturer": "チャオ"},
+        {"memo": "M停止という語を含む通常メモ"},
+        {"symptom_detail": "電算という語だけを含む問い合わせ"},
+        {"warranty_plan": "中古住宅向け通常保証"},
+    ],
+)
+def test_wrs_handover_broad_keywords_do_not_match_outside_identity_fields(form_values):
+    result = wrs_handover(make_form(**form_values))
+
+    assert result["needs_wrs_handover"] is False
+
+
+def test_wrs_handover_megane_product_alone_does_not_match_sanjyo_rule():
+    result = wrs_handover(make_form(product="メガネ", manufacturer="一般メーカー"))
+
+    assert result["needs_wrs_handover"] is False
+
+
+def test_wrs_handover_m_teishi_identity_keyword_currently_matches_wm_rule():
+    result = wrs_handover(make_form(call_line="M停止"))
+
+    assert result["needs_wrs_handover"] is True
+    assert result["rule_name"] == "WM案件（M停止）"
+
+
+def test_kohnan_and_beavertozan_wrs_handover_are_limited_to_jusetsu_cases():
+    kohnan_jusetsu = wrs_handover(make_form(store_name="コーナン", appliance_type="住設"))
+    beavertozan_jusetsu = wrs_handover(make_form(store_name="ビーバートザン", appliance_type="住設"))
+    kohnan_appliance = wrs_handover(make_form(store_name="コーナン", appliance_type="家電"))
+    beavertozan_appliance = wrs_handover(make_form(store_name="ビーバートザン", appliance_type="家電"))
+
+    assert kohnan_jusetsu["needs_wrs_handover"] is True
+    assert kohnan_jusetsu["rule_name"] == "コーナン住設"
+    assert beavertozan_jusetsu["needs_wrs_handover"] is True
+    assert beavertozan_jusetsu["rule_name"] == "コーナン住設"
+    assert kohnan_appliance["needs_wrs_handover"] is False
+    assert beavertozan_appliance["needs_wrs_handover"] is False
+
+
 @pytest.mark.parametrize(("store_name", "call_line", "expected_vendor"), SELF_REPAIR_VENDOR_CASES)
 def test_clear_self_repair_vendor_rules_take_priority_over_no7(store_name, call_line, expected_vendor):
     result = app.determine_vendor_from_rules(
