@@ -8531,6 +8531,53 @@ def manual_check_widget_key(item: dict, index: int = 0, prefix: str = "manual_ch
     return f"{prefix}_{item_id}_{index}_{stable_hash_text(label)}"
 
 
+HEARING_SYMPTOM_SHORTCUTS = [
+    "電源が入らない", "水漏れしている", "異音がする", "エラー表示が出る", "温まらない",
+    "冷えない", "動かない", "破損している", "点滅している", "においがする",
+]
+HEARING_OCCURRENCE_TIME_SHORTCUTS = [
+    "今日から", "昨日から", "数日前から", "1週間前から", "1か月前から", "入居時から", "購入時から", "以前から",
+]
+HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS = [
+    "常時", "時々", "使用時のみ", "初回のみ", "再発", "継続中", "だんだん悪化", "特定条件で発生",
+]
+
+
+def append_hearing_shortcut_text(existing: str, candidate: str) -> str:
+    current = str(existing or "").strip()
+    text = str(candidate or "").strip()
+    if not text:
+        return current
+    parts = [part.strip() for part in current.split(" / ") if part.strip()]
+    if text in parts:
+        return current
+    if not current:
+        return text
+    return f"{current} / {text}"
+
+
+def apply_hearing_shortcut(form: dict, session_state, field_name: str, candidate: str) -> None:
+    updated = append_hearing_shortcut_text(get_hearing_value(form, field_name), candidate)
+    form[field_name] = updated
+    if field_name == "symptom_detail":
+        session_state["call_hearing_symptom_detail"] = updated
+    elif field_name in ("occurrence_time", "occurrence_frequency"):
+        session_state[f"call_hearing_{field_name}_choice"] = HEARING_UNSELECTED
+        session_state[f"call_hearing_{field_name}_text"] = updated
+        form[f"{field_name}_choice"] = HEARING_UNSELECTED
+        form[f"{field_name}_text"] = updated
+    session_state["form"] = form
+
+
+def render_hearing_shortcut_buttons(form: dict, field_name: str, candidates: list[str], *, columns: int = 5) -> None:
+    cols = st.columns(columns, gap="small")
+    for index, candidate in enumerate(candidates):
+        with cols[index % columns]:
+            if st.button(candidate, key=f"hearing_shortcut_{field_name}_{index}", use_container_width=True):
+                apply_hearing_shortcut(form, st.session_state, field_name, candidate)
+                st.rerun()
+
+
 def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
                                *, choice_key: str, text_key: str, label: str,
                                placeholder: str) -> str:
@@ -8562,6 +8609,14 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
 def render_call_hearing_inputs(form: dict) -> None:
     sync_hearing_widget_state_to_form(form)
     st.markdown("### 📋 聴取内容（修理依頼書メモ反映）")
+    with st.expander("よく使う入力補助", expanded=False):
+        st.caption("候補を押すと空欄には入力し、既存入力がある場合は末尾に追記します。")
+        st.markdown("**具体的な症状**")
+        render_hearing_shortcut_buttons(form, "symptom_detail", HEARING_SYMPTOM_SHORTCUTS, columns=5)
+        st.markdown("**発生時期**")
+        render_hearing_shortcut_buttons(form, "occurrence_time", HEARING_OCCURRENCE_TIME_SHORTCUTS, columns=4)
+        st.markdown("**発生頻度**")
+        render_hearing_shortcut_buttons(form, "occurrence_frequency", HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS, columns=4)
     form["symptom_detail"] = st.text_area(
         "具体的な症状",
         value=form.get("symptom_detail", ""),

@@ -3279,6 +3279,36 @@ def test_call_transcript_reflection_updates_hearing_widget_before_render():
     assert state["call_transcript_reflected"] is True
 
 
+def test_hearing_shortcut_buttons_append_without_overwriting():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    hearing_start = source.index("def render_call_hearing_inputs")
+    hearing_end = source.index("def render_now_action_item", hearing_start)
+    hearing_source = source[hearing_start:hearing_end]
+
+    assert "よく使う入力補助" in hearing_source
+    assert "電源が入らない" in source
+    assert "水漏れしている" in source
+    assert "今日から" in source
+    assert "1か月前から" in source
+    assert "使用時のみ" in source
+    assert "だんだん悪化" in source
+    assert "append_hearing_shortcut_text" in source
+    assert app.append_hearing_shortcut_text("", "冷えない") == "冷えない"
+    assert app.append_hearing_shortcut_text("既存症状", "冷えない") == "既存症状 / 冷えない"
+    assert app.append_hearing_shortcut_text("既存症状 / 冷えない", "冷えない") == "既存症状 / 冷えない"
+
+
+def test_hearing_shortcut_updates_widget_state_before_render():
+    form = {"occurrence_time": "昨日から"}
+    state = {}
+
+    app.apply_hearing_shortcut(form, state, "occurrence_time", "数日前から")
+
+    assert state["call_hearing_occurrence_time_choice"] == app.HEARING_UNSELECTED
+    assert state["call_hearing_occurrence_time_text"] == "昨日から / 数日前から"
+    assert state["form"]["occurrence_time"] == "昨日から / 数日前から"
+
+
 def test_after_call_tab_warns_when_recording_is_active():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_call_start = source.index("def render_tab_after_call")
