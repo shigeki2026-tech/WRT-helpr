@@ -3240,9 +3240,42 @@ def test_call_tab_has_recording_controls_ui_only():
     assert '"idle"' in recording_source
     assert '"recording"' in recording_source
     assert '"stopped"' in recording_source
-    assert "実録音・保存・文字起こしは行いません" in recording_source
+    assert "※録音ボタンは現時点ではUIのみです。実録音・保存は行いません。" in recording_source
     for forbidden in ["audio_devices.py", "transcribe.py", "recordings/", "microphone", "sounddevice", "pyaudio"]:
         assert forbidden not in recording_source
+
+
+def test_call_transcript_panel_appends_to_hearing_without_overwriting():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    after_call_start = source.index("def render_tab_after_call", call_tab_start)
+    call_tab_source = source[call_tab_start:after_call_start]
+
+    assert "📄 文字起こし結果" in source
+    assert "聴取内容へ反映" in source
+    assert "call_transcript_text" in source
+    assert "※ここには、サイドバーや外部ツールで作成した文字起こし結果を貼り付けてください。" in source
+    assert "render_call_transcript_input_panel(st.session_state.form)" in call_tab_source
+
+    assert app.append_call_transcript_to_existing_text("", "電源が入らない") == "電源が入らない"
+    assert app.append_call_transcript_to_existing_text(
+        "既存の症状",
+        "昨日から動かない",
+    ) == "既存の症状\n\n[文字起こし結果]\n昨日から動かない"
+
+
+def test_call_transcript_reflection_updates_hearing_widget_before_render():
+    form = {"symptom_detail": "既存の症状"}
+    state = {
+        "call_transcript_text": "昨日から動かない",
+    }
+
+    reflected = app.reflect_call_transcript_to_hearing(form, state)
+
+    assert reflected is True
+    assert state["call_hearing_symptom_detail"] == "既存の症状\n\n[文字起こし結果]\n昨日から動かない"
+    assert state["form"]["symptom_detail"] == state["call_hearing_symptom_detail"]
+    assert state["call_transcript_reflected"] is True
 
 
 def test_after_call_tab_warns_when_recording_is_active():

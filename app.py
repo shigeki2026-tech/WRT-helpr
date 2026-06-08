@@ -3334,6 +3334,31 @@ def is_call_recording_active(session_state) -> bool:
     return session_state.get("call_recording_ui_state") == "recording"
 
 
+def append_call_transcript_to_existing_text(existing: str, transcript: str) -> str:
+    current = str(existing or "").strip()
+    text = str(transcript or "").strip()
+    if not text:
+        return current
+    if not current:
+        return text
+    return f"{current}\n\n[文字起こし結果]\n{text}"
+
+
+def reflect_call_transcript_to_hearing(form: dict, session_state) -> bool:
+    transcript = str(session_state.get("call_transcript_text") or "").strip()
+    if not transcript:
+        return False
+    reflected = append_call_transcript_to_existing_text(
+        form.get("symptom_detail") or session_state.get("call_hearing_symptom_detail") or "",
+        transcript,
+    )
+    form["symptom_detail"] = reflected
+    session_state["call_hearing_symptom_detail"] = reflected
+    session_state["call_transcript_reflected"] = True
+    session_state["form"] = form
+    return True
+
+
 def request_case_clear(session_state) -> None:
     session_state["_pending_case_clear"] = True
 
@@ -3493,6 +3518,8 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "case_memo_common",
         "call_memo_common_call",
         "call_memo_common_after",
+        "call_transcript_text",
+        "call_transcript_reflected",
     ]:
         if key in session_state:
             del session_state[key]
@@ -8759,7 +8786,7 @@ def render_call_recording_controls() -> None:
     status_class = "recording-status recording-active" if is_recording else "recording-status"
 
     st.markdown("##### 録音操作")
-    st.caption("※ 現時点ではUIのみです。実録音・保存・文字起こしは行いません。")
+    st.caption("※録音ボタンは現時点ではUIのみです。実録音・保存は行いません。")
     action_cols = st.columns([1, 1, 2], gap="small")
     with action_cols[0]:
         if st.button("🎙️ 録音", key="call_recording_start_button", disabled=state == "recording", use_container_width=True):
@@ -8779,6 +8806,26 @@ def render_call_recording_controls() -> None:
                 '<div class="recording-stop-hint">通話後は ⏹️ 停止 を押してください。</div>',
                 unsafe_allow_html=True,
             )
+
+
+def render_call_transcript_input_panel(form: dict) -> None:
+    st.markdown("##### 📄 文字起こし結果")
+    st.caption("サイドバーや外部ツールで文字起こしした内容を貼り付けます。")
+    st.text_area(
+        "文字起こし結果",
+        key="call_transcript_text",
+        height=140,
+        label_visibility="collapsed",
+        placeholder="ここに文字起こし結果を貼り付けてください。",
+    )
+    st.caption("※ここには、サイドバーや外部ツールで作成した文字起こし結果を貼り付けてください。")
+    if st.button("聴取内容へ反映", key="call_transcript_reflect_button", use_container_width=True):
+        if reflect_call_transcript_to_hearing(form, st.session_state):
+            st.rerun()
+        else:
+            st.warning("文字起こし結果を入力してください。")
+    if st.session_state.pop("call_transcript_reflected", False):
+        st.success("文字起こし結果を聴取内容へ反映しました。")
 
 
 def render_tab_call():
@@ -8811,6 +8858,7 @@ def render_tab_call():
     with col_input:
         render_call_recording_active_notice("🔴 録音中です。通話終了後は必ず「⏹️ 停止」を押してください。")
         render_call_recording_controls()
+        render_call_transcript_input_panel(st.session_state.form)
         st.markdown("##### 📋 コピー情報取り込み")
         with st.expander(
             "保証画面などのテキストを貼り付ける",
