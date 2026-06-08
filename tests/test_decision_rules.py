@@ -3285,7 +3285,15 @@ def test_hearing_shortcut_buttons_append_without_overwriting():
     hearing_end = source.index("def render_now_action_item", hearing_start)
     hearing_source = source[hearing_start:hearing_end]
 
-    assert "よく使う入力補助" in hearing_source
+    assert "よく使う入力補助" not in hearing_source
+    assert "症状候補" in hearing_source
+    assert "時期候補" in hearing_source
+    assert "頻度候補" in hearing_source
+    assert "consume_pending_hearing_shortcut(form, st.session_state)" in hearing_source
+    assert "選択済み：" in source
+    assert "pending_hearing_shortcut" in source
+    assert "queue_hearing_shortcut(st.session_state, field_name, candidate)" in source
+    assert "apply_hearing_shortcut(form, st.session_state, field_name, candidate)" not in source
     assert "電源が入らない" in source
     assert "水漏れしている" in source
     assert "今日から" in source
@@ -3300,10 +3308,11 @@ def test_hearing_shortcut_buttons_append_without_overwriting():
 
 def test_hearing_shortcut_updates_widget_state_before_render():
     form = {"occurrence_time": "昨日から"}
-    state = {}
+    state = {"pending_hearing_shortcut": {"field": "occurrence_time", "value": "数日前から"}}
 
-    app.apply_hearing_shortcut(form, state, "occurrence_time", "数日前から")
+    app.consume_pending_hearing_shortcut(form, state)
 
+    assert "pending_hearing_shortcut" not in state
     assert state["call_hearing_occurrence_time_choice"] == app.HEARING_UNSELECTED
     assert state["call_hearing_occurrence_time_text"] == "昨日から / 数日前から"
     assert state["form"]["occurrence_time"] == "昨日から / 数日前から"

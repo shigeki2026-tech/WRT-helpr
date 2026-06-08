@@ -3520,6 +3520,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "call_memo_common_after",
         "call_transcript_text",
         "call_transcript_reflected",
+        "pending_hearing_shortcut",
     ]:
         if key in session_state:
             del session_state[key]
@@ -8569,12 +8570,37 @@ def apply_hearing_shortcut(form: dict, session_state, field_name: str, candidate
     session_state["form"] = form
 
 
+def queue_hearing_shortcut(session_state, field_name: str, candidate: str) -> None:
+    session_state["pending_hearing_shortcut"] = {
+        "field": field_name,
+        "value": candidate,
+    }
+
+
+def consume_pending_hearing_shortcut(form: dict, session_state) -> dict:
+    pending = session_state.pop("pending_hearing_shortcut", None)
+    if not isinstance(pending, dict):
+        return form
+    field_name = str(pending.get("field") or "")
+    candidate = str(pending.get("value") or "")
+    if field_name not in {"symptom_detail", "occurrence_time", "occurrence_frequency"}:
+        return form
+    apply_hearing_shortcut(form, session_state, field_name, candidate)
+    return form
+
+
+def render_hearing_shortcut_selection_status(form: dict, field_name: str) -> None:
+    selected = get_hearing_value(form, field_name)
+    if selected:
+        st.caption(f"選択済み：{selected}")
+
+
 def render_hearing_shortcut_buttons(form: dict, field_name: str, candidates: list[str], *, columns: int = 5) -> None:
     cols = st.columns(columns, gap="small")
     for index, candidate in enumerate(candidates):
         with cols[index % columns]:
             if st.button(candidate, key=f"hearing_shortcut_{field_name}_{index}", use_container_width=True):
-                apply_hearing_shortcut(form, st.session_state, field_name, candidate)
+                queue_hearing_shortcut(st.session_state, field_name, candidate)
                 st.rerun()
 
 
@@ -8608,21 +8634,17 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
 
 def render_call_hearing_inputs(form: dict) -> None:
     sync_hearing_widget_state_to_form(form)
+    consume_pending_hearing_shortcut(form, st.session_state)
     st.markdown("### 📋 聴取内容（修理依頼書メモ反映）")
-    with st.expander("よく使う入力補助", expanded=False):
-        st.caption("候補を押すと空欄には入力し、既存入力がある場合は末尾に追記します。")
-        st.markdown("**具体的な症状**")
-        render_hearing_shortcut_buttons(form, "symptom_detail", HEARING_SYMPTOM_SHORTCUTS, columns=5)
-        st.markdown("**発生時期**")
-        render_hearing_shortcut_buttons(form, "occurrence_time", HEARING_OCCURRENCE_TIME_SHORTCUTS, columns=4)
-        st.markdown("**発生頻度**")
-        render_hearing_shortcut_buttons(form, "occurrence_frequency", HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS, columns=4)
     form["symptom_detail"] = st.text_area(
         "具体的な症状",
         value=form.get("symptom_detail", ""),
         height=80,
         key="call_hearing_symptom_detail",
     )
+    st.caption("症状候補")
+    render_hearing_shortcut_selection_status(form, "symptom_detail")
+    render_hearing_shortcut_buttons(form, "symptom_detail", HEARING_SYMPTOM_SHORTCUTS, columns=5)
     form["occurrence_time"] = _choice_text_hearing_value(
         form,
         "occurrence_time",
@@ -8632,6 +8654,9 @@ def render_call_hearing_inputs(form: dict) -> None:
         label="発生時期",
         placeholder="例：2〜3日前から",
     )
+    st.caption("時期候補")
+    render_hearing_shortcut_selection_status(form, "occurrence_time")
+    render_hearing_shortcut_buttons(form, "occurrence_time", HEARING_OCCURRENCE_TIME_SHORTCUTS, columns=4)
     form["occurrence_frequency"] = _choice_text_hearing_value(
         form,
         "occurrence_frequency",
@@ -8641,6 +8666,9 @@ def render_call_hearing_inputs(form: dict) -> None:
         label="発生頻度",
         placeholder="例：朝だけ、使用中だけ",
     )
+    st.caption("頻度候補")
+    render_hearing_shortcut_selection_status(form, "occurrence_frequency")
+    render_hearing_shortcut_buttons(form, "occurrence_frequency", HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS, columns=4)
     st.info(
         "修理依頼書メモ反映予定\n"
         + "\n".join(build_attention_memo_preview_lines(form))
