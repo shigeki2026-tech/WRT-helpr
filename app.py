@@ -8670,6 +8670,34 @@ def init_session():
 # ============================================================
 # タブ1: 通話中判定
 # ============================================================
+def render_call_recording_controls() -> None:
+    state_key = "call_recording_ui_state"
+    state = st.session_state.get(state_key, "idle")
+    if state not in {"idle", "recording", "stopped"}:
+        state = "idle"
+        st.session_state[state_key] = state
+
+    status_labels = {
+        "idle": "未開始",
+        "recording": "録音中",
+        "stopped": "停止中",
+    }
+
+    st.markdown("##### 録音操作")
+    st.caption("※ 現時点ではUIのみです。実録音・保存・文字起こしは行いません。")
+    action_cols = st.columns([1, 1, 2], gap="small")
+    with action_cols[0]:
+        if st.button("録音", key="call_recording_start_button", disabled=state == "recording", use_container_width=True):
+            st.session_state[state_key] = "recording"
+            st.rerun()
+    with action_cols[1]:
+        if st.button("停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True):
+            st.session_state[state_key] = "stopped"
+            st.rerun()
+    with action_cols[2]:
+        st.info(f"状態: {status_labels.get(state, '未開始')}")
+
+
 def render_tab_call():
     # UI改修: 通話中判定タブ専用の表示密度を調整
     st.markdown(
@@ -8698,6 +8726,7 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
+        render_call_recording_controls()
         st.markdown("##### 📋 コピー情報取り込み")
         with st.expander(
             "保証画面などのテキストを貼り付ける",

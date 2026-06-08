@@ -3216,6 +3216,27 @@ def test_call_result_area_starts_with_hearing_inputs_without_script_block():
     assert hearing_render < support_detail
 
 
+def test_call_tab_has_recording_controls_ui_only():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_tab_start = source.index("def render_tab_call")
+    after_call_start = source.index("def render_tab_after_call", call_tab_start)
+    call_tab_source = source[call_tab_start:after_call_start]
+    recording_start = source.index("def render_call_recording_controls")
+    recording_source = source[recording_start:call_tab_start]
+
+    assert "render_call_recording_controls()" in call_tab_source
+    assert 'st.markdown("##### 録音操作")' in recording_source
+    assert 'st.button("録音"' in recording_source
+    assert 'st.button("停止"' in recording_source
+    assert 'call_recording_ui_state' in recording_source
+    assert '"idle"' in recording_source
+    assert '"recording"' in recording_source
+    assert '"stopped"' in recording_source
+    assert "実録音・保存・文字起こしは行いません" in recording_source
+    for forbidden in ["audio_devices.py", "transcribe.py", "recordings/", "microphone", "sounddevice", "pyaudio"]:
+        assert forbidden not in recording_source
+
+
 def test_call_result_script_reference_is_only_in_support_details():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
