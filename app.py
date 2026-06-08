@@ -3341,7 +3341,7 @@ def append_call_transcript_to_existing_text(existing: str, transcript: str) -> s
         return current
     if not current:
         return text
-    return f"{current}\n\n[文字起こし結果]\n{text}"
+    return f"{current}\n\n[通話メモ]\n{text}"
 
 
 def reflect_call_transcript_to_hearing(form: dict, session_state) -> bool:
@@ -8809,23 +8809,23 @@ def render_call_recording_controls() -> None:
 
 
 def render_call_transcript_input_panel(form: dict) -> None:
-    st.markdown("##### 📄 文字起こし結果")
-    st.caption("サイドバーや外部ツールで文字起こしした内容を貼り付けます。")
+    st.markdown("##### 📄 通話メモ貼り付け")
+    st.caption("外部メモや別ツールで作成した内容を貼り付けます。")
     st.text_area(
-        "文字起こし結果",
+        "通話メモ",
         key="call_transcript_text",
         height=140,
         label_visibility="collapsed",
-        placeholder="ここに文字起こし結果を貼り付けてください。",
+        placeholder="ここに通話メモを貼り付けてください。",
     )
-    st.caption("※ここには、サイドバーや外部ツールで作成した文字起こし結果を貼り付けてください。")
-    if st.button("聴取内容へ反映", key="call_transcript_reflect_button", use_container_width=True):
+    st.caption("※WRT-helpr内では録音・自動文字起こし・外部API連携は行いません。")
+    if st.button("通話メモを症状欄へ追記", key="call_transcript_reflect_button", use_container_width=True):
         if reflect_call_transcript_to_hearing(form, st.session_state):
             st.rerun()
         else:
-            st.warning("文字起こし結果を入力してください。")
+            st.warning("通話メモを入力してください。")
     if st.session_state.pop("call_transcript_reflected", False):
-        st.success("文字起こし結果を聴取内容へ反映しました。")
+        st.success("通話メモを症状欄へ追記しました。")
 
 
 def render_tab_call():

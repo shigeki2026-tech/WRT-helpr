@@ -3251,17 +3251,18 @@ def test_call_transcript_panel_appends_to_hearing_without_overwriting():
     after_call_start = source.index("def render_tab_after_call", call_tab_start)
     call_tab_source = source[call_tab_start:after_call_start]
 
-    assert "📄 文字起こし結果" in source
-    assert "聴取内容へ反映" in source
+    assert "📄 通話メモ貼り付け" in source
+    assert "通話メモを症状欄へ追記" in source
     assert "call_transcript_text" in source
-    assert "※ここには、サイドバーや外部ツールで作成した文字起こし結果を貼り付けてください。" in source
+    assert "外部メモや別ツールで作成した内容を貼り付けます。" in source
+    assert "※WRT-helpr内では録音・自動文字起こし・外部API連携は行いません。" in source
     assert "render_call_transcript_input_panel(st.session_state.form)" in call_tab_source
 
     assert app.append_call_transcript_to_existing_text("", "電源が入らない") == "電源が入らない"
     assert app.append_call_transcript_to_existing_text(
         "既存の症状",
         "昨日から動かない",
-    ) == "既存の症状\n\n[文字起こし結果]\n昨日から動かない"
+    ) == "既存の症状\n\n[通話メモ]\n昨日から動かない"
 
 
 def test_call_transcript_reflection_updates_hearing_widget_before_render():
@@ -3273,7 +3274,7 @@ def test_call_transcript_reflection_updates_hearing_widget_before_render():
     reflected = app.reflect_call_transcript_to_hearing(form, state)
 
     assert reflected is True
-    assert state["call_hearing_symptom_detail"] == "既存の症状\n\n[文字起こし結果]\n昨日から動かない"
+    assert state["call_hearing_symptom_detail"] == "既存の症状\n\n[通話メモ]\n昨日から動かない"
     assert state["form"]["symptom_detail"] == state["call_hearing_symptom_detail"]
     assert state["call_transcript_reflected"] is True
 
