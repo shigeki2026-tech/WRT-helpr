@@ -8563,9 +8563,7 @@ def apply_hearing_shortcut(form: dict, session_state, field_name: str, candidate
     if field_name == "symptom_detail":
         session_state["call_hearing_symptom_detail"] = updated
     elif field_name in ("occurrence_time", "occurrence_frequency"):
-        session_state[f"call_hearing_{field_name}_choice"] = HEARING_UNSELECTED
         session_state[f"call_hearing_{field_name}_text"] = updated
-        form[f"{field_name}_choice"] = HEARING_UNSELECTED
         form[f"{field_name}_text"] = updated
     session_state["form"] = form
 
@@ -8587,12 +8585,6 @@ def consume_pending_hearing_shortcut(form: dict, session_state) -> dict:
         return form
     apply_hearing_shortcut(form, session_state, field_name, candidate)
     return form
-
-
-def render_hearing_shortcut_selection_status(form: dict, field_name: str) -> None:
-    selected = get_hearing_value(form, field_name)
-    if selected:
-        st.caption(f"選択済み：{selected}")
 
 
 def render_hearing_shortcut_buttons(form: dict, field_name: str, candidates: list[str], *, columns: int = 5) -> None:
@@ -8632,6 +8624,19 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
     return _resolve_choice_text_value(selected, typed)
 
 
+def _text_hearing_value(form: dict, field_name: str, *, text_key: str, label: str, placeholder: str) -> str:
+    current = get_hearing_value(form, field_name)
+    typed = st.text_input(
+        label,
+        value=current,
+        key=text_key,
+        placeholder=placeholder,
+    )
+    form[f"{field_name}_text"] = typed
+    form[field_name] = typed
+    return typed
+
+
 def render_call_hearing_inputs(form: dict) -> None:
     sync_hearing_widget_state_to_form(form)
     consume_pending_hearing_shortcut(form, st.session_state)
@@ -8643,31 +8648,24 @@ def render_call_hearing_inputs(form: dict) -> None:
         key="call_hearing_symptom_detail",
     )
     st.caption("症状候補")
-    render_hearing_shortcut_selection_status(form, "symptom_detail")
     render_hearing_shortcut_buttons(form, "symptom_detail", HEARING_SYMPTOM_SHORTCUTS, columns=5)
-    form["occurrence_time"] = _choice_text_hearing_value(
+    form["occurrence_time"] = _text_hearing_value(
         form,
         "occurrence_time",
-        _SELECT_WITH_OTHER_OPTIONS.get("occurrence_time", []),
-        choice_key="call_hearing_occurrence_time_choice",
         text_key="call_hearing_occurrence_time_text",
         label="発生時期",
         placeholder="例：2〜3日前から",
     )
     st.caption("時期候補")
-    render_hearing_shortcut_selection_status(form, "occurrence_time")
     render_hearing_shortcut_buttons(form, "occurrence_time", HEARING_OCCURRENCE_TIME_SHORTCUTS, columns=4)
-    form["occurrence_frequency"] = _choice_text_hearing_value(
+    form["occurrence_frequency"] = _text_hearing_value(
         form,
         "occurrence_frequency",
-        _SELECT_WITH_OTHER_OPTIONS.get("occurrence_frequency", []),
-        choice_key="call_hearing_occurrence_frequency_choice",
         text_key="call_hearing_occurrence_frequency_text",
         label="発生頻度",
         placeholder="例：朝だけ、使用中だけ",
     )
     st.caption("頻度候補")
-    render_hearing_shortcut_selection_status(form, "occurrence_frequency")
     render_hearing_shortcut_buttons(form, "occurrence_frequency", HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS, columns=4)
     st.info(
         "修理依頼書メモ反映予定\n"

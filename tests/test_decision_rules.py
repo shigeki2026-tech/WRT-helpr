@@ -3290,7 +3290,9 @@ def test_hearing_shortcut_buttons_append_without_overwriting():
     assert "時期候補" in hearing_source
     assert "頻度候補" in hearing_source
     assert "consume_pending_hearing_shortcut(form, st.session_state)" in hearing_source
-    assert "選択済み：" in source
+    assert "選択済み：" not in source
+    assert "_choice_text_hearing_value(" not in hearing_source
+    assert "st.selectbox(" not in hearing_source
     assert "pending_hearing_shortcut" in source
     assert "queue_hearing_shortcut(st.session_state, field_name, candidate)" in source
     assert "apply_hearing_shortcut(form, st.session_state, field_name, candidate)" not in source
@@ -3313,7 +3315,7 @@ def test_hearing_shortcut_updates_widget_state_before_render():
     app.consume_pending_hearing_shortcut(form, state)
 
     assert "pending_hearing_shortcut" not in state
-    assert state["call_hearing_occurrence_time_choice"] == app.HEARING_UNSELECTED
+    assert "call_hearing_occurrence_time_choice" not in state
     assert state["call_hearing_occurrence_time_text"] == "昨日から / 数日前から"
     assert state["form"]["occurrence_time"] == "昨日から / 数日前から"
 
