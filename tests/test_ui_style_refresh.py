@@ -54,6 +54,7 @@ def test_recording_active_state_css_classes_exist():
 
     assert ".recording-control-panel" not in source
     assert ".recording-status.recording-active" in source
+    assert ".recording-active-notice" in source
     assert ".recording-stop-hint" in source
     assert "#dc2626" in source
 

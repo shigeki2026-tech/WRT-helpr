@@ -3326,6 +3326,14 @@ def close_copy_import_panel(session_state) -> None:
     set_show_copy_import(session_state, False)
 
 
+def reset_call_recording_ui_state(session_state) -> None:
+    session_state["call_recording_ui_state"] = "idle"
+
+
+def is_call_recording_active(session_state) -> bool:
+    return session_state.get("call_recording_ui_state") == "recording"
+
+
 def request_case_clear(session_state) -> None:
     session_state["_pending_case_clear"] = True
 
@@ -3339,6 +3347,7 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
             del session_state[key]
     session_state["case_memo_global"] = ""
     session_state["form"]["call_memo"] = ""
+    reset_call_recording_ui_state(session_state)
     return True
 
 
@@ -7453,6 +7462,14 @@ body {
     font-size: 0.82rem;
     font-weight: 700;
 }
+.recording-active-notice {
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin: 0 0 8px;
+    background: #fff7ed;
+    color: #9f1239;
+    font-weight: 800;
+}
 h2 { font-size: 1.25rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h3 { font-size: 1.18rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h4 { font-size: 1.06rem !important; font-weight: 700 !important; margin-top: 0.3rem !important; margin-bottom: 0.15rem !important; }
@@ -8720,6 +8737,12 @@ def init_session():
 # ============================================================
 # タブ1: 通話中判定
 # ============================================================
+def render_call_recording_active_notice(message: str) -> None:
+    if not is_call_recording_active(st.session_state):
+        return
+    st.markdown(f'<div class="recording-active-notice">{message}</div>', unsafe_allow_html=True)
+
+
 def render_call_recording_controls() -> None:
     state_key = "call_recording_ui_state"
     state = st.session_state.get(state_key, "idle")
@@ -8786,6 +8809,7 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
+        render_call_recording_active_notice("🔴 録音中です。通話終了後は必ず「⏹️ 停止」を押してください。")
         render_call_recording_controls()
         st.markdown("##### 📋 コピー情報取り込み")
         with st.expander(
@@ -8806,6 +8830,7 @@ def render_tab_call():
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
                                 st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                                reset_call_recording_ui_state(st.session_state)
                                 request_case_basic_widget_refresh(st.session_state)
                                 close_copy_import_panel(st.session_state)
                                 st.rerun()
@@ -8854,6 +8879,7 @@ def render_tab_call():
                     st.session_state.form = apply_extracted_fields_to_form(
                         st.session_state.extracted, st.session_state.form)
                     st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                    reset_call_recording_ui_state(st.session_state)
                     request_case_basic_widget_refresh(st.session_state)
                     close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
@@ -9289,6 +9315,7 @@ def render_tab_call():
 # タブ2: 終話後処理
 # ============================================================
 def render_tab_after_call():
+    render_call_recording_active_notice("🔴 録音中です。終話後処理へ進む前に「⏹️ 停止」を押してください。")
     form = st.session_state.form
     decision = run_decision(form)
     repair_type = decision["repair_type"]

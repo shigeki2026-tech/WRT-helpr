@@ -3227,6 +3227,9 @@ def test_call_tab_has_recording_controls_ui_only():
     recording_source = source[recording_start:call_tab_start]
 
     assert "render_call_recording_controls()" in call_tab_source
+    assert "render_call_recording_active_notice" in call_tab_source
+    assert "reset_call_recording_ui_state(st.session_state)" in call_tab_source
+    assert "🔴 録音中です。通話終了後は必ず「⏹️ 停止」を押してください。" in call_tab_source
     assert 'st.markdown("##### 録音操作")' in recording_source
     assert 'st.button("🎙️ 録音"' in recording_source
     assert 'st.button("⏹️ 停止"' in recording_source
@@ -3240,6 +3243,29 @@ def test_call_tab_has_recording_controls_ui_only():
     assert "実録音・保存・文字起こしは行いません" in recording_source
     for forbidden in ["audio_devices.py", "transcribe.py", "recordings/", "microphone", "sounddevice", "pyaudio"]:
         assert forbidden not in recording_source
+
+
+def test_after_call_tab_warns_when_recording_is_active():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_call_start = source.index("def render_tab_after_call")
+    after_call_source = source[after_call_start:]
+
+    assert "render_call_recording_active_notice" in after_call_source
+    assert "🔴 録音中です。終話後処理へ進む前に「⏹️ 停止」を押してください。" in after_call_source
+
+
+def test_case_clear_resets_recording_ui_state_to_idle():
+    state = {
+        "_pending_case_clear": True,
+        "form": {"call_memo": "old memo", "operator_name": ""},
+        "case_memo_global": "old memo",
+        "call_recording_ui_state": "recording",
+    }
+
+    processed = app.process_pending_case_clear(state, {"default_operator_name": ""})
+
+    assert processed is True
+    assert state["call_recording_ui_state"] == "idle"
 
 
 def test_call_result_script_reference_is_only_in_support_details():
