@@ -7376,21 +7376,24 @@ body {
 }
 .next-confirmation-cards {
     display: flex;
-    flex-wrap: wrap;
-    gap: 7px;
-    margin: 4px 0 10px;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin: 2px 0 8px;
+    overflow-x: auto;
+    white-space: nowrap;
 }
 .next-confirmation-card {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     border-radius: 999px;
-    padding: 5px 9px;
-    font-size: 0.82rem;
-    line-height: 1.25;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    line-height: 1.15;
+    flex: 0 0 auto;
 }
 .next-confirmation-card strong {
-    font-size: 0.72rem;
+    font-size: 0.68rem;
 }
 .wrt-snippet-group-label {
     display: inline-block;
@@ -7406,6 +7409,29 @@ body {
     padding: 8px 10px;
     margin: 6px 0;
     background: #ffffff;
+}
+.wrt-top-panels {
+    margin-top: -0.25rem;
+    margin-bottom: 0.25rem;
+}
+.wrt-top-panels textarea {
+    min-height: 96px !important;
+}
+.wrt-compact-case-basic {
+    margin-top: -0.15rem;
+}
+.wrt-compact-case-basic [data-testid="stHorizontalBlock"] {
+    gap: 10px;
+}
+.wrt-compact-case-basic [data-testid="stVerticalBlock"] {
+    gap: 0.35rem;
+}
+.wrt-compact-case-basic div[data-testid="stSelectbox"],
+.wrt-compact-case-basic div[data-testid="stTextInput"] {
+    margin-bottom: -0.25rem;
+}
+.wrt-compact-case-basic label {
+    margin-bottom: 0.15rem;
 }
 h2 { font-size: 1.25rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h3 { font-size: 1.18rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
@@ -7803,11 +7829,13 @@ def render_decision_tags_panel(form: dict) -> None:
 
 
 def render_global_top_panels(form: dict) -> None:
+    st.markdown('<div class="wrt-top-panels">', unsafe_allow_html=True)
     tags_col, memo_col = st.columns([2, 1], gap="medium")
     with tags_col:
         render_decision_tags_panel(form)
     with memo_col:
-        render_common_case_memo(form, "case_memo_global", height=125)
+        render_common_case_memo(form, "case_memo_global", height=105)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_common_call_memo(form: dict, key: str, height: int = 110) -> None:
@@ -8280,6 +8308,7 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
 
 
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
+    st.markdown('<div class="wrt-compact-case-basic">', unsafe_allow_html=True)
     header_col, action_col = st.columns([2.2, 1])
     with header_col:
         st.markdown("##### 🧾 案件情報")
@@ -8398,6 +8427,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     render_inline_product_alias_registration(form)
     st.session_state.form = form
     remember_case_basic_widget_synced_values(form, st.session_state)
+    st.markdown("</div>", unsafe_allow_html=True)
     return form
 
 
@@ -8687,11 +8717,11 @@ def render_call_recording_controls() -> None:
     st.caption("※ 現時点ではUIのみです。実録音・保存・文字起こしは行いません。")
     action_cols = st.columns([1, 1, 2], gap="small")
     with action_cols[0]:
-        if st.button("録音", key="call_recording_start_button", disabled=state == "recording", use_container_width=True):
+        if st.button("🎙️ 録音", key="call_recording_start_button", disabled=state == "recording", use_container_width=True):
             st.session_state[state_key] = "recording"
             st.rerun()
     with action_cols[1]:
-        if st.button("停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True):
+        if st.button("⏹️ 停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True):
             st.session_state[state_key] = "stopped"
             st.rerun()
     with action_cols[2]:

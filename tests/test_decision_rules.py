@@ -870,6 +870,8 @@ def test_next_confirmation_ui_uses_cards_and_collapsed_detail():
 
     assert "次にやること" in source
     assert "next-confirmation-cards" in source
+    assert "flex-wrap: nowrap" in source
+    assert "white-space: nowrap" in source
     assert 'st.expander("不足項目の詳細を開く", expanded=False)' in source
 
 
@@ -3226,8 +3228,8 @@ def test_call_tab_has_recording_controls_ui_only():
 
     assert "render_call_recording_controls()" in call_tab_source
     assert 'st.markdown("##### 録音操作")' in recording_source
-    assert 'st.button("録音"' in recording_source
-    assert 'st.button("停止"' in recording_source
+    assert 'st.button("🎙️ 録音"' in recording_source
+    assert 'st.button("⏹️ 停止"' in recording_source
     assert 'call_recording_ui_state' in recording_source
     assert '"idle"' in recording_source
     assert '"recording"' in recording_source

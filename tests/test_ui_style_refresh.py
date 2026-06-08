@@ -43,7 +43,7 @@ def test_top_dashboard_layout_css_classes_exist():
     top_source = _function_source(source, "render_global_top_panels")
 
     assert "tags_col, memo_col = st.columns([2, 1], gap=\"medium\")" in top_source
-    assert 'render_common_case_memo(form, "case_memo_global", height=125)' in top_source
+    assert 'render_common_case_memo(form, "case_memo_global", height=105)' in top_source
     assert ".wrt-decision-tag" in source
     assert ".wrt-dashboard-card" not in source
     assert 'render_case_clear_controls("top_case_memo", use_container_width=True)' not in source

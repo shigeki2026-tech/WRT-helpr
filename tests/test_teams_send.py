@@ -2265,7 +2265,7 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
     assert "render_decision_tags_panel" in panels_source
     assert "tags_col, memo_col = st.columns([2, 1], gap=\"medium\")" in panels_source
     assert panels_source.index("with tags_col:") < panels_source.index("with memo_col:")
-    assert panels_source.index("render_decision_tags_panel(form)") < panels_source.index('render_common_case_memo(form, "case_memo_global", height=125)')
+    assert panels_source.index("render_decision_tags_panel(form)") < panels_source.index('render_common_case_memo(form, "case_memo_global", height=105)')
     assert top_index < tabs_index
 
 
