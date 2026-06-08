@@ -7433,6 +7433,26 @@ body {
 .wrt-compact-case-basic label {
     margin-bottom: 0.15rem;
 }
+.recording-status {
+    border: 1px solid #dbeafe;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #eff6ff;
+    color: #1e3a8a;
+    font-weight: 700;
+}
+.recording-status.recording-active {
+    border-color: #dc2626;
+    background: #fee2e2;
+    color: #991b1b;
+    font-weight: 800;
+}
+.recording-stop-hint {
+    margin-top: 4px;
+    color: #991b1b;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
 h2 { font-size: 1.25rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h3 { font-size: 1.18rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h4 { font-size: 1.06rem !important; font-weight: 700 !important; margin-top: 0.3rem !important; margin-bottom: 0.15rem !important; }
@@ -8709,9 +8729,11 @@ def render_call_recording_controls() -> None:
 
     status_labels = {
         "idle": "未開始",
-        "recording": "録音中",
+        "recording": "🔴 録音中（UIのみ）停止忘れ注意",
         "stopped": "停止中",
     }
+    is_recording = state == "recording"
+    status_class = "recording-status recording-active" if is_recording else "recording-status"
 
     st.markdown("##### 録音操作")
     st.caption("※ 現時点ではUIのみです。実録音・保存・文字起こしは行いません。")
@@ -8721,11 +8743,19 @@ def render_call_recording_controls() -> None:
             st.session_state[state_key] = "recording"
             st.rerun()
     with action_cols[1]:
-        if st.button("⏹️ 停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True):
+        if st.button("⏹️ 停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True, type="primary" if is_recording else "secondary"):
             st.session_state[state_key] = "stopped"
             st.rerun()
     with action_cols[2]:
-        st.info(f"状態: {status_labels.get(state, '未開始')}")
+        st.markdown(
+            f'<div class="{status_class}">状態: {status_labels.get(state, "未開始")}</div>',
+            unsafe_allow_html=True,
+        )
+        if is_recording:
+            st.markdown(
+                '<div class="recording-stop-hint">通話後は ⏹️ 停止 を押してください。</div>',
+                unsafe_allow_html=True,
+            )
 
 
 def render_tab_call():

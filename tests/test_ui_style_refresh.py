@@ -49,6 +49,15 @@ def test_top_dashboard_layout_css_classes_exist():
     assert 'render_case_clear_controls("top_case_memo", use_container_width=True)' not in source
 
 
+def test_recording_active_state_css_classes_exist():
+    source = _source()
+
+    assert ".recording-control-panel" not in source
+    assert ".recording-status.recording-active" in source
+    assert ".recording-stop-hint" in source
+    assert "#dc2626" in source
+
+
 def test_decision_tag_basic_wording_is_not_changed_by_card_html():
     html = app._ui_v3_block(
         "受付可否",
