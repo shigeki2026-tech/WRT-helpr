@@ -2218,6 +2218,34 @@ def sanitize_generated_body_text(text: str) -> str:
     return str(text or "").replace("📋", "")
 
 
+def sync_editable_text_current(current_key: str, widget_key: str, sanitizer=None) -> None:
+    value = st.session_state.get(widget_key, "")
+    if sanitizer:
+        value = sanitizer(value)
+    st.session_state[current_key] = value
+
+
+def ensure_editable_text_state(current_key: str, widget_key: str, generated_text: str,
+                               form_text: str = "", sanitizer=None) -> str:
+    if current_key not in st.session_state:
+        value = form_text if str(form_text or "").strip() else generated_text
+        if sanitizer:
+            value = sanitizer(value)
+        st.session_state[current_key] = value
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = st.session_state.get(current_key, "")
+    return st.session_state.get(current_key, "")
+
+
+def replace_editable_text_current(current_key: str, widget_key: str, value: str,
+                                  sanitizer=None) -> str:
+    if sanitizer:
+        value = sanitizer(value)
+    st.session_state[current_key] = value
+    st.session_state[widget_key] = value
+    return value
+
+
 def _join_text_blocks(existing: str, addition: str) -> str:
     existing = sanitize_generated_body_text(existing).rstrip()
     addition = sanitize_generated_body_text(addition).strip()
@@ -2354,9 +2382,17 @@ def _rakutel_counterparty_display(form: dict, caller_type: str = "") -> str:
     return counterparty
 
 
+def normalize_rakutel_caller_label(value: str) -> str:
+    text = str(value or "").strip()
+    m = re.fullmatch(r"その他[（(]\s*(.*?)\s*[）)]", text)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+    return text
+
+
 def _rakutel_call_arrow(form: dict, caller_type: str = "") -> str:
     operator = (form.get("operator_name") or "").strip() or "●●"
-    counterparty = _rakutel_counterparty_display(form, caller_type)
+    counterparty = normalize_rakutel_caller_label(_rakutel_counterparty_display(form, caller_type))
     if _rakutel_call_direction(form) == "架電":
         return f"MPG{operator}⇒{counterparty}"
     return f"{counterparty}⇒MPG{operator}"
@@ -2723,21 +2759,16 @@ def _get_teams_send_body(form: dict) -> str:
     message = (form.get("teams_chat_message") or "").strip()
     if not message:
         return ""
-    return teams_plain_text_to_html(
-        message,
-        bold_first_line=bool((form.get("rakuteru_no") or "").strip()),
-    )
+    return format_teams_send_body(message, form.get("rakuteru_no", ""))
+
+
+def format_teams_send_body(message: str, rakuteru_no: str = "") -> str:
+    return teams_plain_text_to_html(message)
 
 
 def teams_plain_text_to_html(message: str, bold_first_line: bool = False) -> str:
-    lines = str(message or "").splitlines()
-    html_lines = []
-    for index, line in enumerate(lines):
-        escaped = _escape_teams_html(line)
-        if index == 0 and bold_first_line and line.strip():
-            escaped = f"<b>{escaped}</b>"
-        html_lines.append(escaped)
-    return "<br>\n".join(html_lines)
+    del bold_first_line
+    return "<br>".join(_escape_teams_html(line) for line in str(message or "").splitlines())
 
 
 def _can_send_teams_chat_message(teams_enabled: bool, confirmed: bool, form: dict,
@@ -2819,7 +2850,7 @@ def teams_test_config_unavailable_reasons(config: dict, destination: dict | None
 
 
 def _warranty_report_body_hash(message: str, destination_key: str = "warranty") -> str:
-    body = teams_plain_text_to_html((message or "").strip())
+    body = format_teams_send_body((message or "").strip())
     if not body:
         return ""
     scoped_body = f"{destination_key}\n{body}"
@@ -3467,9 +3498,16 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
     for key in [
         "memo_after",
         "memo_after_widget",
+        "attention_memo_current",
         "_memo_after_widget_synced",
         "rakutel_text_display",
+        "rakutel_text_widget",
+        "rakutel_text_current",
         "teams_chat_message_display",
+        "teams_chat_message_widget",
+        "teams_chat_message_current",
+        "history_after_widget",
+        "history_after_current",
         "teams_send_confirmed",
         "teams_action_confirmed",
         "teams_sent",
@@ -4416,7 +4454,7 @@ def build_rakutel_call_header(call_line: str, call_direction: str = "受電") ->
     direction = call_direction if call_direction in ("受電", "架電") else "受電"
     if direction == "架電":
         return f"【{rakutel_line_name}回線から架電】"
-    return f"【{rakutel_line_name}回線に入電】"
+    return f"【{rakutel_line_name}回線へ入電】"
 
 
 def call_line_master_values_match(master_value: str, call_line: str) -> bool:
@@ -8624,7 +8662,9 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
     return _resolve_choice_text_value(selected, typed)
 
 
-def _text_hearing_value(form: dict, field_name: str, *, text_key: str, label: str, placeholder: str) -> str:
+def _text_hearing_value(form: dict, field_name: str, *, text_key: str, label: str, placeholder: str,
+                        choice_key: str = "") -> str:
+    del choice_key
     current = get_hearing_value(form, field_name)
     typed = st.text_input(
         label,
@@ -8652,6 +8692,7 @@ def render_call_hearing_inputs(form: dict) -> None:
     form["occurrence_time"] = _text_hearing_value(
         form,
         "occurrence_time",
+        choice_key="call_hearing_occurrence_time_choice",
         text_key="call_hearing_occurrence_time_text",
         label="発生時期",
         placeholder="例：2〜3日前から",
@@ -8661,6 +8702,7 @@ def render_call_hearing_inputs(form: dict) -> None:
     form["occurrence_frequency"] = _text_hearing_value(
         form,
         "occurrence_frequency",
+        choice_key="call_hearing_occurrence_frequency_choice",
         text_key="call_hearing_occurrence_frequency_text",
         label="発生頻度",
         placeholder="例：朝だけ、使用中だけ",
@@ -9444,7 +9486,7 @@ def render_tab_call():
 # タブ2: 終話後処理
 # ============================================================
 def render_tab_after_call():
-    render_call_recording_active_notice("🔴 録音中です。終話後処理へ進む前に「⏹️ 停止」を押してください。")
+    render_call_recording_active_notice("🔴 録音中です。次の作業へ進む前に「⏹️ 停止」を押してください。")
     form = st.session_state.form
     decision = run_decision(form)
     repair_type = decision["repair_type"]
@@ -9617,37 +9659,43 @@ def render_tab_after_call():
         form, "attention_memo", vendor=vendor, contact_type=contact_type,
         notes_filled=notes_filled, repair_type=repair_type)
     memo_widget_key = "memo_after_widget"
+    memo_current_key = "attention_memo_current"
 
     if st.session_state.pop("_pending_regenerate_attention_memo", False):
-        form["attention_memo"] = sanitize_generated_body_text(generated_attention_memo)
-        st.session_state[memo_widget_key] = form["attention_memo"]
-        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+        form["attention_memo"] = replace_editable_text_current(
+            memo_current_key,
+            memo_widget_key,
+            generated_attention_memo,
+            sanitize_generated_body_text,
+        )
         mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
         st.session_state.form = form
         st.session_state["_attention_memo_regenerate_message"] = "修理依頼書メモを再生成しました。"
 
     pending_snippet_id = str(st.session_state.pop("_pending_append_memo_snippet_id", "") or "").strip()
     if pending_snippet_id:
+        form["attention_memo"] = sanitize_generated_body_text(st.session_state.get(memo_current_key, form.get("attention_memo", "")))
         added_snippets = append_attention_memo_snippets(form, [pending_snippet_id])
-        st.session_state[memo_widget_key] = form["attention_memo"]
-        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+        form["attention_memo"] = replace_editable_text_current(
+            memo_current_key,
+            memo_widget_key,
+            form["attention_memo"],
+            sanitize_generated_body_text,
+        )
         st.session_state.form = form
         st.session_state["_memo_snippet_append_message"] = (
             "修理依頼書メモへ追記しました。"
             if added_snippets else "この文言はすでに修理依頼書メモに含まれています。"
         )
 
-    memo_value = sanitize_generated_body_text(form.get("attention_memo") or generated_attention_memo)
-    if memo_widget_key in st.session_state:
-        widget_value = sanitize_generated_body_text(st.session_state.get(memo_widget_key, ""))
-        if widget_value != st.session_state.get("_memo_after_widget_synced"):
-            memo_value = widget_value
-            form["attention_memo"] = memo_value
-        else:
-            st.session_state[memo_widget_key] = memo_value
-    else:
-        st.session_state[memo_widget_key] = memo_value
-    st.session_state["_memo_after_widget_synced"] = memo_value
+    memo_value = ensure_editable_text_state(
+        memo_current_key,
+        memo_widget_key,
+        generated_attention_memo,
+        form.get("attention_memo", ""),
+        sanitize_generated_body_text,
+    )
+    form["attention_memo"] = memo_value
     snippets_df = load_memo_snippets()
     snippet_options = [""] + [
         str(row.get("snippet_id") or "").strip()
@@ -9661,10 +9709,12 @@ def render_tab_after_call():
             "修理依頼書メモ",
             height=260,
             key=memo_widget_key,
+            on_change=sync_editable_text_current,
+            args=(memo_current_key, memo_widget_key, sanitize_generated_body_text),
             label_visibility="collapsed",
         )
         form["attention_memo"] = sanitize_generated_body_text(memo_display)
-        st.session_state["_memo_after_widget_synced"] = form["attention_memo"]
+        st.session_state[memo_current_key] = form["attention_memo"]
         memo_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")
         with memo_button_cols[1]:
             if st.button(
@@ -9818,12 +9868,21 @@ def render_tab_after_call():
         if not (form.get(field) or "").strip()
     ]
     if st.session_state.pop("_pending_regenerate_rakutel_text", False):
-        form["rakutel_text"] = generated_rakutel_text
-        st.session_state["rakutel_text_display"] = form["rakutel_text"]
+        form["rakutel_text"] = replace_editable_text_current(
+            "rakutel_text_current",
+            "rakutel_text_widget",
+            generated_rakutel_text,
+        )
         mark_after_call_section_regenerated(st.session_state, "rakutel_text", rakutel_hash)
         st.session_state.form = form
         with rakutel_regen_message_slot:
             st.success("ラクテル用テキストを再生成しました。")
+    form["rakutel_text"] = ensure_editable_text_state(
+        "rakutel_text_current",
+        "rakutel_text_widget",
+        generated_rakutel_text,
+        form.get("rakutel_text", ""),
+    )
     with rakutel_action_col:
         if missing_rakutel_fields:
             st.warning("未入力の基本項目があります: " + " / ".join(missing_rakutel_fields))
@@ -9832,12 +9891,14 @@ def render_tab_after_call():
     with rakutel_text_col:
         rakutel_text_display = st.text_area(
             "ラクテル用テキスト",
-            form.get("rakutel_text") or generated_rakutel_text,
             height=180,
-            key="rakutel_text_display",
+            key="rakutel_text_widget",
+            on_change=sync_editable_text_current,
+            args=("rakutel_text_current", "rakutel_text_widget"),
             label_visibility="collapsed",
         )
     form["rakutel_text"] = rakutel_text_display
+    st.session_state["rakutel_text_current"] = form["rakutel_text"]
     with rakutel_text_col:
         rakutel_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")
         with rakutel_button_cols[1]:
@@ -9845,7 +9906,7 @@ def render_tab_after_call():
                 st.session_state["_pending_regenerate_rakutel_text"] = True
                 st.rerun()
         with rakutel_button_cols[2]:
-            render_copy_button("コピー", form["rakutel_text"], "copy_rakutel_text")
+            render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")
 
     # ── Teams報告文 ──
     st.markdown("##### 💬 Teams報告文")
@@ -9870,24 +9931,35 @@ def render_tab_after_call():
         teams_generation_form, "teams_chat_message", vendor=vendor, contact_type=contact_type,
         notes_filled=notes_filled, repair_type=repair_type)
     if st.session_state.pop("_pending_regenerate_teams_chat_message", False):
-        form["teams_chat_message"] = generated_teams_message
-        st.session_state["teams_chat_message_display"] = form["teams_chat_message"]
+        form["teams_chat_message"] = replace_editable_text_current(
+            "teams_chat_message_current",
+            "teams_chat_message_widget",
+            generated_teams_message,
+        )
         mark_after_call_section_regenerated(st.session_state, "teams_chat_message", teams_hash)
         st.session_state.form = form
         with teams_regen_message_slot:
             st.success("Teams報告文を再生成しました。")
+    form["teams_chat_message"] = ensure_editable_text_state(
+        "teams_chat_message_current",
+        "teams_chat_message_widget",
+        generated_teams_message,
+        form.get("teams_chat_message", ""),
+    )
     with teams_action_col:
         if after_call_section_needs_regeneration(st.session_state, "teams_chat_message", teams_hash):
             st.warning("基本項目が変更されています。Teams報告文を再生成してください。")
     with teams_text_col:
         teams_chat_message = st.text_area(
             "Teams報告文",
-            form.get("teams_chat_message") or generated_teams_message,
             height=160,
-            key="teams_chat_message_display",
+            key="teams_chat_message_widget",
+            on_change=sync_editable_text_current,
+            args=("teams_chat_message_current", "teams_chat_message_widget"),
             label_visibility="collapsed",
         )
     form["teams_chat_message"] = teams_chat_message
+    st.session_state["teams_chat_message_current"] = form["teams_chat_message"]
     with teams_text_col:
         teams_button_cols = st.columns([4.0, 1.0, 1.1], gap="small")
         with teams_button_cols[1]:
@@ -9895,7 +9967,7 @@ def render_tab_after_call():
                 st.session_state["_pending_regenerate_teams_chat_message"] = True
                 st.rerun()
         with teams_button_cols[2]:
-            render_copy_button("コピー", teams_chat_message, "copy_teams_chat_message")
+            render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")
     st.session_state.form = form
 
     with teams_action_col:
@@ -10039,10 +10111,10 @@ def render_tab_after_call():
                 result="start",
             )
             if is_warranty_destination:
-                teams_send_body = teams_plain_text_to_html(message)
+                teams_send_body = format_teams_send_body(message, form.get("rakuteru_no", ""))
                 log_action = "Teamsワランティ送信"
             else:
-                teams_send_body = _get_teams_send_body({"rakuteru_no": form.get("rakuteru_no", ""), "teams_chat_message": message})
+                teams_send_body = format_teams_send_body(message, form.get("rakuteru_no", ""))
                 log_action = effective_teams_action
             with st.spinner(teams_send_spinner_label(destination_key)):
                 append_teams_send_debug_log(
@@ -10152,13 +10224,21 @@ def render_tab_after_call():
     st.divider()
     with st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False):
         st.caption("通常はラクテル用テキストまたはTeams報告文を使用してください。旧形式の履歴貼付が必要な場合のみ使用します。")
-        st.text_area(
-            "履歴テンプレ",
+        history_value = ensure_editable_text_state(
+            "history_after_current",
+            "history_after_widget",
             history_tmpl,
-            height=220,
-            key=f"history_after_{stable_hash_text(history_tmpl, 12)}",
+            st.session_state.get("history_after_current", ""),
         )
-        render_copy_button("📋 コピー", history_tmpl, "copy_history_after_template")
+        history_display = st.text_area(
+            "履歴テンプレ",
+            height=220,
+            key="history_after_widget",
+            on_change=sync_editable_text_current,
+            args=("history_after_current", "history_after_widget"),
+        )
+        st.session_state["history_after_current"] = history_display or history_value
+        render_copy_button("📋 コピー", st.session_state["history_after_current"], "copy_history_after_template")
 
 
 # ============================================================

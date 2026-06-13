@@ -398,7 +398,7 @@ def test_after_call_history_template_is_collapsed_as_legacy_format():
     assert 'st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False)' in after_source
     assert "通常はラクテル用テキストまたはTeams報告文を使用してください。" in after_source
     assert "旧形式の履歴貼付が必要な場合のみ使用します。" in after_source
-    assert after_source.index('render_copy_button("📋 コピー", history_tmpl, "copy_history_after_template")') > history_index
+    assert after_source.index('render_copy_button("📋 コピー", st.session_state["history_after_current"], "copy_history_after_template")') > history_index
 
 
 def test_after_call_contact_method_table_avoids_nested_expander():
@@ -1103,8 +1103,8 @@ def test_teams_uses_call_line_display_name_and_rakutel_uses_line_name_for_old_al
     rakutel_text = app._build_rakutel_text(form, "加入者")
 
     assert "家電" in teams_message
-    assert "【家電回線に入電】" in rakutel_text
-    assert "【家電業務に入電】" not in rakutel_text
+    assert "【家電回線へ入電】" in rakutel_text
+    assert "【家電業務へ入電】" not in rakutel_text
 
 
 def test_attention_memo_0009_uses_vendor_send_template_with_estimated_fee():
@@ -1396,11 +1396,11 @@ def test_teams_message_without_rakuteru_does_not_emit_empty_bold_line():
 
 def test_rakutel_header_never_generates_blank_line_name():
     assert app.build_rakutel_call_header("", "受電") != "【回線に入電】"
-    assert app.build_rakutel_call_header("", "受電") == "【●●回線に入電】"
+    assert app.build_rakutel_call_header("", "受電") == "【●●回線へ入電】"
     assert app.build_rakutel_call_header("", "架電") == "【●●回線から架電】"
     assert "未選択回線" not in app.build_rakutel_call_header("", "受電")
-    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
-    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線へ入電】"
+    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線へ入電】"
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線から架電】"
     assert app.build_rakutel_call_header("住設業務", "架電") == "【住設回線から架電】"
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") != "【家電回線に架電】"
@@ -1434,8 +1434,8 @@ def test_residential_case_keeps_manual_home_line_and_only_infers_appliance_type(
 
     assert decision["working_form"]["appliance_type"] == "住設"
     assert decision["working_form"]["call_line"] == "家電"
-    assert "【家電回線に入電】" in rakutel_text
-    assert "【住設回線に入電】" not in rakutel_text
+    assert "【家電回線へ入電】" in rakutel_text
+    assert "【住設回線へ入電】" not in rakutel_text
     assert teams_message.startswith("楽テルNO未入力　家電")
 
 
@@ -1450,7 +1450,7 @@ def test_manual_call_line_prevents_residential_auto_call_line_override():
     })
 
     assert app.effective_call_line_for_form(form) == "家電"
-    assert "【家電回線に入電】" in app._build_rakutel_text(form, "加入者", "")
+    assert "【家電回線へ入電】" in app._build_rakutel_text(form, "加入者", "")
 
 
 def test_teams_chat_message_is_plain_text_before_send():
@@ -1472,7 +1472,7 @@ def test_teams_chat_message_is_plain_text_before_send():
     assert "<br>" not in message
 
 
-def test_teams_send_html_bolds_first_line_and_escapes_special_chars():
+def test_teams_send_html_escapes_special_chars_without_bold():
     form = {
         "rakuteru_no": '2026<&"0162',
         "teams_chat_message": '2026<&"0162\n家電 & 住設\nドライヤー<白>\nご確認お願いします。大"濱',
@@ -1480,11 +1480,42 @@ def test_teams_send_html_bolds_first_line_and_escapes_special_chars():
 
     html = app._get_teams_send_body(form)
 
-    assert html.startswith("<b>2026&lt;&amp;&quot;0162</b>")
+    assert html.startswith("2026&lt;&amp;&quot;0162")
     assert "<br>" in html
+    assert "<b>" not in html
+    assert "<strong>" not in html
     assert "家電 &amp; 住設" in html
     assert "ドライヤー&lt;白&gt;" in html
     assert "ご確認お願いします。大&quot;濱" in html
+
+
+def test_format_teams_send_body_uses_br_without_bold_or_strong():
+    html = app.format_teams_send_body(
+        "\n".join([
+            "2026_06_1234",
+            "住設",
+            "給湯器",
+            "ユナイトサービス㈱へFAX済み",
+            "ご確認お願いします。大濱",
+        ])
+    )
+
+    assert html == "2026_06_1234<br>住設<br>給湯器<br>ユナイトサービス㈱へFAX済み<br>ご確認お願いします。大濱"
+    assert "<b>" not in html
+    assert "</b>" not in html
+    assert "<strong>" not in html
+    assert "</strong>" not in html
+
+
+def test_all_teams_send_destinations_use_format_teams_send_body():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert 'teams_send_body = format_teams_send_body(message, form.get("rakuteru_no", ""))' in after_source
+    assert "teams_send_body = teams_plain_text_to_html(message)" not in after_source
+    assert "_get_teams_send_body({" not in after_source
 
 
 def test_teams_send_html_keeps_display_message_plain_and_excludes_drive_url():
@@ -1504,13 +1535,7 @@ def test_teams_send_html_keeps_display_message_plain_and_excludes_drive_url():
 
     assert "<b>" not in display_message
     assert "<br>" not in display_message
-    assert html == "\n".join([
-        "<b>2026_05_0174</b><br>",
-        "家電回線<br>",
-        "ドライヤー<br>",
-        "WRT修理センターへ依頼書PDF格納済み<br>",
-        "ご確認お願いします。大濱",
-    ])
+    assert html == "2026_05_0174<br>家電回線<br>ドライヤー<br>WRT修理センターへ依頼書PDF格納済み<br>ご確認お願いします。大濱"
     assert "drive.google.com" not in html
 
 
@@ -1522,7 +1547,7 @@ def test_teams_send_html_without_rakuteru_does_not_bold_first_line():
 
     html = app._get_teams_send_body(form)
 
-    assert html == "家電保証対応業務（24時間）<br>\nドライヤー"
+    assert html == "家電保証対応業務（24時間）<br>ドライヤー"
     assert "<b>" not in html
 
 
@@ -2012,9 +2037,16 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
         "extracted": {"product": "ドライヤー"},
         "memo_after": "old memo",
         "memo_after_widget": "old memo",
+        "attention_memo_current": "old memo",
         "_memo_after_widget_synced": "old memo",
         "rakutel_text_display": "old rakutel",
+        "rakutel_text_widget": "old rakutel",
+        "rakutel_text_current": "old rakutel",
         "teams_chat_message_display": "old teams",
+        "teams_chat_message_widget": "old teams",
+        "teams_chat_message_current": "old teams",
+        "history_after_widget": "old history",
+        "history_after_current": "old history",
         "call_memo_input": "old call memo",
         "after_call_memo_display": "old call memo",
         "call_memo_common_call": "old call memo",
@@ -2045,7 +2077,14 @@ def test_reset_case_preserves_default_operator_and_clears_case_state():
     assert "request_pdf_storage_confirmed" not in state
     assert "call_memo_input" not in state
     assert "memo_after_widget" not in state
+    assert "attention_memo_current" not in state
     assert "_memo_after_widget_synced" not in state
+    assert "rakutel_text_widget" not in state
+    assert "rakutel_text_current" not in state
+    assert "teams_chat_message_widget" not in state
+    assert "teams_chat_message_current" not in state
+    assert "history_after_widget" not in state
+    assert "history_after_current" not in state
     assert "after_call_memo_display" not in state
     assert "call_memo_common_call" not in state
     assert "call_memo_common_after" not in state
@@ -2563,8 +2602,8 @@ def test_regenerated_rakutel_text_reflects_late_operator_name():
     )
 
     assert "MPG大濱" in texts["rakutel_text"]
-    assert "【家電回線に入電】" in texts["rakutel_text"]
-    assert "【家電業務に入電】" not in texts["rakutel_text"]
+    assert "【家電回線へ入電】" in texts["rakutel_text"]
+    assert "【家電業務へ入電】" not in texts["rakutel_text"]
     assert "【修理受付済み】" in texts["rakutel_text"]
     assert "【修理受付】" not in texts["rakutel_text"]
     assert "2026/5/4 09:30　販売店" in texts["rakutel_text"]
@@ -2582,8 +2621,36 @@ def test_rakutel_text_inbound_subscriber_arrow():
 
     text = app._build_rakutel_text(form, "加入者", "")
 
-    assert "【家電回線に入電】" in text
+    assert "【家電回線へ入電】" in text
     assert "加入者⇒MPG大濱" in text
+
+
+def test_normalize_rakutel_caller_label_unwraps_other_detail_only():
+    assert app.normalize_rakutel_caller_label("その他（クラシアン　サイトウ様）") == "クラシアン　サイトウ様"
+    assert app.normalize_rakutel_caller_label("その他(クラシアン　サイトウ様)") == "クラシアン　サイトウ様"
+    assert app.normalize_rakutel_caller_label("加入者") == "加入者"
+    assert app.normalize_rakutel_caller_label("その他") == "その他"
+
+
+def test_rakutel_text_unwraps_other_detail_without_changing_teams_message():
+    form = app.empty_form()
+    form.update({
+        "operator_name": "大濱",
+        "call_line": "家電保証対応業務（24時間）",
+        "extracted_time": "2026/6/12 19：28",
+        "call_direction": "受電",
+        "counterparty_type": "その他",
+        "counterparty_detail": "クラシアン　サイトウ様",
+        "rakuteru_no": "2026_06_1234",
+        "product": "給湯器",
+    })
+
+    rakutel_text = app._build_rakutel_text(form, "その他", "")
+    teams_message = app._build_teams_chat_message(form, "ユナイトサービス㈱")
+
+    assert "2026/6/12 19：28　クラシアン　サイトウ様⇒MPG大濱" in rakutel_text
+    assert "その他（クラシアン　サイトウ様）" not in rakutel_text
+    assert "クラシアン　サイトウ様" not in teams_message
 
 
 def test_rakutel_text_outbound_subscriber_arrow():
@@ -2617,7 +2684,7 @@ def test_rakutel_text_reflects_store_counterparty_detail_contact_and_missing_tim
 
     text = app._build_rakutel_text(form, "販売店", "")
 
-    assert "【家電回線に入電】" in text
+    assert "【家電回線へ入電】" in text
     assert "2026/5/23 ●●：●●　販売店（あかりと空調の専門店 山田様）⇒MPG大濱" in text
     assert "日程調整時の連絡先：072-950-0880　5/26 12時以降" in text
     assert "販売店⇒MPG大濱" not in text
@@ -3078,6 +3145,41 @@ def test_send_teams_message_uses_chat_id_and_message_file_arguments(monkeypatch,
 
     result = app.send_teams_message_via_powershell(
         "hello teams",
+        destination_key="self_test",
+        destination_label="自分宛てテスト",
+    )
+
+    assert result["ok"] is True
+
+
+def test_self_test_send_message_file_does_not_wrap_entire_body_in_bold(monkeypatch, tmp_path):
+    config_path = tmp_path / "teams_config.json"
+    script_path = tmp_path / "send_teams_message.ps1"
+    write_config(config_path, chat_id="chat-456")
+    script_path.write_text("# test script", encoding="utf-8")
+    monkeypatch.setattr(app, "TEAMS_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(app, "TEAMS_SEND_SCRIPT_PATH", str(script_path))
+    raw_message = "\n".join([
+        "2026_06_1234",
+        "住設",
+        "給湯器",
+        "ユナイトサービス㈱へFAX済み",
+        "ご確認お願いします。大濱",
+    ])
+    send_body = app.format_teams_send_body(raw_message)
+
+    def fake_run(args, capture_output, text, timeout, env=None):
+        body = Path(args[9]).read_text(encoding="utf-8")
+        assert body == "2026_06_1234<br>住設<br>給湯器<br>ユナイトサービス㈱へFAX済み<br>ご確認お願いします。大濱"
+        assert "<b>" not in body
+        assert "<strong>" not in body
+        assert env["WRT_TEAMS_DEBUG_DESTINATION_KEY"] == "self_test"
+        return SimpleNamespace(returncode=0, stdout="SUCCESS message-001\n", stderr="")
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+
+    result = app.send_teams_message_via_powershell(
+        send_body,
         destination_key="self_test",
         destination_label="自分宛てテスト",
     )
@@ -3820,14 +3922,15 @@ def test_confirmed_vendor_block_does_not_show_stale_escalation_candidate():
     assert "拠点候補：担当エスカ（要確認）" not in block
 
 
-def test_after_call_history_template_keys_include_content_hash_to_avoid_stale_empty_display():
+def test_after_call_history_template_uses_current_text_state_to_avoid_stale_empty_display():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert 'key=f"history_after_{stable_hash_text(history_tmpl, 12)}"' in after_source
-    assert 'key=f"history_display_{stable_hash_text(history_tmpl, 12)}"' in source
+    assert '"history_after_current"' in after_source
+    assert 'key="history_after_widget"' in after_source
+    assert 'on_change=sync_editable_text_current' in after_source
 
 
 def test_after_call_display_uses_repair_request_memo_not_attention_memo():
@@ -3977,7 +4080,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "st.code(" not in rakutel_area
     assert "use_container_width=True" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area
-    assert 'render_copy_button("コピー", form["rakutel_text"], "copy_rakutel_text")' in rakutel_area
+    assert 'render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")' in rakutel_area
     assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
 
     assert "st.code(" not in teams_text_area
@@ -3986,7 +4089,7 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "height=160" in teams_text_area
     assert "送信内容プレビュー：" not in teams_area
     assert "送信文プレビュー" not in teams_area
-    assert 'render_copy_button("コピー", teams_chat_message, "copy_teams_chat_message")' in teams_area
+    assert 'render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")' in teams_area
     assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
 
 
@@ -3997,7 +4100,7 @@ def test_teams_copy_button_uses_plain_text_without_drive_url_source():
     copy_end_index = source.index("st.session_state.form = form", teams_copy_index)
     teams_copy_area = source[teams_copy_index:copy_end_index]
 
-    assert 'render_copy_button("コピー", teams_chat_message, "copy_teams_chat_message")' in teams_copy_area
+    assert 'render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")' in teams_copy_area
     assert "_get_teams_send_body" not in teams_copy_area
     assert "teams_plain_text_to_html" not in teams_copy_area
     assert "<b>" not in teams_copy_area
@@ -4006,17 +4109,34 @@ def test_teams_copy_button_uses_plain_text_without_drive_url_source():
     assert "drive.google.com" not in teams_copy_area
 
 
+def test_rakutel_text_area_copy_uses_current_text_state():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+    rakutel_area = after_source[
+        after_source.index('rakutel_text_display = st.text_area('):
+        after_source.index("##### 💬 Teams報告文")
+    ]
+
+    assert '"rakutel_text_current"' in rakutel_area
+    assert 'key="rakutel_text_widget"' in rakutel_area
+    assert 'on_change=sync_editable_text_current' in rakutel_area
+    assert 'render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")' in rakutel_area
+    assert 'form["rakutel_text"] = replace_editable_text_current(' in after_source
+
+
 def test_after_call_copy_buttons_reference_regenerated_session_values():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    attention_regen = after_source.index('st.session_state[memo_widget_key] = form["attention_memo"]')
+    attention_regen = after_source.index('form["attention_memo"] = replace_editable_text_current(')
     attention_copy = after_source.index("copy_attention_memo")
-    rakutel_regen = after_source.index('st.session_state["rakutel_text_display"] = form["rakutel_text"]')
+    rakutel_regen = after_source.index('form["rakutel_text"] = replace_editable_text_current(')
     rakutel_copy = after_source.index("copy_rakutel_text")
-    teams_regen = after_source.index('st.session_state["teams_chat_message_display"] = form["teams_chat_message"]')
+    teams_regen = after_source.index('form["teams_chat_message"] = replace_editable_text_current(')
     teams_copy = after_source.index("copy_teams_chat_message")
 
     assert attention_regen < attention_copy
@@ -4287,3 +4407,4 @@ def test_tab_css_selected_tab_is_emphasized():
     assert "font-weight: 700" in source
     # 選択中タブに border-bottom が設定されている
     assert "border-bottom: 3px solid" in source
+

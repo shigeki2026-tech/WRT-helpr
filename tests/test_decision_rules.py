@@ -384,7 +384,8 @@ def test_judge_script_route_keihan_store_name_does_not_match_night_route():
 def test_judge_script_route_fukuya_and_mitsui_lines_use_dedicated_scripts():
     cases = [
         ("福屋工務店", "福屋工務店", "fukuya_ys"),
-        ("三井デザイン", "三井デザイン", "mitsui_design"),
+        ("三井デザイン", "三井デザインテック", "mitsui_design"),
+        ("三井デザインテック", "三井デザインテック", "mitsui_design"),
     ]
     for call_line, display_name, script_key in cases:
         result = app.judge_script_route(make_form(call_line=call_line))
@@ -877,13 +878,13 @@ def test_next_confirmation_ui_uses_cards_and_collapsed_detail():
 
 def test_rakutel_heading_requires_manual_call_line_selection():
     blank_text = app._build_rakutel_text(app.empty_form(), "加入者", "")
-    assert "【●●回線に入電】" in blank_text
+    assert "【●●回線へ入電】" in blank_text
     assert "未選択回線" not in blank_text
 
     form = app.empty_form()
     form["call_line"] = "家電保証対応業務（24時間）"
     selected_text = app._build_rakutel_text(form, "加入者", "")
-    assert "【家電回線に入電】" in selected_text
+    assert "【家電回線へ入電】" in selected_text
 
 
 # ============================================================
@@ -2655,11 +2656,11 @@ def test_auto_template_selection_accepts_old_call_line_alias():
 
 
 def test_call_line_rakutel_header_uses_rakutel_line_name_not_display_sentence():
-    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線に入電】"
-    assert app.build_rakutel_call_header("家電業務", "受電") == "【家電回線に入電】"
-    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線に入電】"
+    assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "受電") == "【家電回線へ入電】"
+    assert app.build_rakutel_call_header("家電業務", "受電") == "【家電回線へ入電】"
+    assert app.build_rakutel_call_header("住設業務", "受電") == "【住設回線へ入電】"
     assert app.build_rakutel_call_header("家電保証対応業務（24時間）", "架電") == "【家電回線から架電】"
-    assert app.build_rakutel_call_header("コーナン商事（家電）", "受電") == "【コーナン（家電）回線に入電】"
+    assert app.build_rakutel_call_header("コーナン商事（家電）", "受電") == "【コーナン（家電）回線へ入電】"
 
 
 def test_mach_yukako_aliases_normalize_to_correct_display_name():
@@ -3326,7 +3327,7 @@ def test_after_call_tab_warns_when_recording_is_active():
     after_call_source = source[after_call_start:]
 
     assert "render_call_recording_active_notice" in after_call_source
-    assert "🔴 録音中です。終話後処理へ進む前に「⏹️ 停止」を押してください。" in after_call_source
+    assert "🔴 録音中です。次の作業へ進む前に「⏹️ 停止」を押してください。" in after_call_source
 
 
 def test_case_clear_resets_recording_ui_state_to_idle():
@@ -3893,3 +3894,4 @@ if __name__ == "__main__":
 
     if failed:
         sys.exit(1)
+
