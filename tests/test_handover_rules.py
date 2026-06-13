@@ -43,6 +43,46 @@ NEW_WRS_HANDOVER_CASES = (
     ("松﨑電機", "松﨑電機 / エアコンのマツ"),
     ("松崎電機", "松﨑電機 / エアコンのマツ"),
     ("エアコンのマツ", "松﨑電機 / エアコンのマツ"),
+    ("ツツミ", "ツツミ"),
+    ("オムロンソーシアルソリューションズ", "オムロンソーシアルソリューションズ"),
+    ("平田タイル", "平田タイル"),
+    ("AEG", "AEG"),
+    ("ガデリウス", "ガデリウス"),
+    ("DELTA", "DELTA"),
+    ("ガゲナウ", "ガゲナウ"),
+    ("マザーツール", "マザーツール"),
+    ("キムラ", "キムラ"),
+    ("TJMデザイン", "TJMデザイン"),
+    ("キッチンハウス", "キッチンハウス"),
+    ("永大産業", "永大産業"),
+    ("デイブレイク", "デイブレイク"),
+    ("REIWAクリエイト", "REIWAクリエイト"),
+    ("日本トリム", "日本トリム"),
+    ("渡辺製作所", "渡辺製作所"),
+    ("セキュリティデザイン", "セキュリティデザイン"),
+    ("HESTA", "HESTA"),
+    ("Protect ONE", "Protect ONE"),
+    ("ミズタニバルブ", "ミズタニバルブ"),
+    ("トルネックス", "トルネックス"),
+    ("IZEN COMPANY", "IZEN COMPANY"),
+    ("SPE", "SPE"),
+    ("DAIKEN", "DAIKEN"),
+    ("ファーストプラス", "ファーストプラス"),
+    ("ダイワ化成", "ダイワ化成"),
+    ("マーベックス", "マーベックス"),
+    ("ミズノハナ", "ミズノハナ"),
+    ("インクコーポレーション", "インクコーポレーション"),
+    ("グラフテクト", "グラフテクト"),
+    ("大光電機", "大光電機"),
+    ("積水ホームテクノ", "積水ホームテクノ"),
+    ("伊吹物産", "伊吹物産"),
+    ("インフォメティス", "インフォメティス"),
+    ("プレイリーホームズ", "プレイリーホームズ"),
+    ("トーヨーキッチンスタイル", "トーヨーキッチンスタイル"),
+    ("FUN×KITCHEN", "FUN×KITCHEN"),
+    ("GPRO", "GPRO"),
+    ("KOHLER", "KOHLER"),
+    ("toolbox", "toolbox"),
 )
 
 
@@ -180,6 +220,50 @@ def test_normal_case_has_no_wrs_handover_and_keeps_no7_unite_fallback():
     assert "ユナイト" in decision["vendor"]
     assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
     assert wrs["needs_wrs_handover"] is False
+
+
+@pytest.mark.parametrize(
+    ("manufacturer", "expected_rule_name"),
+    [
+        ("AEG", "AEG"),
+        ("ガゲナウ", "ガゲナウ"),
+        ("KOHLER", "KOHLER"),
+        ("toolbox", "toolbox"),
+    ],
+)
+def test_new_wrs_targets_are_flagged_before_no7_fallback(manufacturer, expected_rule_name):
+    form = make_form(
+        store_name="通常販売店",
+        appliance_type="住設",
+        product="システムキッチン",
+        manufacturer=manufacturer,
+        prefecture="滋賀県",
+    )
+
+    decision = app.run_decision(form)
+    wrs = decision["wrs_handover_action"]
+
+    assert decision["repair_type"] == "出張修理"
+    assert decision["vendor"] == "ユナイトサービス㈱"
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["rule_name"] == expected_rule_name
+
+
+def test_normal_manufacturer_still_has_no_wrs_handover_and_keeps_no7_fallback():
+    form = make_form(
+        store_name="通常販売店",
+        appliance_type="住設",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+    )
+
+    decision = app.run_decision(form)
+
+    assert decision["vendor"] == "ユナイトサービス㈱"
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert decision["wrs_handover_action"]["needs_wrs_handover"] is False
 
 
 @pytest.mark.parametrize(("keyword", "expected_rule_name"), NEW_WRS_HANDOVER_CASES)
