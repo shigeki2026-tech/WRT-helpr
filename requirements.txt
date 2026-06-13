@@ -2,7 +2,3 @@ streamlit
 pandas
 pyperclip
 pytest
-faster-whisper
-sounddevice
-soundfile
-numpy
