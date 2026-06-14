@@ -49,14 +49,16 @@ def test_top_dashboard_layout_css_classes_exist():
     assert 'render_case_clear_controls("top_case_memo", use_container_width=True)' not in source
 
 
-def test_recording_active_state_css_classes_exist():
+def test_call_start_status_css_classes_exist_without_recording_ui():
     source = _source()
 
     assert ".recording-control-panel" not in source
-    assert ".recording-status.recording-active" in source
-    assert ".recording-active-notice" in source
-    assert ".recording-stop-hint" in source
-    assert "#dc2626" in source
+    assert ".recording-status" not in source
+    assert ".recording-active-notice" not in source
+    assert ".recording-stop-hint" not in source
+    assert ".call-start-status" in source
+    assert ".call-start-status.call-active" in source
+    assert ".call-start-status-grid" in source
 
 
 def test_decision_tag_basic_wording_is_not_changed_by_card_html():

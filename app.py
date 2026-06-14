@@ -3357,37 +3357,55 @@ def close_copy_import_panel(session_state) -> None:
     set_show_copy_import(session_state, False)
 
 
-def reset_call_recording_ui_state(session_state) -> None:
-    session_state["call_recording_ui_state"] = "idle"
+CALL_AUDIO_STATUS_NONE = "未開始 / 録音なし"
 
 
-def is_call_recording_active(session_state) -> bool:
-    return session_state.get("call_recording_ui_state") == "recording"
+def ensure_call_status_state(session_state) -> None:
+    session_state.setdefault("call_in_progress", False)
+    session_state.setdefault("call_selected_line", "")
+    session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
+    for stale_key in ("call_recording_ui_state", "call_transcript_text", "call_transcript_reflected"):
+        if stale_key in session_state:
+            del session_state[stale_key]
 
 
-def append_call_transcript_to_existing_text(existing: str, transcript: str) -> str:
-    current = str(existing or "").strip()
-    text = str(transcript or "").strip()
-    if not text:
-        return current
-    if not current:
-        return text
-    return f"{current}\n\n[通話メモ]\n{text}"
+def reset_call_start_state(session_state) -> None:
+    session_state["call_in_progress"] = False
+    session_state["call_selected_line"] = ""
+    session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
+    for stale_key in ("call_recording_ui_state", "call_transcript_text", "call_transcript_reflected"):
+        if stale_key in session_state:
+            del session_state[stale_key]
 
 
-def reflect_call_transcript_to_hearing(form: dict, session_state) -> bool:
-    transcript = str(session_state.get("call_transcript_text") or "").strip()
-    if not transcript:
-        return False
-    reflected = append_call_transcript_to_existing_text(
-        form.get("symptom_detail") or session_state.get("call_hearing_symptom_detail") or "",
-        transcript,
-    )
-    form["symptom_detail"] = reflected
-    session_state["call_hearing_symptom_detail"] = reflected
-    session_state["call_transcript_reflected"] = True
+def _sync_case_basic_call_line_widget(session_state, call_line: str) -> None:
+    try:
+        revision = get_case_basic_revision(session_state)
+        widget_key = case_basic_widget_key("call_line", revision, session_state=session_state)
+    except Exception:
+        return
+    session_state[widget_key] = call_line
+    synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
+    synced[widget_key] = call_line
+    session_state["_case_basic_widget_synced_values"] = synced
+
+
+def start_call_with_line(form: dict, session_state, call_line: str, preserve_manual: bool = False) -> dict:
+    selected_line = normalize_call_line_for_display(call_line)
+    current_line = normalize_call_line_for_display(form.get("call_line", ""))
+    manual_line_locked = preserve_manual and bool(form.get("manual_call_line")) and bool(current_line)
+    effective_line = current_line if manual_line_locked and current_line != selected_line else selected_line
+
+    if effective_line:
+        form["call_line"] = effective_line
+        form["manual_call_line"] = True
+        _sync_case_basic_call_line_widget(session_state, effective_line)
+
+    session_state["call_in_progress"] = True
+    session_state["call_selected_line"] = effective_line
+    session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
     session_state["form"] = form
-    return True
+    return form
 
 
 def request_case_clear(session_state) -> None:
@@ -3403,7 +3421,7 @@ def process_pending_case_clear(session_state, settings: dict | None = None) -> b
             del session_state[key]
     session_state["case_memo_global"] = ""
     session_state["form"]["call_memo"] = ""
-    reset_call_recording_ui_state(session_state)
+    reset_call_start_state(session_state)
     return True
 
 
@@ -3556,8 +3574,8 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
         "case_memo_common",
         "call_memo_common_call",
         "call_memo_common_after",
-        "call_transcript_text",
-        "call_transcript_reflected",
+        "call_selected_line",
+        "call_audio_status",
         "pending_hearing_shortcut",
     ]:
         if key in session_state:
@@ -3571,6 +3589,7 @@ def reset_case_session_state(session_state, settings: dict | None = None) -> dic
             *CASE_BASIC_WIDGET_PREFIXES,
         )):
             del session_state[key]
+    reset_call_start_state(session_state)
     return new_form
 
 
@@ -7508,7 +7527,7 @@ body {
 .wrt-compact-case-basic label {
     margin-bottom: 0.15rem;
 }
-.recording-status {
+.call-start-status {
     border: 1px solid #dbeafe;
     border-radius: 8px;
     padding: 8px 10px;
@@ -7516,25 +7535,19 @@ body {
     color: #1e3a8a;
     font-weight: 700;
 }
-.recording-status.recording-active {
-    border-color: #dc2626;
-    background: #fee2e2;
-    color: #991b1b;
-    font-weight: 800;
+.call-start-status.call-active {
+    border-color: #16a34a;
+    background: #f0fdf4;
+    color: #14532d;
 }
-.recording-stop-hint {
-    margin-top: 4px;
-    color: #991b1b;
-    font-size: 0.82rem;
-    font-weight: 700;
+.call-start-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 6px 0 10px;
 }
-.recording-active-notice {
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin: 0 0 8px;
-    background: #fff7ed;
-    color: #9f1239;
-    font-weight: 800;
+.call-start-status-grid .call-start-status {
+    min-height: 44px;
 }
 h2 { font-size: 1.25rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
 h3 { font-size: 1.18rem !important; font-weight: 700 !important; margin-top: 0.4rem !important; margin-bottom: 0.2rem !important; }
@@ -7931,8 +7944,43 @@ def render_decision_tags_panel(form: dict) -> None:
     render_next_confirmation_sections(next_sections)
 
 
+def get_call_start_line_options() -> list[str]:
+    return [option for option in get_call_line_options() if option]
+
+
+def render_call_start_line_buttons(form: dict) -> None:
+    st.markdown("##### 通話開始")
+    line_options = get_call_start_line_options()
+    if line_options:
+        columns = st.columns(min(4, len(line_options)), gap="small")
+        for idx, call_line in enumerate(line_options):
+            with columns[idx % len(columns)]:
+                if st.button(call_line, key=f"call_start_line_{idx}", use_container_width=True):
+                    st.session_state.form = start_call_with_line(form, st.session_state, call_line)
+                    st.rerun()
+    else:
+        st.warning("回線名マスタが未登録です。案件情報の回線名を手動で指定してください。")
+
+    selected_line = st.session_state.get("call_selected_line") or form.get("call_line", "")
+    selected_line = normalize_call_line_for_display(selected_line)
+    call_status = "開始済み" if st.session_state.get("call_in_progress") else "未開始"
+    call_status_class = "call-start-status call-active" if st.session_state.get("call_in_progress") else "call-start-status"
+    audio_status = st.session_state.get("call_audio_status") or CALL_AUDIO_STATUS_NONE
+    st.markdown(
+        f"""
+        <div class="call-start-status-grid">
+            <div class="call-start-status">選択中回線名：<strong>{html.escape(selected_line or "未選択")}</strong></div>
+            <div class="{call_status_class}">通話中状態：<strong>{html.escape(call_status)}</strong></div>
+            <div class="call-start-status">録音状態：<strong>{html.escape(audio_status)}</strong></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_global_top_panels(form: dict) -> None:
     st.markdown('<div class="wrt-top-panels">', unsafe_allow_html=True)
+    render_call_start_line_buttons(form)
     tags_col, memo_col = st.columns([2, 1], gap="medium")
     with tags_col:
         render_decision_tags_panel(form)
@@ -8882,75 +8930,12 @@ def init_session():
         st.session_state.call_check_manual = {}
     if "show_copy_import" not in st.session_state:
         set_show_copy_import(st.session_state, show_copy_import(st.session_state))
+    ensure_call_status_state(st.session_state)
 
 
 # ============================================================
 # タブ1: 通話中判定
 # ============================================================
-def render_call_recording_active_notice(message: str) -> None:
-    if not is_call_recording_active(st.session_state):
-        return
-    st.markdown(f'<div class="recording-active-notice">{message}</div>', unsafe_allow_html=True)
-
-
-def render_call_recording_controls() -> None:
-    state_key = "call_recording_ui_state"
-    state = st.session_state.get(state_key, "idle")
-    if state not in {"idle", "recording", "stopped"}:
-        state = "idle"
-        st.session_state[state_key] = state
-
-    status_labels = {
-        "idle": "未開始",
-        "recording": "🔴 録音中（UIのみ）停止忘れ注意",
-        "stopped": "停止中",
-    }
-    is_recording = state == "recording"
-    status_class = "recording-status recording-active" if is_recording else "recording-status"
-
-    st.markdown("##### 録音操作")
-    st.caption("※録音ボタンは現時点ではUIのみです。実録音・保存は行いません。")
-    action_cols = st.columns([1, 1, 2], gap="small")
-    with action_cols[0]:
-        if st.button("🎙️ 録音", key="call_recording_start_button", disabled=state == "recording", use_container_width=True):
-            st.session_state[state_key] = "recording"
-            st.rerun()
-    with action_cols[1]:
-        if st.button("⏹️ 停止", key="call_recording_stop_button", disabled=state != "recording", use_container_width=True, type="primary" if is_recording else "secondary"):
-            st.session_state[state_key] = "stopped"
-            st.rerun()
-    with action_cols[2]:
-        st.markdown(
-            f'<div class="{status_class}">状態: {status_labels.get(state, "未開始")}</div>',
-            unsafe_allow_html=True,
-        )
-        if is_recording:
-            st.markdown(
-                '<div class="recording-stop-hint">通話後は ⏹️ 停止 を押してください。</div>',
-                unsafe_allow_html=True,
-            )
-
-
-def render_call_transcript_input_panel(form: dict) -> None:
-    st.markdown("##### 📄 通話メモ貼り付け")
-    st.caption("外部メモや別ツールで作成した内容を貼り付けます。")
-    st.text_area(
-        "通話メモ",
-        key="call_transcript_text",
-        height=140,
-        label_visibility="collapsed",
-        placeholder="ここに通話メモを貼り付けてください。",
-    )
-    st.caption("※WRT-helpr内では録音・自動文字起こし・外部API連携は行いません。")
-    if st.button("通話メモを症状欄へ追記", key="call_transcript_reflect_button", use_container_width=True):
-        if reflect_call_transcript_to_hearing(form, st.session_state):
-            st.rerun()
-        else:
-            st.warning("通話メモを入力してください。")
-    if st.session_state.pop("call_transcript_reflected", False):
-        st.success("通話メモを症状欄へ追記しました。")
-
-
 def render_tab_call():
     # UI改修: 通話中判定タブ専用の表示密度を調整
     st.markdown(
@@ -8979,9 +8964,6 @@ def render_tab_call():
 
     # UI改修: 左カラムにコピー取り込みとフォームを集約
     with col_input:
-        render_call_recording_active_notice("🔴 録音中です。通話終了後は必ず「⏹️ 停止」を押してください。")
-        render_call_recording_controls()
-        render_call_transcript_input_panel(st.session_state.form)
         st.markdown("##### 📋 コピー情報取り込み")
         with st.expander(
             "保証画面などのテキストを貼り付ける",
@@ -9001,7 +8983,6 @@ def render_tab_call():
                                 st.session_state["form"] = apply_extracted_fields_to_form(
                                     extracted, st.session_state["form"])
                                 st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                                reset_call_recording_ui_state(st.session_state)
                                 request_case_basic_widget_refresh(st.session_state)
                                 close_copy_import_panel(st.session_state)
                                 st.rerun()
@@ -9050,7 +9031,6 @@ def render_tab_call():
                     st.session_state.form = apply_extracted_fields_to_form(
                         st.session_state.extracted, st.session_state.form)
                     st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                    reset_call_recording_ui_state(st.session_state)
                     request_case_basic_widget_refresh(st.session_state)
                     close_copy_import_panel(st.session_state)
                     st.success("フォームへ反映しました。")
@@ -9486,7 +9466,6 @@ def render_tab_call():
 # タブ2: 終話後処理
 # ============================================================
 def render_tab_after_call():
-    render_call_recording_active_notice("🔴 録音中です。次の作業へ進む前に「⏹️ 停止」を押してください。")
     form = st.session_state.form
     decision = run_decision(form)
     repair_type = decision["repair_type"]
@@ -10735,7 +10714,7 @@ def render_tab_master():
         st.markdown(f"- 持込修理製品: {sorted(CARRY_IN_REPAIR_PRODUCTS)}")
         st.markdown(f"- 要確認製品: {sorted(CONFIRM_REPAIR_PRODUCTS)}")
         st.markdown(f"- データ消去同意必要: {sorted(DATA_ERASE_PRODUCTS)}")
-    st.caption("※ 録音・文字起こし機能はPhase2後続コミットで実装予定。")
+    st.caption("※ このアプリでは録音・文字起こし機能を実装しません。通話開始は回線名ボタンで管理します。")
 
 
 # ============================================================

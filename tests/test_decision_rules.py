@@ -3219,65 +3219,67 @@ def test_call_result_area_starts_with_hearing_inputs_without_script_block():
     assert hearing_render < support_detail
 
 
-def test_call_tab_has_recording_controls_ui_only():
+def test_call_start_line_helper_sets_line_and_call_state_without_recording():
+    form = app.empty_form()
+    state = {}
+
+    app.start_call_with_line(form, state, "家電")
+
+    assert form["call_line"] == "家電"
+    assert form["manual_call_line"] is True
+    assert state["call_in_progress"] is True
+    assert state["call_selected_line"] == "家電"
+    assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
+    assert state["call_audio_status"] == "未開始 / 録音なし"
+    assert state.get("call_recording_ui_state") != "recording"
+
+
+def test_call_start_line_helper_can_preserve_manual_call_line():
+    form = app.empty_form()
+    form.update({"call_line": "住設", "manual_call_line": True})
+    state = {}
+
+    app.start_call_with_line(form, state, "家電", preserve_manual=True)
+
+    assert form["call_line"] == "住設"
+    assert state["call_selected_line"] == "住設"
+    assert state["call_in_progress"] is True
+    assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
+
+
+def test_call_start_line_button_selection_can_change_current_line():
+    form = app.empty_form()
+    form.update({"call_line": "住設", "manual_call_line": True})
+    state = {}
+
+    app.start_call_with_line(form, state, "家電")
+
+    assert form["call_line"] == "家電"
+    assert state["call_selected_line"] == "家電"
+    assert state["call_in_progress"] is True
+
+
+def test_call_start_line_buttons_render_status_without_recording_controls():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
     after_call_start = source.index("def render_tab_after_call", call_tab_start)
     call_tab_source = source[call_tab_start:after_call_start]
-    recording_start = source.index("def render_call_recording_controls")
-    recording_source = source[recording_start:call_tab_start]
 
-    assert "render_call_recording_controls()" in call_tab_source
-    assert "render_call_recording_active_notice" in call_tab_source
-    assert "reset_call_recording_ui_state(st.session_state)" in call_tab_source
-    assert "🔴 録音中です。通話終了後は必ず「⏹️ 停止」を押してください。" in call_tab_source
-    assert 'st.markdown("##### 録音操作")' in recording_source
-    assert 'st.button("🎙️ 録音"' in recording_source
-    assert 'st.button("⏹️ 停止"' in recording_source
-    assert "🔴 録音中（UIのみ）停止忘れ注意" in recording_source
-    assert "recording-active" in recording_source
-    assert 'type="primary" if is_recording else "secondary"' in recording_source
-    assert 'call_recording_ui_state' in recording_source
-    assert '"idle"' in recording_source
-    assert '"recording"' in recording_source
-    assert '"stopped"' in recording_source
-    assert "※録音ボタンは現時点ではUIのみです。実録音・保存は行いません。" in recording_source
+    assert "def render_call_start_line_buttons" in source
+    assert "render_call_start_line_buttons(form)" in source
+    assert "start_call_with_line(form, st.session_state, call_line)" in source
+    assert "選択中回線名：" in source
+    assert "通話中状態：" in source
+    assert "録音状態：" in source
+    assert "未開始 / 録音なし" in source
+    assert "render_call_recording_controls" not in source
+    assert "render_call_recording_active_notice" not in source
+    assert "render_call_transcript_input_panel" not in source
+    assert "🎙️ 録音" not in source
+    assert "⏹️ 停止" not in source
+    assert "通話メモを症状欄へ追記" not in source
     for forbidden in ["audio_devices.py", "transcribe.py", "recordings/", "microphone", "sounddevice", "pyaudio"]:
-        assert forbidden not in recording_source
-
-
-def test_call_transcript_panel_appends_to_hearing_without_overwriting():
-    source = (ROOT / "app.py").read_text(encoding="utf-8")
-    call_tab_start = source.index("def render_tab_call")
-    after_call_start = source.index("def render_tab_after_call", call_tab_start)
-    call_tab_source = source[call_tab_start:after_call_start]
-
-    assert "📄 通話メモ貼り付け" in source
-    assert "通話メモを症状欄へ追記" in source
-    assert "call_transcript_text" in source
-    assert "外部メモや別ツールで作成した内容を貼り付けます。" in source
-    assert "※WRT-helpr内では録音・自動文字起こし・外部API連携は行いません。" in source
-    assert "render_call_transcript_input_panel(st.session_state.form)" in call_tab_source
-
-    assert app.append_call_transcript_to_existing_text("", "電源が入らない") == "電源が入らない"
-    assert app.append_call_transcript_to_existing_text(
-        "既存の症状",
-        "昨日から動かない",
-    ) == "既存の症状\n\n[通話メモ]\n昨日から動かない"
-
-
-def test_call_transcript_reflection_updates_hearing_widget_before_render():
-    form = {"symptom_detail": "既存の症状"}
-    state = {
-        "call_transcript_text": "昨日から動かない",
-    }
-
-    reflected = app.reflect_call_transcript_to_hearing(form, state)
-
-    assert reflected is True
-    assert state["call_hearing_symptom_detail"] == "既存の症状\n\n[通話メモ]\n昨日から動かない"
-    assert state["form"]["symptom_detail"] == state["call_hearing_symptom_detail"]
-    assert state["call_transcript_reflected"] is True
+        assert forbidden not in call_tab_source
 
 
 def test_hearing_shortcut_buttons_append_without_overwriting():
@@ -3321,27 +3323,33 @@ def test_hearing_shortcut_updates_widget_state_before_render():
     assert state["form"]["occurrence_time"] == "昨日から / 数日前から"
 
 
-def test_after_call_tab_warns_when_recording_is_active():
+def test_after_call_tab_does_not_warn_about_recording_state():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     after_call_start = source.index("def render_tab_after_call")
     after_call_source = source[after_call_start:]
 
-    assert "render_call_recording_active_notice" in after_call_source
-    assert "🔴 録音中です。次の作業へ進む前に「⏹️ 停止」を押してください。" in after_call_source
+    assert "render_call_recording_active_notice" not in after_call_source
+    assert "録音中です" not in after_call_source
 
 
-def test_case_clear_resets_recording_ui_state_to_idle():
+def test_case_clear_resets_call_start_state_and_removes_stale_recording_key():
     state = {
         "_pending_case_clear": True,
         "form": {"call_memo": "old memo", "operator_name": ""},
         "case_memo_global": "old memo",
         "call_recording_ui_state": "recording",
+        "call_in_progress": True,
+        "call_selected_line": "家電",
+        "call_audio_status": "recording",
     }
 
     processed = app.process_pending_case_clear(state, {"default_operator_name": ""})
 
     assert processed is True
-    assert state["call_recording_ui_state"] == "idle"
+    assert "call_recording_ui_state" not in state
+    assert state["call_in_progress"] is False
+    assert state["call_selected_line"] == ""
+    assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
 
 
 def test_call_result_script_reference_is_only_in_support_details():
