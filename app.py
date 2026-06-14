@@ -3423,6 +3423,10 @@ def reset_call_start_state(session_state) -> None:
     session_state["call_in_progress"] = False
     session_state["call_selected_line"] = ""
     session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
+    form = session_state.get("form")
+    if isinstance(form, dict):
+        form["call_line"] = ""
+        form["manual_call_line"] = False
     for stale_key in ("call_recording_ui_state", "call_transcript_text", "call_transcript_reflected"):
         if stale_key in session_state:
             del session_state[stale_key]
@@ -8982,6 +8986,7 @@ def empty_form() -> dict:
     form["attention_memo"] = ""
     form["rakutel_text"] = ""
     form["teams_chat_message"] = ""
+    form["manual_call_line"] = False
     return form
 
 

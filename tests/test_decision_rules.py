@@ -3435,6 +3435,50 @@ def test_call_start_line_button_selection_can_change_current_line():
     assert state["call_in_progress"] is True
 
 
+def test_call_start_line_selection_updates_rakutel_heading_and_teams_line():
+    form = app.empty_form()
+    form.update({"product": "エアコン"})
+    state = {}
+
+    app.start_call_with_line(form, state, "住設")
+
+    rakutel_text = app._build_rakutel_text(state["form"], "加入者", "")
+    teams_message = app._build_teams_chat_message(state["form"], "ユナイトサービス㈱")
+
+    assert form["call_line"] == "住設"
+    assert form["manual_call_line"] is True
+    assert state["form"]["call_line"] == "住設"
+    assert state["call_selected_line"] == "住設"
+    assert state["call_in_progress"] is True
+    assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
+    assert "【住設回線へ入電】" in rakutel_text
+    assert teams_message.startswith("楽テルNO未入力　住設　エアコン")
+
+
+def test_call_start_line_manual_selection_survives_residential_inference():
+    form = app.empty_form()
+    state = {}
+    app.start_call_with_line(form, state, "家電")
+    form.update({
+        "appliance_type": "家電",
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "product": "システムキッチン",
+        "series": "システムキッチン",
+        "manufacturer": "パナソニック",
+    })
+
+    decision = app.run_decision(form)
+    rakutel_text = app._build_rakutel_text(decision["working_form"], "加入者", "")
+    teams_message = app._build_teams_chat_message(decision["working_form"], "ユナイトサービス㈱")
+
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert decision["working_form"]["call_line"] == "家電"
+    assert decision["working_form"]["manual_call_line"] is True
+    assert "【家電回線へ入電】" in rakutel_text
+    assert "【住設回線へ入電】" not in rakutel_text
+    assert teams_message.startswith("楽テルNO未入力　家電　システムキッチン")
+
+
 def test_call_start_line_buttons_render_status_without_recording_controls():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     call_tab_start = source.index("def render_tab_call")
@@ -3511,7 +3555,7 @@ def test_after_call_tab_does_not_warn_about_recording_state():
 def test_case_clear_resets_call_start_state_and_removes_stale_recording_key():
     state = {
         "_pending_case_clear": True,
-        "form": {"call_memo": "old memo", "operator_name": ""},
+        "form": {"call_memo": "old memo", "operator_name": "", "call_line": "家電", "manual_call_line": True},
         "case_memo_global": "old memo",
         "call_recording_ui_state": "recording",
         "call_in_progress": True,
@@ -3526,6 +3570,8 @@ def test_case_clear_resets_call_start_state_and_removes_stale_recording_key():
     assert state["call_in_progress"] is False
     assert state["call_selected_line"] == ""
     assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
+    assert state["form"]["call_line"] == ""
+    assert state["form"]["manual_call_line"] is False
 
 
 def test_call_result_script_reference_is_only_in_support_details():
