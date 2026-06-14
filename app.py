@@ -6578,7 +6578,8 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
             "primary": "必要",
             "secondary": f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or '要確認'}",
             "tertiary": f"根拠：{basis}",
-            "quaternary": f"備考：{wrs_action.get('note_template')}" if wrs_action.get("note_template") else "",
+            "quaternary": wrs_before_no7_fallback_notice(wrs_action),
+            "quinary": f"備考：{wrs_action.get('note_template')}" if wrs_action.get("note_template") else "",
             "color": TAG_COLOR_WARNING,
         }
     elif handover.get("required"):
@@ -6604,6 +6605,14 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
         cost_tag,
         handover_tag,
     ]
+
+
+WRS_BEFORE_NO7_FALLBACK_NOTICE = "WRS引き継ぎ対象として No.7 fallback より前に判定済み"
+
+
+def wrs_before_no7_fallback_notice(wrs_action: dict | None) -> str:
+    wrs_action = wrs_action or {}
+    return WRS_BEFORE_NO7_FALLBACK_NOTICE if wrs_action.get("needs_wrs_handover") else ""
 
 
 # ============================================================
@@ -7845,6 +7854,7 @@ def render_wrs_handover_action_panel(wrs_action: dict) -> None:
         f"処理：{wrs_action['action_type']}" if wrs_action.get("action_type") else "",
         f"依頼先：{wrs_action['handover_request_content']}" if wrs_action.get("handover_request_content") else "",
         wrs_action.get("basis_text", ""),
+        wrs_before_no7_fallback_notice(wrs_action),
         f"メモ：{wrs_action['note_template']}" if wrs_action.get("note_template") else "",
         "手動確認：必要" if wrs_action.get("requires_manual_confirm") else "",
     ]
@@ -7865,6 +7875,7 @@ def build_wrs_handover_transfer_text(form: dict, wrs_action: dict | None) -> str
         f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or ''}",
         f"対象：{rule_name}",
         f"根拠：{basis}",
+        wrs_before_no7_fallback_notice(wrs_action),
         f"備考：{wrs_action.get('note_template') or ''}",
         f"楽テルNO：{form.get('rakuteru_no') or form.get('rakutel_no') or ''}",
         f"回線：{form.get('call_line') or ''}",
@@ -7899,6 +7910,7 @@ def wrs_handover_call_summary_lines(wrs_action: dict | None) -> list[str]:
         "WRS引き継ぎ：あり",
         f"依頼内容：{wrs_action.get('action_type') or wrs_action.get('handover_request_content') or '要確認'}",
         f"根拠：{basis}",
+        wrs_before_no7_fallback_notice(wrs_action),
     ]
 
 

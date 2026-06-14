@@ -433,7 +433,68 @@ def test_wrs_call_summary_lines_show_present_and_absent_states():
     assert "WRS引き継ぎ：あり" in present_lines
     assert "依頼内容：受付報告" in present_lines
     assert any(line.startswith("根拠：WRS引き継ぎ対象 No.") for line in present_lines)
+    assert app.WRS_BEFORE_NO7_FALLBACK_NOTICE in present_lines
     assert absent_lines == ["WRS引き継ぎ：なし"]
+
+
+def test_wrs_decision_tag_shows_before_no7_fallback_notice_and_keeps_basis():
+    form = make_form(
+        operating_company="株式会社アイ工務店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        appliance_type="住設",
+        warranty_start_date="2025/01/01",
+        warranty_end_date="2029/12/31",
+    )
+    decision = app.run_decision(form)
+    tags = app.build_decision_tag_items(decision, form, app.build_script_reference_info(decision))
+    handover_tag = next(tag for tag in tags if tag["title"] == "引継要否")
+
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert decision["wrs_handover_action"]["needs_wrs_handover"] is True
+    assert handover_tag["tertiary"].startswith("根拠：WRS引き継ぎ対象 No.")
+    assert "アイ工務店" in handover_tag["tertiary"]
+    assert handover_tag["quaternary"] == app.WRS_BEFORE_NO7_FALLBACK_NOTICE
+
+
+def test_no7_fallback_normal_unite_case_does_not_show_wrs_notice():
+    form = make_form(
+        store_name="通常販売店",
+        prefecture="滋賀県",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        appliance_type="住設",
+        warranty_start_date="2025/01/01",
+        warranty_end_date="2029/12/31",
+    )
+    decision = app.run_decision(form)
+    lines = app.wrs_handover_call_summary_lines(decision["wrs_handover_action"])
+    tags = app.build_decision_tag_items(decision, form, app.build_script_reference_info(decision))
+    handover_tag = next(tag for tag in tags if tag["title"] == "引継要否")
+
+    assert decision["vendor"] == "ユナイトサービス㈱"
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
+    assert decision["wrs_handover_action"]["needs_wrs_handover"] is False
+    assert app.WRS_BEFORE_NO7_FALLBACK_NOTICE not in lines
+    assert app.WRS_BEFORE_NO7_FALLBACK_NOTICE not in str(handover_tag)
+
+
+def test_normal_manufacturer_false_positive_does_not_show_wrs_notice():
+    form = make_form(
+        call_line="家電",
+        prefecture="東京都",
+        product="洗濯機",
+        manufacturer="パナソニック",
+        appliance_type="家電",
+        warranty_start_date="2025/01/01",
+        warranty_end_date="2029/12/31",
+    )
+    decision = app.run_decision(form)
+    transfer_text = app.build_wrs_handover_transfer_text(decision["working_form"], decision["wrs_handover_action"])
+
+    assert decision["wrs_handover_action"]["needs_wrs_handover"] is False
+    assert app.wrs_before_no7_fallback_notice(decision["wrs_handover_action"]) == ""
+    assert app.WRS_BEFORE_NO7_FALLBACK_NOTICE not in transfer_text
 
 
 def test_wrs_call_summary_keeps_ai_koumuten_vendor_unite():
@@ -626,6 +687,7 @@ def test_wrs_transfer_text_for_ai_koumuten_includes_request_and_note():
     assert "依頼内容：受付報告" in text
     assert "対象：アイ工務店" in text
     assert "根拠：WRS引き継ぎ対象 No." in text
+    assert app.WRS_BEFORE_NO7_FALLBACK_NOTICE in text
     assert "アイ工務店" in text
     assert "備考：間違い電話は不要" in text
     assert "楽テルNO：2026_05_1073" in text
