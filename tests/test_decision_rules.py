@@ -3435,6 +3435,40 @@ def test_call_start_line_button_selection_can_change_current_line():
     assert state["call_in_progress"] is True
 
 
+def test_call_start_line_buttons_hide_after_selection_until_change_requested():
+    form = app.empty_form()
+    state = {}
+
+    assert app.should_show_call_start_line_buttons(form, state) is True
+
+    app.start_call_with_line(form, state, "家電")
+
+    assert app.should_show_call_start_line_buttons(form, state) is False
+    assert state["call_line_change_mode"] is False
+
+    app.request_call_line_change(state)
+
+    assert state["call_line_change_mode"] is True
+    assert app.should_show_call_start_line_buttons(form, state) is True
+
+
+def test_call_start_line_change_closes_buttons_and_updates_selected_line():
+    form = app.empty_form()
+    state = {}
+    app.start_call_with_line(form, state, "家電")
+    app.request_call_line_change(state)
+
+    app.start_call_with_line(form, state, "住設")
+
+    assert form["call_line"] == "住設"
+    assert form["manual_call_line"] is True
+    assert state["call_selected_line"] == "住設"
+    assert state["call_in_progress"] is True
+    assert state["call_line_change_mode"] is False
+    assert app.should_show_call_start_line_buttons(form, state) is False
+    assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
+
+
 def test_call_start_line_selection_updates_rakutel_heading_and_teams_line():
     form = app.empty_form()
     form.update({"product": "エアコン"})
@@ -3488,6 +3522,9 @@ def test_call_start_line_buttons_render_status_without_recording_controls():
     assert "def render_call_start_line_buttons" in source
     assert "render_call_start_line_buttons(form)" in source
     assert "start_call_with_line(form, st.session_state, call_line)" in source
+    assert "should_show_call_start_line_buttons(form, st.session_state)" in source
+    assert 'key="call_start_line_change"' in source
+    assert "request_call_line_change(st.session_state)" in source
     assert "選択中回線名：" in source
     assert "通話中状態：" in source
     assert "録音状態：" in source
@@ -3569,6 +3606,7 @@ def test_case_clear_resets_call_start_state_and_removes_stale_recording_key():
     assert "call_recording_ui_state" not in state
     assert state["call_in_progress"] is False
     assert state["call_selected_line"] == ""
+    assert state["call_line_change_mode"] is False
     assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
     assert state["form"]["call_line"] == ""
     assert state["form"]["manual_call_line"] is False

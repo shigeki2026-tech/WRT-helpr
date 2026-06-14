@@ -3413,6 +3413,7 @@ CALL_AUDIO_STATUS_NONE = "未開始 / 録音なし"
 def ensure_call_status_state(session_state) -> None:
     session_state.setdefault("call_in_progress", False)
     session_state.setdefault("call_selected_line", "")
+    session_state.setdefault("call_line_change_mode", False)
     session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
     for stale_key in ("call_recording_ui_state", "call_transcript_text", "call_transcript_reflected"):
         if stale_key in session_state:
@@ -3422,6 +3423,7 @@ def ensure_call_status_state(session_state) -> None:
 def reset_call_start_state(session_state) -> None:
     session_state["call_in_progress"] = False
     session_state["call_selected_line"] = ""
+    session_state["call_line_change_mode"] = False
     session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
     form = session_state.get("form")
     if isinstance(form, dict):
@@ -3457,9 +3459,26 @@ def start_call_with_line(form: dict, session_state, call_line: str, preserve_man
 
     session_state["call_in_progress"] = True
     session_state["call_selected_line"] = effective_line
+    session_state["call_line_change_mode"] = False
     session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
     session_state["form"] = form
     return form
+
+
+def request_call_line_change(session_state) -> None:
+    session_state["call_line_change_mode"] = True
+
+
+def current_call_start_line(form: dict, session_state) -> str:
+    selected_line = session_state.get("call_selected_line") or form.get("call_line", "")
+    return normalize_call_line_for_display(selected_line)
+
+
+def should_show_call_start_line_buttons(form: dict, session_state) -> bool:
+    selected_line = current_call_start_line(form, session_state)
+    call_started = bool(session_state.get("call_in_progress"))
+    change_mode = bool(session_state.get("call_line_change_mode"))
+    return not (selected_line and call_started and not change_mode)
 
 
 def request_case_clear(session_state) -> None:
@@ -8030,6 +8049,32 @@ def get_call_start_line_options() -> list[str]:
 
 def render_call_start_line_buttons(form: dict) -> None:
     st.markdown("##### 通話開始")
+    selected_line = current_call_start_line(form, st.session_state)
+    call_in_progress = bool(st.session_state.get("call_in_progress"))
+    call_status = "開始済み" if call_in_progress else "未開始"
+    call_status_class = "call-start-status call-active" if call_in_progress else "call-start-status"
+    audio_status = st.session_state.get("call_audio_status") or CALL_AUDIO_STATUS_NONE
+    show_line_buttons = should_show_call_start_line_buttons(form, st.session_state)
+
+    if not show_line_buttons:
+        status_col, change_col = st.columns([4.5, 1.1], gap="small")
+        with status_col:
+            st.markdown(
+                f"""
+                <div class="call-start-status-grid compact">
+                    <div class="call-start-status call-active">選択中回線名：<strong>{html.escape(selected_line)}</strong></div>
+                    <div class="{call_status_class}">通話中状態：<strong>{html.escape(call_status)}</strong></div>
+                    <div class="call-start-status">録音状態：<strong>{html.escape(audio_status)}</strong></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with change_col:
+            if st.button("回線変更", key="call_start_line_change", use_container_width=True):
+                request_call_line_change(st.session_state)
+                st.rerun()
+        return
+
     line_options = get_call_start_line_options()
     if line_options:
         columns = st.columns(min(4, len(line_options)), gap="small")
@@ -8041,11 +8086,6 @@ def render_call_start_line_buttons(form: dict) -> None:
     else:
         st.warning("回線名マスタが未登録です。案件情報の回線名を手動で指定してください。")
 
-    selected_line = st.session_state.get("call_selected_line") or form.get("call_line", "")
-    selected_line = normalize_call_line_for_display(selected_line)
-    call_status = "開始済み" if st.session_state.get("call_in_progress") else "未開始"
-    call_status_class = "call-start-status call-active" if st.session_state.get("call_in_progress") else "call-start-status"
-    audio_status = st.session_state.get("call_audio_status") or CALL_AUDIO_STATUS_NONE
     st.markdown(
         f"""
         <div class="call-start-status-grid">
@@ -8538,6 +8578,21 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
     return re.sub(r"\s*円\s*$", "", (value or "").strip())
 
 
+def synced_selectbox(label: str, options: list[str], current_value: str, key: str):
+    kwargs = {"key": key}
+    if key not in st.session_state:
+        kwargs["index"] = options.index(current_value) if current_value in options else 0
+    return st.selectbox(label, options, **kwargs)
+
+
+def synced_text_input(label: str, current_value: str, key: str, **kwargs):
+    input_kwargs = dict(kwargs)
+    input_kwargs["key"] = key
+    if key not in st.session_state:
+        input_kwargs["value"] = current_value
+    return st.text_input(label, **input_kwargs)
+
+
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
     st.markdown('<div class="wrt-compact-case-basic">', unsafe_allow_html=True)
     header_col, action_col = st.columns([2.2, 1])
@@ -8565,45 +8620,42 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap="small")
     row2 = st.columns([1.2, 2.8, 2.5], gap="small")
     with row1[0]:
-        form["call_line"] = st.selectbox(
+        form["call_line"] = synced_selectbox(
             "回線名",
             call_line_opts,
-            index=call_line_opts.index(form.get("call_line", ""))
-            if form.get("call_line", "") in call_line_opts else 0,
-            key=case_basic_widget_key("call_line", revision),
+            form.get("call_line", ""),
+            case_basic_widget_key("call_line", revision),
         )
     with row1[1]:
-        form["appliance_category"] = st.selectbox(
+        form["appliance_category"] = synced_selectbox(
             "案件分類",
             APPLIANCE_CATEGORY_OPTIONS,
-            index=APPLIANCE_CATEGORY_OPTIONS.index(form.get("appliance_category", ""))
-            if form.get("appliance_category", "") in APPLIANCE_CATEGORY_OPTIONS else 0,
-            key=case_basic_widget_key("appliance_category", revision),
+            form.get("appliance_category", ""),
+            case_basic_widget_key("appliance_category", revision),
         )
         form = apply_appliance_category_to_form(form)
     with row1[2]:
         pref_opts = [""] + PREFECTURES
-        form["prefecture"] = st.selectbox(
+        form["prefecture"] = synced_selectbox(
             "都道府県",
             pref_opts,
-            index=pref_opts.index(form.get("prefecture", ""))
-            if form.get("prefecture", "") in pref_opts else 0,
-            key=case_basic_widget_key("prefecture", revision),
+            form.get("prefecture", ""),
+            case_basic_widget_key("prefecture", revision),
         )
     with row1[3]:
-        form["product"] = st.text_input(
+        form["product"] = synced_text_input(
             "製品",
-            value=form.get("product", ""),
-            key=case_basic_widget_key("product", revision),
+            form.get("product", ""),
+            case_basic_widget_key("product", revision),
         )
     with row1[4]:
         product_price_original = form.get("product_price", "")
         product_price_display = product_price_value_for_case_basic_ui(product_price_original)
-        product_price_input = st.text_input(
+        product_price_input = synced_text_input(
             "商品価格（円）",
-            value=product_price_display,
+            product_price_display,
+            case_basic_widget_key("product_price", revision),
             placeholder="",
-            key=case_basic_widget_key("product_price", revision),
         )
         form["product_price"] = (
             product_price_original
@@ -8611,10 +8663,10 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             else product_price_input
         )
     with row1[5]:
-        form["store_name"] = st.text_input(
+        form["store_name"] = synced_text_input(
             "販売店",
-            value=form.get("store_name", ""),
-            key=case_basic_widget_key("store_name", revision),
+            form.get("store_name", ""),
+            case_basic_widget_key("store_name", revision),
         )
     with row2[0]:
         manufacturer_opts = get_manufacturer_options()
@@ -8622,20 +8674,19 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
         if current_manufacturer and current_manufacturer not in manufacturer_opts:
             form["manufacturer_original"] = form.get("manufacturer_original") or current_manufacturer
             current_manufacturer = normalize_manufacturer_for_select(current_manufacturer)
-        form["manufacturer"] = st.selectbox(
+        form["manufacturer"] = synced_selectbox(
             "メーカー",
             manufacturer_opts,
-            index=manufacturer_opts.index(current_manufacturer)
-            if current_manufacturer in manufacturer_opts else 0,
-            key=case_basic_widget_key("manufacturer", revision),
+            current_manufacturer,
+            case_basic_widget_key("manufacturer", revision),
         )
         if form.get("manufacturer") in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN) and form.get("manufacturer_original"):
             st.caption(f"原文：{form.get('manufacturer_original')}")
     with row2[1]:
-        form["warranty_plan"] = st.text_input(
+        form["warranty_plan"] = synced_text_input(
             "保証プラン名",
-            value=form.get("warranty_plan", ""),
-            key=case_basic_widget_key("warranty_plan", revision),
+            form.get("warranty_plan", ""),
+            case_basic_widget_key("warranty_plan", revision),
         )
     if show_template_result:
         preview_decision = run_decision(form)

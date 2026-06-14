@@ -61,6 +61,21 @@ def test_call_start_status_css_classes_exist_without_recording_ui():
     assert ".call-start-status-grid" in source
 
 
+def test_case_basic_call_line_widget_avoids_default_and_session_state_double_set():
+    source = _source()
+    case_basic_src = _function_source(source, "render_shared_case_basic_editor")
+    selectbox_src = _function_source(source, "synced_selectbox")
+    text_input_src = _function_source(source, "synced_text_input")
+
+    assert 'form["call_line"] = synced_selectbox(' in case_basic_src
+    assert 'key=case_basic_widget_key("call_line", revision)' not in case_basic_src
+    assert "if key not in st.session_state:" in selectbox_src
+    assert 'kwargs["index"]' in selectbox_src
+    assert "return st.selectbox(label, options, **kwargs)" in selectbox_src
+    assert "if key not in st.session_state:" in text_input_src
+    assert 'input_kwargs["value"]' in text_input_src
+
+
 def test_audio_probe_plan_is_not_wired_into_wrt_app():
     source = _source()
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")

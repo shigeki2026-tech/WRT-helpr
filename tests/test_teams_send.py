@@ -2380,14 +2380,16 @@ def test_case_basic_widget_initial_values_use_current_form_values():
     panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
-    assert 'value=form.get("product", "")' in panel_source
+    assert 'form["product"] = synced_text_input(' in panel_source
+    assert 'form.get("product", "")' in panel_source
     assert "product_price_display = product_price_value_for_case_basic_ui(product_price_original)" in panel_source
-    assert "value=product_price_display" in panel_source
+    assert "product_price_display," in panel_source
     assert 'current_manufacturer = form.get("manufacturer", "")' in panel_source
-    assert 'value=form.get("store_name", "")' in panel_source
-    assert 'form["prefecture"] = st.selectbox(' in panel_source
-    assert 'form["warranty_plan"] = st.text_input(' in panel_source
-    assert 'value=form.get("warranty_plan", "")' in panel_source
+    assert 'form["store_name"] = synced_text_input(' in panel_source
+    assert 'form.get("store_name", "")' in panel_source
+    assert 'form["prefecture"] = synced_selectbox(' in panel_source
+    assert 'form["warranty_plan"] = synced_text_input(' in panel_source
+    assert 'form.get("warranty_plan", "")' in panel_source
     assert 'case_basic_widget_key("prefecture", revision)' in panel_source
     assert 'case_basic_widget_key("warranty_plan", revision)' in panel_source
 
@@ -2402,10 +2404,10 @@ def test_case_basic_fields_do_not_show_required_optional_badges():
     assert "optional-badge" not in panel_source
     assert "conditional-badge" not in panel_source
     assert "render_field_label(" not in panel_source
-    assert 'st.selectbox(\n            "回線名"' in panel_source
-    assert 'st.selectbox(\n            "都道府県"' in panel_source
-    assert 'st.text_input(\n            "商品価格（円）"' in panel_source
-    assert 'st.text_input(\n            "保証プラン名"' in panel_source
+    assert 'synced_selectbox(\n            "回線名"' in panel_source
+    assert 'synced_selectbox(\n            "都道府県"' in panel_source
+    assert 'synced_text_input(\n            "商品価格（円）"' in panel_source
+    assert 'synced_text_input(\n            "保証プラン名"' in panel_source
 
 
 def test_hearing_choice_text_uses_supplemental_input_labels():
@@ -2437,7 +2439,7 @@ def test_case_basic_product_price_is_editable_in_common_basic_panel():
     aux_index = source.index("with st.expander(\"補助情報を開く\"")
     aux_source = source[aux_index:source.index("sync_hearing_widget_state_to_form(form)", aux_index)]
 
-    assert "product_price_input = st.text_input(" in panel_source
+    assert "product_price_input = synced_text_input(" in panel_source
     assert 'form["product_price"] = (' in panel_source
     assert 'case_basic_widget_key("product_price", revision)' in panel_source
     assert '"product_price": "case_basic_product_price"' in source
