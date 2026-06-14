@@ -2464,6 +2464,9 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
                                  diagnostics: list | None = None) -> dict:
     vendor_result = vendor_result or {}
     reason = (vendor_result.get("reason") or "").strip()
+    arrangement_block_reason = (vendor_result.get("arrangement_block_reason") or "").strip()
+    if arrangement_block_reason:
+        reason = arrangement_block_reason
     vendor_text = (vendor or vendor_result.get("vendor_name") or "").strip()
     is_cer = "CER" in vendor_text
     is_generic_escalation = "担当エスカ" in vendor_text or "要確認" in vendor_text
@@ -2505,6 +2508,10 @@ def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
             reason = "現在の条件では修理拠点を自動確定できません"
         next_action = "終話後に担当へ確認し、拠点を確定"
 
+    if arrangement_block_reason:
+        title = "⚠️ 手配前確認が必要"
+        next_action = "手配前に担当へ確認し、受付可否と手配可否を確定"
+
     if is_generic_escalation and vendor_result.get("vendor_missing_reason"):
         next_action = "担当へ確認するか、修理拠点ルール候補を作成してください。"
 
@@ -2525,6 +2532,9 @@ def build_vendor_candidate_card_info(vendor: str, vendor_result: dict | None = N
         "reason": (vendor_result.get("reason") or "").strip(),
         "needs_escalation": bool(vendor_result.get("needs_escalation")),
         "escalation": build_vendor_escalation_info(vendor, vendor_result) if vendor_result.get("needs_escalation") else {},
+        "arrangement_blocked": bool(vendor_result.get("arrangement_blocked")),
+        "arrangement_block_reason": (vendor_result.get("arrangement_block_reason") or "").strip(),
+        "warranty_clock_reason": (vendor_result.get("warranty_clock_reason") or "").strip(),
         "request_folder": folder,
         "arrangement_method": action,
         "contact": handoff.get("contact", ""),
@@ -5419,17 +5429,27 @@ def _nakayashiki_vendor_result(form: dict, warranty_result: dict | None = None) 
     if not _form_contains_nakayashiki(form):
         return None
     status = (warranty_result or {}).get("warranty_status", "unknown")
+    can_accept = bool((warranty_result or {}).get("can_accept"))
+    arrangement_blocked = not can_accept
     if status == "active":
         vendor_name = "なかやしき工務"
         reason = "なかやしき保証期間中"
+        warranty_clock_reason = "なかやしき保証クロック：保証期間内のため、なかやしき工務へ分岐"
         needs_escalation = False
+    elif status == "before_start":
+        vendor_name = "担当エスカ（要確認）"
+        reason = "なかやしき保証開始日前"
+        warranty_clock_reason = "なかやしき保証クロック：保証開始日前のため、受付不可。手配前に担当確認"
+        needs_escalation = True
     elif status == "expired":
         vendor_name = "ベルホームふくおか"
         reason = "なかやしき保証終了後"
-        needs_escalation = False
+        warranty_clock_reason = "なかやしき保証クロック：保証期間終了後のため、受付不可。手配前に担当確認"
+        needs_escalation = True
     else:
         vendor_name = "担当エスカ（要確認）"
         reason = "なかやしき保証期間未確定"
+        warranty_clock_reason = "なかやしき保証クロック：保証開始日・保証終了日未確認のため、手配前に担当確認"
         needs_escalation = True
     return {
         "matched": True,
@@ -5437,6 +5457,10 @@ def _nakayashiki_vendor_result(form: dict, warranty_result: dict | None = None) 
         "reason": reason,
         "contact_type": "",
         "needs_escalation": needs_escalation,
+        "arrangement_blocked": arrangement_blocked,
+        "arrangement_block_reason": warranty_clock_reason if arrangement_blocked else "",
+        "warranty_clock_status": status,
+        "warranty_clock_reason": warranty_clock_reason,
         "keyword": "なかやしき",
         "priority": 30,
         "csv_name": "",
@@ -9289,6 +9313,10 @@ def render_tab_call():
             stop_conditions.append("他窓口へ修理依頼済み=あり")
         if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):
             stop_conditions.append("拠点未確定")
+        if vendor_result.get("arrangement_blocked"):
+            stop_conditions.append(vendor_result.get("arrangement_block_reason") or "保証クロック確認")
+        elif warranty_status in ("before_start", "expired"):
+            stop_conditions.append("保証期間外のため受付不可")
         if warranty_status == "unknown":
             stop_conditions.append("保証期間未確認")
         st.markdown("### ⛔ 手配前に止める条件")

@@ -2448,10 +2448,34 @@ def test_nakayashiki_active_warranty_routes_to_nakayashiki_koumu_before_no7():
     ))
 
     assert d["warranty_status"] == "active"
+    assert d["can_accept"] is True
     assert d["vendor"] == "なかやしき工務"
     assert d["vendor_result"]["reason"] == "なかやしき保証期間中"
     assert d["vendor_result"]["needs_escalation"] is False
+    assert d["vendor_result"]["arrangement_blocked"] is False
+    assert "保証期間内" in d["vendor_result"]["warranty_clock_reason"]
     assert d["vendor_result"]["reason"] != "依頼先一覧 No.7 上記以外・全国・全メーカー"
+
+
+def test_nakayashiki_before_start_warranty_blocks_acceptance_and_arrangement():
+    d = app.run_decision(make_form(
+        store_name="なかやしき",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="福岡県",
+        appliance_type="住設",
+        warranty_start_date="2099/01/01",
+        warranty_end_date="2099/12/31",
+    ))
+
+    assert d["warranty_status"] == "before_start"
+    assert d["can_accept"] is False
+    assert d["vendor"] == "担当エスカ（要確認）"
+    assert d["vendor_result"]["reason"] == "なかやしき保証開始日前"
+    assert d["vendor_result"]["needs_escalation"] is True
+    assert d["vendor_result"]["arrangement_blocked"] is True
+    assert "保証開始日前" in d["vendor_result"]["warranty_clock_reason"]
+    assert "手配前に担当確認" in d["vendor_result"]["arrangement_block_reason"]
 
 
 def test_nakayashiki_expired_warranty_routes_to_bellhome_fukuoka_before_no7():
@@ -2466,9 +2490,13 @@ def test_nakayashiki_expired_warranty_routes_to_bellhome_fukuoka_before_no7():
     ))
 
     assert d["warranty_status"] == "expired"
+    assert d["can_accept"] is False
     assert d["vendor"] == "ベルホームふくおか"
     assert d["vendor_result"]["reason"] == "なかやしき保証終了後"
-    assert d["vendor_result"]["needs_escalation"] is False
+    assert d["vendor_result"]["needs_escalation"] is True
+    assert d["vendor_result"]["arrangement_blocked"] is True
+    assert "保証期間終了後" in d["vendor_result"]["warranty_clock_reason"]
+    assert "受付不可" in d["vendor_result"]["arrangement_block_reason"]
 
 
 def test_nakayashiki_unknown_warranty_routes_to_escalation_before_no7():
@@ -2481,9 +2509,47 @@ def test_nakayashiki_unknown_warranty_routes_to_escalation_before_no7():
     ))
 
     assert d["warranty_status"] == "unknown"
+    assert d["can_accept"] is False
     assert d["vendor"] == "担当エスカ（要確認）"
     assert d["vendor_result"]["reason"] == "なかやしき保証期間未確定"
     assert d["vendor_result"]["needs_escalation"] is True
+    assert d["vendor_result"]["arrangement_blocked"] is True
+    assert "未確認" in d["vendor_result"]["warranty_clock_reason"]
+
+
+def test_nakayashiki_warranty_clock_reason_is_shown_on_escalation_card():
+    form = make_form(
+        store_name="中屋敷",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="福岡県",
+        appliance_type="住設",
+        warranty_start_date="2010/01/01",
+        warranty_end_date="2011/01/01",
+    )
+    d = app.run_decision(form)
+    escalation = app.build_vendor_escalation_info(d["vendor"], d["vendor_result"])
+
+    assert escalation["title"] == "⚠️ 手配前確認が必要"
+    assert "なかやしき保証クロック" in escalation["reason"]
+    assert "No.7" not in escalation["reason"]
+
+
+def test_generic_store_warranty_routing_does_not_get_nakayashiki_clock_reason():
+    d = app.run_decision(make_form(
+        store_name="通常販売店",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+        appliance_type="住設",
+        warranty_start_date="2020/01/01",
+        warranty_end_date="2099/12/31",
+    ))
+
+    assert d["warranty_status"] == "active"
+    assert d["can_accept"] is True
+    assert "warranty_clock_reason" not in d["vendor_result"]
+    assert d["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
 
 
 def test_visit_vendor_list_no7_fallback_does_not_override_priority_rules():
