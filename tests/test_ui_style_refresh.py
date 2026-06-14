@@ -61,6 +61,24 @@ def test_call_start_status_css_classes_exist_without_recording_ui():
     assert ".call-start-status-grid" in source
 
 
+def test_audio_probe_plan_is_not_wired_into_wrt_app():
+    source = _source()
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    plan_path = ROOT / "docs" / "audio_recording_probe_plan.md"
+    plan = plan_path.read_text(encoding="utf-8")
+
+    assert plan_path.exists()
+    assert "WRT 本体とは切り離して検証" in plan
+    assert "本番通話中に実行しない" in plan
+    assert "録音ファイルを保存しない" in plan
+    assert "Windows の既定デバイス" in plan
+    assert "audio_recording_probe_plan" not in source
+    assert "audio_readonly_probe" not in source
+    assert "tools/audio_readonly_probe.py" not in source
+    for dependency in ("sounddevice", "soundfile", "faster-whisper", "faster_whisper", "numpy"):
+        assert dependency not in requirements
+
+
 def test_decision_tag_basic_wording_is_not_changed_by_card_html():
     html = app._ui_v3_block(
         "受付可否",
