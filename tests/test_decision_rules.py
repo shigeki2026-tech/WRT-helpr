@@ -2249,6 +2249,116 @@ def test_residential_visit_natural_candidates_keep_0009_with_special_template():
     assert [item["template_code"] for item in candidates] == ["0019", "0009"]
 
 
+def test_template_selection_keeps_jusetsu_existing_category_aligned_with_script_route():
+    form = make_form(
+        call_line="住設",
+        appliance_category="住設（既築）",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+    )
+    decision = app.run_decision(form)
+    selected = app.select_template_for_form(
+        decision["working_form"],
+        decision["repair_type"],
+        decision["working_form"].get("warranty_plan", ""),
+        app.load_template_codes(),
+    )
+
+    assert decision["script_result"]["display_name"] == "住設・出張修理"
+    assert app.judge_script_route(decision["working_form"])["display_name"] == "0099回線（住設既築）"
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert decision["working_form"]["housing_phase"] == "既築"
+    assert selected["template_code"] == "0044"
+    assert selected["label"] == "【中古・既築】"
+    assert selected["source"] == "appliance_category"
+
+
+def test_template_selection_keeps_jusetsu_rental_category_aligned_with_script_route():
+    form = make_form(
+        call_line="住設",
+        appliance_category="住設（賃貸）",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+    )
+    decision = app.run_decision(form)
+    selected = app.select_template_for_form(
+        decision["working_form"],
+        decision["repair_type"],
+        decision["working_form"].get("warranty_plan", ""),
+        app.load_template_codes(),
+    )
+
+    assert app.judge_script_route(decision["working_form"])["display_name"] == "0099回線（賃貸）"
+    assert decision["working_form"]["appliance_type"] == "住設"
+    assert decision["working_form"]["housing_phase"] == "賃貸"
+    assert selected["source"] == "appliance_category"
+    assert "賃貸依頼" in selected["label"]
+    assert "住宅資材センター" not in selected["label"]
+
+
+def test_template_selection_keeps_kaden_and_new_jusetsu_existing_defaults():
+    df_tpl = app.load_template_codes()
+    kaden_form = make_form(
+        call_line="家電",
+        appliance_category="家電",
+        product="洗濯機",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+    )
+    kaden_decision = app.run_decision(kaden_form)
+    kaden_selected = app.select_template_for_form(
+        kaden_decision["working_form"],
+        kaden_decision["repair_type"],
+        "",
+        df_tpl,
+    )
+
+    new_form = make_form(
+        call_line="住設",
+        appliance_category="住設（新築）",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+    )
+    new_decision = app.run_decision(new_form)
+    new_selected = app.select_template_for_form(
+        new_decision["working_form"],
+        new_decision["repair_type"],
+        "",
+        df_tpl,
+    )
+
+    assert app.judge_script_route(kaden_decision["working_form"])["display_name"] == "0099回線（家電/新築）"
+    assert kaden_selected["template_code"] == "0009"
+    assert kaden_selected["source"] == "fallback"
+    assert app.judge_script_route(new_decision["working_form"])["display_name"] == "0099回線（住設新築）"
+    assert new_selected["template_code"] == "0019"
+    assert new_selected["source"] == "fallback"
+
+
+def test_template_selection_unknown_category_does_not_confirm_without_call_line():
+    form = make_form(
+        appliance_category="",
+        appliance_type="",
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="東京都",
+    )
+
+    selected = app.select_template_for_form(
+        form,
+        "出張修理",
+        "自然故障",
+        app.load_template_codes(),
+    )
+
+    assert selected["template_code"] == ""
+    assert selected["label"] == ""
+    assert selected["source"] == "fallback"
+
+
 def test_tc_template_store_rules_loaded_and_match_required_stores():
     df = app.load_store_rules()
     assert not df.empty
@@ -3908,6 +4018,10 @@ _ALL_TESTS = [
     test_tc119_extracted_dates_convert_for_date_input,
     test_tc120_empty_form_does_not_auto_fill_today_for_warranty,
     test_tc_template_code_options_loaded,
+    test_template_selection_keeps_jusetsu_existing_category_aligned_with_script_route,
+    test_template_selection_keeps_jusetsu_rental_category_aligned_with_script_route,
+    test_template_selection_keeps_kaden_and_new_jusetsu_existing_defaults,
+    test_template_selection_unknown_category_does_not_confirm_without_call_line,
     test_tc_template_store_rules_loaded_and_match_required_stores,
     test_tc_template_store_group_priority_over_normal_template,
     test_tc_template_no_store_rule_falls_back_to_legacy_auto_select,

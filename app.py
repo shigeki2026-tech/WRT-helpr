@@ -1849,6 +1849,39 @@ def _auto_select_template(call_line: str, repair_type: str, warranty_plan: str, 
     return _auto_select_template_from_candidates(filtered, repair_type, warranty_plan)
 
 
+def _explicit_appliance_category_for_template(form: dict) -> str:
+    raw_category = (form.get("appliance_category") or "").strip()
+    raw_phase = (form.get("housing_phase") or "").strip()
+    if not raw_category and not raw_phase:
+        return ""
+    return normalize_appliance_category(
+        raw_category,
+        form.get("appliance_type", ""),
+        raw_phase,
+    )
+
+
+def _template_row_for_appliance_category(form: dict, repair_type: str, df_tpl: pd.DataFrame):
+    if df_tpl.empty or repair_type != "出張修理":
+        return None
+    category = _explicit_appliance_category_for_template(form)
+    if category == "住設（既築）":
+        return _template_row_by_code_or_label(df_tpl, template_code="0044")
+    if category == "住設（賃貸）":
+        rental_rows = df_tpl[
+            df_tpl["category"].astype(str).str.contains("住設", na=False)
+            & df_tpl["label"].astype(str).str.contains("賃貸依頼", na=False)
+        ]
+        if rental_rows.empty:
+            return None
+        generic_rows = rental_rows[
+            rental_rows["label"].astype(str).str.contains("その他賃貸案件", na=False)
+            & rental_rows["label"].astype(str).str.contains("リファテック以外", na=False)
+        ]
+        return (generic_rows if not generic_rows.empty else rental_rows).iloc[0]
+    return None
+
+
 def match_store_template_rule(form: dict, df_store_rules: pd.DataFrame = None) -> dict:
     df = load_store_rules() if df_store_rules is None else df_store_rules
     base = {
@@ -2105,6 +2138,13 @@ def select_template_for_form(form: dict, repair_type: str, warranty_plan: str,
             row = _template_row_by_code_or_label(df_tpl, template_label=label)
             code = normalize_template_code(row.get("template_code")) if row is not None else ""
             source = "store_group"
+
+    if not label:
+        row = _template_row_for_appliance_category(form, repair_type, df_tpl)
+        if row is not None:
+            label = (row.get("label") or "").strip()
+            code = normalize_template_code(row.get("template_code"))
+            source = "appliance_category"
 
     if not label:
         label = _auto_select_template(
