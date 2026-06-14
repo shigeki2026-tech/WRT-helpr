@@ -3551,17 +3551,18 @@ def test_hearing_shortcut_buttons_append_without_overwriting():
     assert "頻度候補" in hearing_source
     assert "consume_pending_hearing_shortcut(form, st.session_state)" in hearing_source
     assert "選択済み：" not in source
-    assert "_choice_text_hearing_value(" not in hearing_source
+    assert "_choice_text_hearing_value(" in hearing_source
     assert "st.selectbox(" not in hearing_source
     assert "pending_hearing_shortcut" in source
     assert "queue_hearing_shortcut(st.session_state, field_name, candidate)" in source
     assert "apply_hearing_shortcut(form, st.session_state, field_name, candidate)" not in source
     assert "電源が入らない" in source
     assert "水漏れしている" in source
-    assert "今日から" in source
-    assert "1か月前から" in source
-    assert "使用時のみ" in source
-    assert "だんだん悪化" in source
+    assert "occurrence_today_option()" in source
+    assert "1か月ほど前から" in source
+    assert "以前から" not in source
+    assert "たまに" in source
+    assert "1回のみ" in source
     assert "append_hearing_shortcut_text" in source
     assert app.append_hearing_shortcut_text("", "冷えない") == "冷えない"
     assert app.append_hearing_shortcut_text("既存症状", "冷えない") == "既存症状 / 冷えない"

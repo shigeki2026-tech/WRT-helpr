@@ -354,8 +354,27 @@ def _is_supplemental_question(text: str) -> bool:
 
 
 HEARING_UNSELECTED = "未選択"
-OCCURRENCE_TIME_OPTIONS = [HEARING_UNSELECTED, "本日", "昨日", "数日前", "1週間前", "購入直後", "不明"]
-OCCURRENCE_FREQUENCY_OPTIONS = [HEARING_UNSELECTED, "継続中", "常時", "時々", "初回のみ", "再発", "特定条件で発生", "不明"]
+
+
+def occurrence_today_option(today: date | None = None) -> str:
+    today = today or date.today()
+    return f"本日（{today.month}/{today.day}）から"
+
+
+def occurrence_time_options(today: date | None = None) -> list[str]:
+    return [
+        HEARING_UNSELECTED,
+        occurrence_today_option(today),
+        "昨日から",
+        "数日前から",
+        "1週間ほど前から",
+        "1か月ほど前から",
+        "不明",
+    ]
+
+
+OCCURRENCE_TIME_OPTIONS = occurrence_time_options()
+OCCURRENCE_FREQUENCY_OPTIONS = [HEARING_UNSELECTED, "継続中", "時々", "たまに", "1回のみ", "不明"]
 
 _SELECT_WITH_OTHER_OPTIONS: dict[str, list[str]] = {
     "occurrence_time": OCCURRENCE_TIME_OPTIONS,
@@ -8580,7 +8599,10 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
 
 def synced_selectbox(label: str, options: list[str], current_value: str, key: str):
     kwargs = {"key": key}
-    if key not in st.session_state:
+    if key in st.session_state:
+        if current_value in options and not st.session_state.get(key):
+            st.session_state[key] = current_value
+    else:
         kwargs["index"] = options.index(current_value) if current_value in options else 0
     return st.selectbox(label, options, **kwargs)
 
@@ -8588,9 +8610,23 @@ def synced_selectbox(label: str, options: list[str], current_value: str, key: st
 def synced_text_input(label: str, current_value: str, key: str, **kwargs):
     input_kwargs = dict(kwargs)
     input_kwargs["key"] = key
-    if key not in st.session_state:
+    if key in st.session_state:
+        if current_value and not st.session_state.get(key):
+            st.session_state[key] = current_value
+    else:
         input_kwargs["value"] = current_value
     return st.text_input(label, **input_kwargs)
+
+
+def synced_text_area(label: str, current_value: str, key: str, **kwargs):
+    input_kwargs = dict(kwargs)
+    input_kwargs["key"] = key
+    if key in st.session_state:
+        if current_value and not st.session_state.get(key):
+            st.session_state[key] = current_value
+    else:
+        input_kwargs["value"] = current_value
+    return st.text_area(label, **input_kwargs)
 
 
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
@@ -8754,10 +8790,10 @@ HEARING_SYMPTOM_SHORTCUTS = [
     "冷えない", "動かない", "破損している", "点滅している", "においがする",
 ]
 HEARING_OCCURRENCE_TIME_SHORTCUTS = [
-    "今日から", "昨日から", "数日前から", "1週間前から", "1か月前から", "入居時から", "購入時から", "以前から",
+    occurrence_today_option(), "昨日から", "数日前から", "1週間ほど前から", "1か月ほど前から", "不明",
 ]
 HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS = [
-    "常時", "時々", "使用時のみ", "初回のみ", "再発", "継続中", "だんだん悪化", "特定条件で発生",
+    "継続中", "時々", "たまに", "1回のみ", "不明",
 ]
 
 
@@ -8818,21 +8854,21 @@ def _choice_text_hearing_value(form: dict, field_name: str, options: list[str],
                                placeholder: str) -> str:
     current = get_hearing_value(form, field_name)
     selected_index = options.index(current) if current in options else 0
-    selected = st.selectbox(
+    selected = synced_selectbox(
         label,
         options,
-        index=selected_index,
-        key=choice_key,
+        options[selected_index],
+        choice_key,
     )
     text_initial = current if current and current not in options else ""
     st.markdown(
         '<div class="wrt-sub-input-label">補足入力</div>',
         unsafe_allow_html=True,
     )
-    typed = st.text_input(
+    typed = synced_text_input(
         "補足入力",
-        value=text_initial,
-        key=text_key,
+        text_initial,
+        text_key,
         placeholder=placeholder,
         label_visibility="collapsed",
     )
@@ -8860,17 +8896,18 @@ def render_call_hearing_inputs(form: dict) -> None:
     sync_hearing_widget_state_to_form(form)
     consume_pending_hearing_shortcut(form, st.session_state)
     st.markdown("### 📋 聴取内容（修理依頼書メモ反映）")
-    form["symptom_detail"] = st.text_area(
+    form["symptom_detail"] = synced_text_area(
         "具体的な症状",
-        value=form.get("symptom_detail", ""),
+        form.get("symptom_detail", ""),
+        "call_hearing_symptom_detail",
         height=80,
-        key="call_hearing_symptom_detail",
     )
     st.caption("症状候補")
     render_hearing_shortcut_buttons(form, "symptom_detail", HEARING_SYMPTOM_SHORTCUTS, columns=5)
-    form["occurrence_time"] = _text_hearing_value(
+    form["occurrence_time"] = _choice_text_hearing_value(
         form,
         "occurrence_time",
+        occurrence_time_options(),
         choice_key="call_hearing_occurrence_time_choice",
         text_key="call_hearing_occurrence_time_text",
         label="発生時期",
@@ -8878,9 +8915,10 @@ def render_call_hearing_inputs(form: dict) -> None:
     )
     st.caption("時期候補")
     render_hearing_shortcut_buttons(form, "occurrence_time", HEARING_OCCURRENCE_TIME_SHORTCUTS, columns=4)
-    form["occurrence_frequency"] = _text_hearing_value(
+    form["occurrence_frequency"] = _choice_text_hearing_value(
         form,
         "occurrence_frequency",
+        OCCURRENCE_FREQUENCY_OPTIONS,
         choice_key="call_hearing_occurrence_frequency_choice",
         text_key="call_hearing_occurrence_frequency_text",
         label="発生頻度",

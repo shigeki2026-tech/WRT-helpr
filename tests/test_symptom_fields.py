@@ -8,6 +8,7 @@ tests/test_symptom_fields.py
 
 import sys
 import os
+from datetime import date
 from pathlib import Path
 import unittest.mock as mock
 
@@ -391,14 +392,21 @@ def test_occurrence_frequency_options_do_not_include_sono_ta():
 
 def test_occurrence_time_options_include_predefined():
     """発生時期の選択肢に主要な候補が含まれる。"""
-    for expected in ["本日", "昨日", "数日前", "不明"]:
+    for expected in [app.occurrence_today_option(), "昨日から", "数日前から", "不明"]:
         assert expected in app.OCCURRENCE_TIME_OPTIONS, f"'{expected}' が OCCURRENCE_TIME_OPTIONS にない"
+    assert "以前から" not in app.OCCURRENCE_TIME_OPTIONS
+
+
+def test_occurrence_today_option_uses_month_day_without_zero_padding():
+    assert app.occurrence_today_option(date(2026, 6, 4)) == "本日（6/4）から"
 
 
 def test_occurrence_frequency_options_include_predefined():
     """発生頻度の選択肢に主要な候補が含まれる。"""
-    for expected in ["継続中", "常時", "時々", "初回のみ", "不明"]:
+    for expected in ["継続中", "時々", "たまに", "1回のみ", "不明"]:
         assert expected in app.OCCURRENCE_FREQUENCY_OPTIONS, f"'{expected}' が OCCURRENCE_FREQUENCY_OPTIONS にない"
+    for removed in ["常時", "初回のみ", "再発"]:
+        assert removed not in app.OCCURRENCE_FREQUENCY_OPTIONS
 
 
 def test_occurrence_frequency_keizokuchu_is_after_unselected():
@@ -704,11 +712,12 @@ def test_attention_preview_and_hearing_summary_share_resolved_frequency_value():
 
 def test_sync_hearing_widget_state_updates_summary_before_inputs_render():
     form = app.empty_form()
+    today_option = app.occurrence_today_option()
     state = {
         "call_hearing_symptom_detail": "電源が付かない",
-        "call_hearing_occurrence_time_choice": "本日",
+        "call_hearing_occurrence_time_choice": today_option,
         "call_hearing_occurrence_time_text": "",
-        "call_hearing_occurrence_frequency_choice": "再発",
+        "call_hearing_occurrence_frequency_choice": "継続中",
         "call_hearing_occurrence_frequency_text": "",
     }
 
@@ -716,8 +725,8 @@ def test_sync_hearing_widget_state_updates_summary_before_inputs_render():
 
     assert app.build_hearing_summary_lines(form)[:3] == [
         "具体的な症状：電源が付かない",
-        "発生時期：本日",
-        "発生頻度：再発",
+        f"発生時期：{today_option}",
+        "発生頻度：継続中",
     ]
 
 
@@ -797,7 +806,7 @@ def test_call_hearing_block_owns_stable_widget_keys():
     end = source.index("def render_now_action_item", start)
     hearing_source = source[start:end]
 
-    assert 'key="call_hearing_symptom_detail"' in hearing_source
+    assert '"call_hearing_symptom_detail"' in hearing_source
     assert 'choice_key="call_hearing_occurrence_time_choice"' in hearing_source
     assert 'text_key="call_hearing_occurrence_time_text"' in hearing_source
     assert 'choice_key="call_hearing_occurrence_frequency_choice"' in hearing_source

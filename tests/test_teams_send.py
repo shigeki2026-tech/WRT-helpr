@@ -2459,6 +2459,11 @@ def test_case_basic_product_price_ui_strips_trailing_yen_only():
 def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     form = app.empty_form()
     form.update({
+        "call_line": "住設",
+        "manual_call_line": True,
+        "warranty_plan": "アイ工務店_住宅設備機器【10年保証】",
+        "warranty_start_date": "2026/06/01",
+        "warranty_end_date": "2036/05/31",
         "product": "食器洗い乾燥機",
         "manufacturer": "三菱電機",
         "store_name": "ライフデザイン・カバヤ株式会社",
@@ -2467,22 +2472,76 @@ def test_global_case_basic_stale_blank_widget_does_not_overwrite_form():
     revision = 0
     state = SessionState({
         "case_basic_revision": revision,
+        app.case_basic_widget_key("call_line", revision): "",
+        app.case_basic_widget_key("warranty_plan", revision): "",
         app.case_basic_widget_key("product", revision): "",
         app.case_basic_widget_key("manufacturer", revision): "",
         app.case_basic_widget_key("store_name", revision): "",
         app.case_basic_widget_key("product_price", revision): "",
+        "call_selected_line": "住設",
+        "call_in_progress": True,
+        "call_audio_status": app.CALL_AUDIO_STATUS_NONE,
     })
 
     synced = app.sync_global_case_basic_widget_state(form, state)
 
+    assert synced["call_line"] == "住設"
+    assert synced["manual_call_line"] is True
+    assert synced["warranty_plan"] == "アイ工務店_住宅設備機器【10年保証】"
+    assert synced["warranty_start_date"] == "2026/06/01"
+    assert synced["warranty_end_date"] == "2036/05/31"
     assert synced["product"] == "食器洗い乾燥機"
     assert synced["manufacturer"] == "三菱電機"
     assert synced["store_name"] == "ライフデザイン・カバヤ株式会社"
     assert synced["product_price"] == "36,300円"
+    assert state[app.case_basic_widget_key("call_line", revision)] == "住設"
+    assert state[app.case_basic_widget_key("warranty_plan", revision)] == "アイ工務店_住宅設備機器【10年保証】"
     assert state[app.case_basic_widget_key("product", revision)] == "食器洗い乾燥機"
     assert state[app.case_basic_widget_key("manufacturer", revision)] == "三菱電機"
     assert state[app.case_basic_widget_key("store_name", revision)] == "ライフデザイン・カバヤ株式会社"
     assert state[app.case_basic_widget_key("product_price", revision)] == "36,300"
+    assert state["call_selected_line"] == "住設"
+
+
+def test_hearing_widget_sync_preserves_imported_case_basic_and_call_line_state():
+    form = app.apply_extracted_fields_to_form(
+        {
+            "plan": "アイ工務店_住宅設備機器【10年保証】",
+            "warranty_start_date": "2026/06/01",
+            "warranty_end_date": "2036/05/31",
+            "series": "食器洗い乾燥機",
+            "manufacturer": "三菱電機",
+            "store_name": "ライフデザイン・カバヤ株式会社",
+            "product_price": "36,300円",
+        },
+        app.empty_form(),
+    )
+    state = SessionState({})
+    app.start_call_with_line(form, state, "住設")
+    state.update({
+        "call_hearing_symptom_detail": "電源が入らない",
+        "call_hearing_occurrence_time_choice": "昨日から",
+        "call_hearing_occurrence_time_text": "",
+        "call_hearing_occurrence_frequency_choice": "継続中",
+        "call_hearing_occurrence_frequency_text": "",
+    })
+
+    synced = app.sync_hearing_widget_state_to_form(form, state)
+
+    assert synced["call_line"] == "住設"
+    assert synced["manual_call_line"] is True
+    assert state["call_selected_line"] == "住設"
+    assert state["call_in_progress"] is True
+    assert synced["warranty_plan"] == "アイ工務店_住宅設備機器【10年保証】"
+    assert synced["warranty_start_date"] == "2026/06/01"
+    assert synced["warranty_end_date"] == "2036/05/31"
+    assert synced["product"] == "食器洗い乾燥機"
+    assert synced["manufacturer"] == "三菱"
+    assert synced["store_name"] == "ライフデザイン・カバヤ株式会社"
+    assert synced["product_price"] == "36,300円"
+    assert synced["symptom_detail"] == "電源が入らない"
+    assert synced["occurrence_time"] == "昨日から"
+    assert synced["occurrence_frequency"] == "継続中"
 
 
 def test_global_case_basic_blank_form_clears_stale_product_price_widget():

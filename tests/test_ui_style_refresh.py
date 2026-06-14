@@ -69,10 +69,12 @@ def test_case_basic_call_line_widget_avoids_default_and_session_state_double_set
 
     assert 'form["call_line"] = synced_selectbox(' in case_basic_src
     assert 'key=case_basic_widget_key("call_line", revision)' not in case_basic_src
-    assert "if key not in st.session_state:" in selectbox_src
+    assert "if key in st.session_state:" in selectbox_src
+    assert "st.session_state[key] = current_value" in selectbox_src
     assert 'kwargs["index"]' in selectbox_src
     assert "return st.selectbox(label, options, **kwargs)" in selectbox_src
-    assert "if key not in st.session_state:" in text_input_src
+    assert "if key in st.session_state:" in text_input_src
+    assert "st.session_state[key] = current_value" in text_input_src
     assert 'input_kwargs["value"]' in text_input_src
 
 
