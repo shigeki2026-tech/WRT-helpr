@@ -1,149 +1,243 @@
 # WRT-helpr 最新引き継ぎ書
 
-作成日: 2026-06-07
+更新日: 2026-06-14
 
 ## 1. 現在の最新状態
 
-- 最新commit: `aafb253 Add WRS handover false positive guards`
-- pytest: `749 passed`
-- git status: clean 前提
-- Streamlit: 起動確認済み
-- マスタ管理: 保存前プレビュー、重複警告、保存ボタンdisabledを実機確認済み
-- Teams: self_test 送信成功済み
-- Teams warranty: ローカル設定は有効化済み。本番送信は実案件待ちで未実施
+- 最新commit: `0564c1f Make call line buttons commit selection state`
+- 最新pytest: `822 passed, 1 warning`
+- warning: `.pytest_cache` 書き込み権限の警告のみ
+- `py_compile`: OK
+- git status: clean
+- `python` がPATH上にない環境では、Codex同梱Pythonに `.codex_test_deps` を `PYTHONPATH` 追加して検証した
 
-直近で完了した主な内容:
+重要commit:
 
-- 京阪夜間・休日 / ビーバートザン対応
-- Teams送信UI改善
-- nested expander修正
-- Teams設定 example / setup docs 追加
-- Teams config BOM読み込み対応
-- self_test Teams送信成功
-- warranty送信先のローカル有効化
-- マスタ編集UI安全化
-- WRS引き継ぎ保留対象文書化
-- WRS誤発火防止テスト追加
+- `c1e148f` Add WRS handover vendor rules
+- `4674bdb` Add call line start buttons without recording
+- `571ad66` Clarify WRS handover before No7 fallback
+- `f821a96` Guard Nakayashiki warranty clock routing
+- `51716e8` Align appliance category template routing
+- `46cd24a` Document audio readonly probe plan
+- `0564c1f` Make call line buttons commit selection state
 
-## 2. Teams送信運用ルール
+## 2. 回線名ボタンの現状
 
-現在の推奨運用:
+通話開始エリアに回線名ボタンがある。ボタンは録音開始ボタンではない。
 
-- `default_destination` は `self_test` にしておく。
-- 通常確認は自分宛てテストチャットで行う。
-- 実運用時だけ送信先をワランティ報告用チャットへ切り替える。
-- ワランティ本番送信テストは、実案件がある時だけ実施する。
-- テスト文を本番ワランティチャットへ送らない。
-- `config/teams_config.json` はGitに入れない。
-- `chat_id` 実値をチャット、docs、README、Issue、PR本文に貼らない。
+ボタン押下時に確定する状態:
 
-現在の確認済み:
+- `form["call_line"]`
+- `form["manual_call_line"]`
+- `session_state["call_selected_line"]`
+- `call_in_progress=True`
+- `call_audio_status="未開始 / 録音なし"`
 
-- PowerShell単体 self_test 送信成功
-- Streamlit UI self_test 送信成功
-- warranty config はローカルで有効化済み
-- warranty 本番送信は未確認
+出力反映:
 
-Teams関連ファイルの扱い:
+- ラクテル見出しへ即反映される。
+- 例: `【住設回線へ入電】`
+- 例: `【家電回線へ入電】`
+- Teams文の回線名へ即反映される。
 
-- `config/teams_config.example.json`: Git管理対象のサンプル
-- `config/teams_config.json`: ローカル秘密設定。Git管理外
-- `scripts/send_teams_message.ps1`: 送信スクリプト。現状維持
-- `logs/teams_send_log.csv`: 送信ログ。Git管理外
+運用上の注意:
 
-## 3. マスタ編集UI運用ルール
+- 回線名ボタンをクリックしただけで、別のセレクトボックス操作なしに回線選択は完了する。
+- 住設補正など自動判定があっても、ボタンで明示選択した回線名は手動指定扱いとして優先する。
+- 案件クリアで `call_line` / `manual_call_line` / `call_in_progress` / `call_selected_line` はリセットされる。
+- 録音状態は常に `未開始 / 録音なし` のまま。
 
-- いきなり保存しない。
-- 保存前プレビューで、対象ファイル、追加/変更予定行数、主要キーを確認する。
-- 重複警告が出たら保存しない。
-- 保存前確認チェック後に保存する。
-- 保存すると `backups/master_csv/` にバックアップが作成される。
-- 保存すると `logs/master_edit_log.csv` に保存ログが作成される。
-- 保存後はStreamlit cacheがクリアされるため、必要なら再判定する。
-- 初回の実保存確認は、必要なマスタ追加が発生した時だけ行う。
-- 本番CSVを汚すため、ダミー行の追加は避ける。
+関連テスト:
 
-## 4. WRS引き継ぎルールの状態
+- `test_call_start_line_helper_sets_line_and_call_state_without_recording`
+- `test_call_start_line_selection_updates_rakutel_heading_and_teams_line`
+- `test_call_start_line_manual_selection_survives_residential_inference`
+- `test_case_clear_resets_call_start_state_and_removes_stale_recording_key`
 
-追加・対応済み:
+## 3. 録音の現状
 
-- Bosch
-- 松﨑電機 / エアコンのマツ
-- ビーバートザンをコーナン住設対象に追加
-- 京阪夜間・休日対応
+録音機能はrevert済みのまま。WRT-helpr本体へ録音機能は戻していない。
 
-保留:
+現在ないもの:
 
-- 住設（賃貸・中古）
-- 日新
+- 録音開始ボタン
+- 録音停止ボタン
+- 録音保存
+- 文字起こしUI
+- WRT本体から呼び出される録音処理
 
-監査済み:
+依存関係:
 
-- SKY
-- 三城案件 / メガネ
-- コジマ / CHIKYUJIN
-- チャオ
-- WM案件 / M停止
-- コーナン / ビーバートザン
-- Bosch
-- 松﨑電機 / エアコンのマツ
+- `sounddevice` は追加していない。
+- `soundfile` は追加していない。
+- `faster-whisper` は追加していない。
+- `numpy` など録音・文字起こし目的の依存は追加していない。
 
-注意事項:
+音声経路:
 
-- 既存ルールは削除していない。
-- 誤発火防止テストでガードしている。
-- `コジマ`、`メガネ`、`SKY`、`M停止` は今後の業務確認余地あり。
-- WRSルール追加時は、対象が発火するテストだけでなく、通常案件に発火しない非発火テストも追加する。
-- `docs/wrs_handover_pending.md` に保留理由と監査メモがあるため、WRSルールを増やす前に必ず確認する。
+- 音声デバイスは変更していない。
+- VB-CABLEは変更していない。
+- Voicemeeterは変更していない。
+- Jabraは変更していない。
+- Windows既定デバイスは変更していない。
 
-## 5. 残タスク
+検証計画:
+
+- `docs/audio_recording_probe_plan.md` に読み取り専用録音の非干渉検証計画だけ作成済み。
+- WRT本体から検証スクリプトは呼び出されない。
+- 録音再開は、非干渉検証が通ってから判断する。
+- 本番通話中に検証を実行しない。
+
+## 4. WRS判定の現状
+
+- WRS引き継ぎルール40件を追加済み。
+- WRS対象は No.7 fallback より前に判定する。
+- WRS対象のみ、画面に以下の補足表示を出す。
+
+表示文言:
+
+```text
+WRS引き継ぎ対象として No.7 fallback より前に判定済み
+```
+
+ガード:
+
+- No.7 fallback の通常ユナイト案件ではWRS表示を出さない。
+- 通常メーカーがWRS表示になるfalse positiveを防ぐテストがある。
+- 既存のWRS判定理由表示は維持している。
+
+## 5. なかやしき保証クロック
+
+なかやしき案件はCSV拠点ルールより前に専用分岐する。
+
+現行ルール:
+
+- 保証期間内: なかやしき工務
+- 保証終了後: ベルホームふくおか
+- 保証未確認: 担当エスカ（要確認）
+- 保証開始日前 / 終了後 / 未確認では `arrangement_blocked=True`
+- 保証終了後のベルホームふくおか候補は維持しつつ `needs_escalation=True`
+- 画面に `なかやしき保証クロック：...` の理由表示あり
+- 日付未入力は今日の日付で補完しない
+
+目的:
+
+- なかやしき案件の保証開始日、保証終了日、保証状態、受付可否、修理手配判定が、通常案件や他販売店に引きずられて誤判定されないようにする。
+
+## 6. appliance category / template routing
+
+現行の分類実態:
+
+- 内部 `appliance_type` は主に `家電` / `住設` の2値。
+- 4区分は `appliance_category` と `housing_phase` で表現する。
+
+実表記:
+
+- 家電
+- 住設（新築）
+- 住設（既築）
+- 住設（賃貸）
+
+整合状況:
+
+- `determine_script_route` は既に4区分を参照している。
+- テンプレート自動選択側の分類ズレを修正済み。
+- 住設（既築）は `0044【中古・既築】` を優先する。
+- 住設（賃貸）は賃貸依頼テンプレートを優先する。
+- 家電、住設（新築）、未分類は既存フォールバックを維持する。
+- 販売店ルールは最優先なので、アイ工務店 `0058` は維持する。
+
+注意:
+
+- 表示名、ラクテル回線名、内部 `appliance_type` を混同しない。
+- 回線名手動指定の優先仕様を壊さない。
+
+## 7. テスト状況
+
+最新確認:
+
+- `python -m py_compile .\app.py`: OK
+- `python -m pytest -v`: `822 passed, 1 warning`
+- warningは `.pytest_cache` 書き込み権限のみ
+- `git status --short`: clean
+
+環境メモ:
+
+- このPCでは `python` がPATH上にない場合がある。
+- Codexでは以下のように実行した。
+
+```powershell
+$env:PYTHONPATH = "$PWD\.codex_test_deps"
+& 'C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m pytest -v
+```
+
+## 8. 残タスク
 
 優先順:
 
-1. warranty Teams本番送信確認
-   - 実案件がある時のみ実施する。
-   - テスト文を本番ワランティチャットへ送らない。
-   - 実施後は `logs/teams_send_log.csv` を確認する。
+### A. GitHub push
 
-2. マスタ編集UIの実保存確認
-   - 必要なマスタ追加が出た時のみ実施する。
-   - ダミー行は追加しない。
-   - 実施後は `backups/master_csv/` と `logs/master_edit_log.csv` を確認する。
+- ローカルcommitが積み上がっている。
+- GitHub認証で詰まる可能性がある。
+- 業務中や疲れている時はやらない。
+- `gh` / GitHub CLI を急に前提化しない。
 
-3. WRS広めルールの業務確認
-   - `コジマ`
-   - `メガネ`
-   - `SKY`
-   - `M停止`
+### B. Teams 45秒同期ブロック
 
-4. 実運用後のログ確認
-   - `logs/teams_send_log.csv`
-   - `logs/master_edit_log.csv`
+- `Microsoft.Graph` import 起因の同期ブロック疑いがある。
+- Teams実送信本体を触る場合は別タスクにする。
+- `chat_id` / Graph認証 / config が絡むため環境依存。
+- 調査時も秘密値をdocs、README、Issue、PR本文へ貼らない。
 
-5. 必要ならREADME更新
-   - 実運用確認後に、現場向けの状態説明だけを更新する。
+### C. 録音非干渉検証
 
-## 6. 次回作業者への注意
+- まだ実行しない。
+- 本番通話中にやらない。
+- WRT本体へ組み込まない。
+- `docs/audio_recording_probe_plan.md` の計画に従う。
 
-- `git add .` は使わない。
-- `config/teams_config.json` は絶対にcommitしない。
-- `backups/` と `logs/` はGit管理外。
-- PowerShellコマンドは必ず `cd "$env:USERPROFILE\Documents\Projects\WRT-helpr"` から始める。
-- Teams本番送信は実案件時だけ行う。
-- CSV本体を変更したら必ず `python -m pytest -v` を実行する。
-- WRSルール追加時は非発火テストも追加する。
-- `app.py` の判定ロジック変更は、CSV・テスト・docsだけで運用できない場合に限定する。
+### D. 実機UI確認
 
-## 7. よく使う確認コマンド
+- 回線ボタン押下
+- ラクテル見出し反映
+- Teams文反映
+- 案件クリア
+- 録音UIが出ないこと
+
+## 9. 禁止事項
+
+- `git add .`
+- 旧録音実装 commit `37a5485` の復活
+- `sounddevice` / `faster-whisper` の安易な追加
+- 録音保存、録音UI、文字起こしUIの復活
+- 音声デバイス変更
+- Voicemeeter / VB-CABLE / Jabra 設定変更
+- Windows既定デバイス変更
+- Teams Graph 認証に急に入る
+- `gh auth login` に急に入る
+- 確認コマンドだけで終わる作業
+- 差し替え箇所をユーザーに探させる
+- Teams実送信、Graph、Push認証を別目的の作業でついでに触る
+
+## 10. よく使う確認コマンド
+
+通常環境:
 
 ```powershell
 cd "$env:USERPROFILE\Documents\Projects\WRT-helpr"
 
+python -m pytest -q
+git --no-pager log --oneline -10
 git status --short
-git log --oneline -6
-python -m py_compile .\app.py
-python -m pytest -v
-git --no-pager diff --stat
 ```
 
-`python` がPATHにない場合は、Codex同梱Pythonまたは既存 `.codex_test_deps` を使う。
+Codex同梱Pythonを使う場合:
+
+```powershell
+cd "$env:USERPROFILE\Documents\Projects\WRT-helpr"
+
+$env:PYTHONPATH = "$PWD\.codex_test_deps"
+& 'C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m pytest -q
+git --no-pager log --oneline -10
+git status --short
+```
