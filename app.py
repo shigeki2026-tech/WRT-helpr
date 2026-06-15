@@ -789,6 +789,29 @@ PRODUCT_OTHER = "その他・要確認"
 MANUFACTURER_OTHER = "その他・要確認"
 MANUFACTURER_UNKNOWN = "不明"
 SHOW_CALL_TYPE_IN_CALL_FORM = False
+MAIN_TAB_DURING_CALL = "during_call"
+MAIN_TAB_AFTER_CALL = "after_call"
+MAIN_TAB_MASTER = "master"
+MAIN_TAB_LABELS = {
+    MAIN_TAB_DURING_CALL: "通話中判定",
+    MAIN_TAB_AFTER_CALL: "終話後処理",
+    MAIN_TAB_MASTER: "マスタ管理",
+}
+MAIN_TAB_ORDER = [MAIN_TAB_DURING_CALL, MAIN_TAB_AFTER_CALL, MAIN_TAB_MASTER]
+
+
+def set_active_main_tab(session_state, tab_name: str) -> str:
+    active_tab = tab_name if tab_name in MAIN_TAB_LABELS else MAIN_TAB_DURING_CALL
+    session_state["active_main_tab"] = active_tab
+    return active_tab
+
+
+def get_active_main_tab(session_state) -> str:
+    return set_active_main_tab(session_state, session_state.get("active_main_tab", MAIN_TAB_DURING_CALL))
+
+
+def reset_active_main_tab(session_state) -> str:
+    return set_active_main_tab(session_state, MAIN_TAB_DURING_CALL)
 
 
 def normalize_template_code(code) -> str:
@@ -3534,6 +3557,7 @@ def should_show_call_start_line_buttons(form: dict, session_state) -> bool:
 
 
 def request_case_clear(session_state) -> None:
+    reset_active_main_tab(session_state)
     session_state["_pending_case_clear"] = True
 
 
@@ -3632,6 +3656,7 @@ def process_pending_case_basic_widget_refresh(session_state) -> bool:
 
 def reset_case_session_state(session_state, settings: dict | None = None) -> dict:
     bump_case_basic_revision(session_state)
+    reset_active_main_tab(session_state)
     new_form = apply_default_operator_name(empty_form(), settings)
     session_state["form"] = new_form
     session_state["call_check_manual"] = {}
@@ -8343,6 +8368,7 @@ def render_call_start_line_buttons(form: dict) -> None:
         for idx, call_line in enumerate(line_options):
             with columns[idx % len(columns)]:
                 if st.button(call_line, key=f"call_start_line_{idx}", use_container_width=True):
+                    set_active_main_tab(st.session_state, MAIN_TAB_DURING_CALL)
                     st.session_state.form = start_call_with_line(form, st.session_state, call_line)
                     st.rerun()
     else:
@@ -9406,6 +9432,7 @@ def init_session():
 # タブ1: 通話中判定
 # ============================================================
 def render_tab_call():
+    set_active_main_tab(st.session_state, MAIN_TAB_DURING_CALL)
     # UI改修: 通話中判定タブ専用の表示密度を調整
     st.markdown(
         """
@@ -9939,6 +9966,7 @@ def render_tab_call():
 # タブ2: 終話後処理
 # ============================================================
 def render_tab_after_call():
+    set_active_main_tab(st.session_state, MAIN_TAB_AFTER_CALL)
     form = st.session_state.form
     decision = run_decision(form)
     repair_type = decision["repair_type"]
@@ -11047,6 +11075,7 @@ def _render_master_candidate_box() -> None:
 
 
 def render_tab_master():
+    set_active_main_tab(st.session_state, MAIN_TAB_MASTER)
     st.subheader("⚙️ マスタ管理")
     st.markdown(
         """
@@ -11224,6 +11253,21 @@ def render_tab_master():
 # ============================================================
 # メイン
 # ============================================================
+def render_main_tab_navigation() -> str:
+    active_tab = get_active_main_tab(st.session_state)
+    cols = st.columns(len(MAIN_TAB_ORDER), gap="small")
+    for idx, tab_name in enumerate(MAIN_TAB_ORDER):
+        with cols[idx]:
+            if st.button(
+                MAIN_TAB_LABELS[tab_name],
+                key=f"main_tab_nav_{tab_name}",
+                type="primary" if tab_name == active_tab else "secondary",
+                use_container_width=True,
+            ):
+                active_tab = set_active_main_tab(st.session_state, tab_name)
+    return active_tab
+
+
 def main():
     st.set_page_config(
         page_title="修理受付 支援ツール MVP",
@@ -11239,16 +11283,12 @@ def main():
     sync_global_case_basic_widget_state(st.session_state.form, st.session_state)
     render_global_top_panels(st.session_state.form)
     render_global_case_basic_panel(st.session_state.form)
-    tab_call, tab_after, tab_master = st.tabs([
-        "通話中判定",
-        "終話後処理",
-        "マスタ管理",
-    ])
-    with tab_call:
+    active_tab = render_main_tab_navigation()
+    if active_tab == MAIN_TAB_DURING_CALL:
         render_tab_call()
-    with tab_after:
+    elif active_tab == MAIN_TAB_AFTER_CALL:
         render_tab_after_call()
-    with tab_master:
+    elif active_tab == MAIN_TAB_MASTER:
         render_tab_master()
 
 

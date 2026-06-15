@@ -2203,11 +2203,11 @@ def test_call_memo_tabs_use_same_form_field_source():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     main_index = source.index("def main():")
-    tabs_index = source.index("st.tabs(", main_index)
+    nav_index = source.index("render_main_tab_navigation()", main_index)
     top_panels_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
     memo_render_index = source.index("def render_global_top_panels")
-    assert main_index < top_panels_index < tabs_index
-    assert 'render_common_case_memo(form, "case_memo_global"' in source[memo_render_index:tabs_index]
+    assert main_index < top_panels_index < nav_index
+    assert 'render_common_case_memo(form, "case_memo_global"' in source[memo_render_index:nav_index]
     assert 'key="case_memo_global"' in source or '"case_memo_global"' in source
     assert 'label_visibility="collapsed"' in source
     assert "render_tab_local_call_memo_enabled() -> bool" in source
@@ -2298,14 +2298,14 @@ def test_global_top_panels_render_case_memo_and_decision_tags_before_tabs():
     panels_source = source[panels_start:panels_end]
     main_index = source.index("def main():")
     top_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
-    tabs_index = source.index("st.tabs(", main_index)
+    nav_index = source.index("render_main_tab_navigation()", main_index)
 
     assert "render_common_case_memo" in panels_source
     assert "render_decision_tags_panel" in panels_source
     assert "tags_col, memo_col = st.columns([2, 1], gap=\"medium\")" in panels_source
     assert panels_source.index("with tags_col:") < panels_source.index("with memo_col:")
     assert panels_source.index("render_decision_tags_panel(form)") < panels_source.index('render_common_case_memo(form, "case_memo_global", height=105)')
-    assert top_index < tabs_index
+    assert top_index < nav_index
 
 
 def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
@@ -3594,11 +3594,11 @@ def test_global_case_basic_common_section_exists_before_tabs():
     main_index = source.index("def main():")
     top_index = source.index("render_global_top_panels(st.session_state.form)", main_index)
     basic_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
-    tabs_index = source.index("st.tabs(", main_index)
+    nav_index = source.index("render_main_tab_navigation()", main_index)
     after_index = source.index("def render_tab_after_call")
     after_source = source[after_index:source.index("def render_tab_master", after_index)]
 
-    assert top_index < basic_index < tabs_index
+    assert top_index < basic_index < nav_index
     assert "##### 🧾 案件情報" in source
     assert "render_global_case_basic_panel" in source
     assert "案件基本" not in after_source
@@ -4053,15 +4053,15 @@ def test_template_result_is_not_rendered_in_common_basic_panel_and_after_call_te
     assert "テンプレート判定結果" not in source
     main_index = source.index("def main():")
     basic_call_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
-    tabs_index = source.index("st.tabs(", main_index)
+    nav_index = source.index("render_main_tab_navigation()", main_index)
     basic_panel_index = source.index("def render_shared_case_basic_editor")
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
     assert basic_panel_index < source.index("##### 📝 修理依頼書メモ")
-    assert basic_call_index < tabs_index
-    assert "show_template_result=False" in source[source.index("def render_global_case_basic_panel"):tabs_index]
+    assert basic_call_index < nav_index
+    assert "show_template_result=False" in source[source.index("def render_global_case_basic_panel"):nav_index]
     assert "##### 📝 修理依頼書メモ" in after_source
 
 
@@ -4070,12 +4070,12 @@ def test_after_call_regeneration_uses_current_global_form_after_basic_panel():
 
     main_index = source.index("def main():")
     basic_index = source.index("render_global_case_basic_panel(st.session_state.form)", main_index)
-    tabs_index = source.index("st.tabs(", main_index)
+    nav_index = source.index("render_main_tab_navigation()", main_index)
     after_index = source.index("def render_tab_after_call")
     master_index = source.index("def render_tab_master", after_index)
     after_source = source[after_index:master_index]
 
-    assert basic_index < tabs_index
+    assert basic_index < nav_index
     assert "form = st.session_state.form" in after_source
     assert 'key="regenerate_attention_memo"' in after_source
     assert 'key="regenerate_rakutel_text"' in after_source
@@ -4354,23 +4354,80 @@ def test_master_csv_cache_clear_is_secondary_not_danger():
 
 # ── ナビゲーション構造テスト ──
 
-def test_nav_uses_tabs_not_radio():
+def test_nav_uses_stateful_buttons_not_uncontrolled_tabs():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     main_index = source.index("def main():")
     main_source = source[main_index:]
-    assert "st.tabs(" in main_source
+    assert "render_main_tab_navigation()" in main_source
+    assert "st.tabs(" not in main_source
+    assert "active_tab == MAIN_TAB_AFTER_CALL" in main_source
     assert 'key="main_nav_tab"' not in main_source
 
 
-def test_nav_tabs_has_three_labels():
+def test_nav_has_three_labels():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
+    nav_index = source.index("def render_main_tab_navigation")
     main_index = source.index("def main():")
-    main_source = source[main_index:]
-    assert '"通話中判定"' in main_source
-    assert '"終話後処理"' in main_source
-    assert '"マスタ管理"' in main_source
+    nav_source = source[nav_index:main_index]
+    assert '"通話中判定"' in source[source.index("MAIN_TAB_LABELS"):nav_index]
+    assert '"終話後処理"' in source[source.index("MAIN_TAB_LABELS"):nav_index]
+    assert '"マスタ管理"' in source[source.index("MAIN_TAB_LABELS"):nav_index]
+    assert "MAIN_TAB_ORDER" in nav_source
+
+
+def test_active_main_tab_helpers_default_and_reset_to_during_call():
+    state = SessionState()
+
+    assert app.get_active_main_tab(state) == app.MAIN_TAB_DURING_CALL
+    assert state["active_main_tab"] == app.MAIN_TAB_DURING_CALL
+
+    assert app.set_active_main_tab(state, app.MAIN_TAB_AFTER_CALL) == app.MAIN_TAB_AFTER_CALL
+    assert state["active_main_tab"] == app.MAIN_TAB_AFTER_CALL
+
+    assert app.set_active_main_tab(state, "unknown") == app.MAIN_TAB_DURING_CALL
+    assert state["active_main_tab"] == app.MAIN_TAB_DURING_CALL
+
+    app.set_active_main_tab(state, app.MAIN_TAB_MASTER)
+    assert app.reset_active_main_tab(state) == app.MAIN_TAB_DURING_CALL
+    assert state["active_main_tab"] == app.MAIN_TAB_DURING_CALL
+
+
+def test_case_clear_resets_active_main_tab_to_during_call():
+    state = SessionState({
+        "_pending_case_clear": True,
+        "active_main_tab": app.MAIN_TAB_AFTER_CALL,
+        "form": {"call_memo": "old memo", "operator_name": ""},
+        "case_memo_global": "old memo",
+    })
+
+    processed = app.process_pending_case_clear(state, {"default_operator_name": ""})
+
+    assert processed is True
+    assert state["active_main_tab"] == app.MAIN_TAB_DURING_CALL
+
+
+def test_after_call_render_pins_active_tab_before_regeneration_buttons():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    after_index = source.index("def render_tab_after_call")
+    master_index = source.index("def render_tab_master", after_index)
+    after_source = source[after_index:master_index]
+
+    assert "set_active_main_tab(st.session_state, MAIN_TAB_AFTER_CALL)" in after_source
+    assert after_source.index("set_active_main_tab(st.session_state, MAIN_TAB_AFTER_CALL)") < after_source.index('key="regenerate_rakutel_text"')
+    assert after_source.index("set_active_main_tab(st.session_state, MAIN_TAB_AFTER_CALL)") < after_source.index('key="append_vendor_request_memo"')
+
+
+def test_call_and_master_render_pin_active_tab():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    call_index = source.index("def render_tab_call")
+    after_index = source.index("def render_tab_after_call", call_index)
+    master_index = source.index("def render_tab_master", after_index)
+    main_index = source.index("def render_main_tab_navigation", master_index)
+
+    assert "set_active_main_tab(st.session_state, MAIN_TAB_DURING_CALL)" in source[call_index:after_index]
+    assert "set_active_main_tab(st.session_state, MAIN_TAB_MASTER)" in source[master_index:main_index]
 
 
 def test_after_call_tab_has_no_redundant_subheader():
@@ -4422,15 +4479,13 @@ def test_after_call_memo_has_no_template_banner_or_generation_note():
     assert 'st.caption(f"注意：{selected_notes}")' in memo_right
 
 
-def test_nav_tabs_do_not_use_red_tinted_emoji_labels():
+def test_nav_labels_do_not_use_red_tinted_emoji_labels():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    main_index = source.index("def main():")
-    main_source = source[main_index:]
-    tabs_index = main_source.index("st.tabs(")
-    tabs_source = main_source[tabs_index:main_source.index("])", tabs_index)]
+    labels_index = source.index("MAIN_TAB_LABELS")
+    labels_source = source[labels_index:source.index("MAIN_TAB_ORDER", labels_index)]
 
     for emoji in ("📞", "📋", "⚙️"):
-        assert emoji not in tabs_source
+        assert emoji not in labels_source
 
 
 def test_nav_no_pill_radio_css():
