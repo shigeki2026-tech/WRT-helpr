@@ -2803,6 +2803,19 @@ def test_rakutel_action_sync_does_not_touch_case_basic_call_line_widget_key():
     assert 'session_state["case_basic_call_line_0"]' not in sync_source
 
 
+def test_vendor_request_button_is_shown_for_store_counterparty_near_rakutel_inputs():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    rakutel_heading_index = source.index('##### 📝 ラクテル用テキスト")')
+    counterparty_index = source.index('"相手区分"', rakutel_heading_index)
+    button_index = source.index('"販売店より修理依頼を追加"', counterparty_index)
+    generation_index = source.index("generated_rakutel_text = _build_rakutel_text", counterparty_index)
+
+    assert counterparty_index < button_index < generation_index
+    assert 'if counterparty_type == "販売店":' in source[counterparty_index:button_index]
+    assert "vendor_request_source_name(form, counterparty_detail)" in source[counterparty_index:button_index]
+    assert "販売店名未入力のため追加不可" in source[counterparty_index:button_index + 500]
+
+
 def test_rakutel_text_missing_datetime_uses_placeholder_time_without_current_time():
     form = app.empty_form()
     form.update({

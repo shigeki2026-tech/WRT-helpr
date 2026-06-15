@@ -12,7 +12,7 @@ import tempfile
 import shutil
 import time
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import pandas as pd
 
 try:
@@ -358,14 +358,20 @@ HEARING_UNSELECTED = "未選択"
 
 def occurrence_today_option(today: date | None = None) -> str:
     today = today or date.today()
-    return f"本日（{today.month}/{today.day}）から"
+    return f"本日（{today.month}/{today.day}）"
+
+
+def occurrence_yesterday_option(today: date | None = None) -> str:
+    today = today or date.today()
+    yesterday = today - timedelta(days=1)
+    return f"昨日（{yesterday.month}/{yesterday.day}）"
 
 
 def occurrence_time_options(today: date | None = None) -> list[str]:
     return [
         HEARING_UNSELECTED,
         occurrence_today_option(today),
-        "昨日から",
+        occurrence_yesterday_option(today),
         "数日前から",
         "1週間ほど前から",
         "1か月ほど前から",
@@ -2343,8 +2349,18 @@ def vendor_request_memo_text(store_name: str) -> str:
     return f"【{store}より修理依頼】" if store else ""
 
 
+def vendor_request_source_name(form: dict, counterparty_detail: str = "") -> str:
+    for field in ("store_name", "store_original", "store_company"):
+        value = (form.get(field) or "").strip()
+        if value:
+            return value
+    return (counterparty_detail or form.get("counterparty_detail") or "").strip()
+
+
 def append_vendor_request_to_attention_memo(form: dict, store_name: str | None = None) -> bool:
-    memo_text = vendor_request_memo_text(store_name if store_name is not None else form.get("store_name", ""))
+    memo_text = vendor_request_memo_text(
+        store_name if store_name is not None else vendor_request_source_name(form)
+    )
     if not memo_text:
         return False
     current = sanitize_generated_body_text(form.get("attention_memo", ""))
@@ -5246,6 +5262,21 @@ def normalize_manufacturer(manufacturer: str) -> str:
     return manufacturer or ""
 
 
+def parsed_case_value_present(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+def parsed_case_field_value(extracted: dict, field: str):
+    value = extracted.get(field)
+    return value if parsed_case_value_present(value) else None
+
+
 def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     """抽出結果をフォーム辞書にマッピングして返す。"""
     mapping = {
@@ -5260,16 +5291,21 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         "operating_company": "operating_company",
     }
     form = current_form.copy()
+    locked_case_category_values = {
+        field: form.get(field, "")
+        for field in ("appliance_category", "appliance_type", "housing_phase", "case_category")
+        if parsed_case_value_present(form.get(field))
+    }
     for src, dst in mapping.items():
-        if src in extracted and extracted[src]:
-            if dst == "prefecture" and extracted[src] not in PREFECTURES:
-                form[dst] = ""
+        value = parsed_case_field_value(extracted, src)
+        if value is not None:
+            if dst == "prefecture" and value not in PREFECTURES:
                 continue
             if dst in ("warranty_start_date", "warranty_end_date"):
-                form[dst] = normalize_date_text(extracted[src]) or extracted[src]
+                form[dst] = normalize_date_text(value) or value
                 continue
-            form[dst] = extracted[src]
-    product_items = extracted.get("product_items") or []
+            form[dst] = value
+    product_items = parsed_case_field_value(extracted, "product_items") or []
     if product_items:
         form["product_items"] = product_items
         selected_index = int(form.get("selected_product_item_index") or 0)
@@ -5277,19 +5313,20 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             selected_index = 0
         form["selected_product_item_index"] = selected_index
         form = apply_product_item_to_form(product_items[selected_index], form)
-    raw_series = extracted.get("series", "")
+        form.update(locked_case_category_values)
+    raw_series = parsed_case_field_value(extracted, "series") or ""
     if product_items:
         pass
     elif raw_series:
         form["product_original"] = raw_series
         form["product"] = normalize_product_for_select(normalize_product(raw_series, ""))
-    elif extracted.get("category") or extracted.get("genre"):
-        raw_product_text = extracted.get("category") or extracted.get("genre")
+    elif parsed_case_field_value(extracted, "category") or parsed_case_field_value(extracted, "genre"):
+        raw_product_text = parsed_case_field_value(extracted, "category") or parsed_case_field_value(extracted, "genre")
         form["product_original"] = raw_product_text
         form["product"] = normalize_product_for_select(normalize_product(raw_product_text, ""))
     elif form.get("product"):
         form["product"] = normalize_product_for_select(form.get("product"))
-    raw_mfr = extracted.get("manufacturer", "")
+    raw_mfr = parsed_case_field_value(extracted, "manufacturer") or ""
     if raw_mfr:
         form["manufacturer_original"] = raw_mfr
         form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
@@ -5300,8 +5337,9 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             form.get("manufacturer_original", ""),
             form.get("manufacturer", ""),
         )
-    genre = extracted.get("genre", "")
-    if genre or extracted.get("category") or extracted.get("plan"):
+    category_locked = any(field in locked_case_category_values for field in ("appliance_category", "housing_phase", "case_category"))
+    genre = parsed_case_field_value(extracted, "genre") or ""
+    if (genre or parsed_case_field_value(extracted, "category") or parsed_case_field_value(extracted, "plan")) and not category_locked:
         form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
         form = apply_appliance_category_to_form(form)
     return form
@@ -9048,7 +9086,7 @@ HEARING_SYMPTOM_SHORTCUTS = [
     "冷えない", "動かない", "破損している", "点滅している", "においがする",
 ]
 HEARING_OCCURRENCE_TIME_SHORTCUTS = [
-    occurrence_today_option(), "昨日から", "数日前から", "1週間ほど前から", "1か月ほど前から", "不明",
+    occurrence_today_option(), occurrence_yesterday_option(), "数日前から", "1週間ほど前から", "1か月ほど前から", "不明",
 ]
 HEARING_OCCURRENCE_FREQUENCY_SHORTCUTS = [
     "継続中", "時々", "たまに", "1回のみ", "不明",
@@ -10104,7 +10142,8 @@ def render_tab_after_call():
 
     if st.session_state.pop("_pending_append_vendor_request_memo", False):
         form["attention_memo"] = sanitize_generated_body_text(st.session_state.get(memo_current_key, form.get("attention_memo", "")))
-        added_vendor_request = append_vendor_request_to_attention_memo(form)
+        pending_vendor_request_store = str(st.session_state.pop("_pending_vendor_request_store_name", "") or "").strip()
+        added_vendor_request = append_vendor_request_to_attention_memo(form, pending_vendor_request_store or None)
         form["attention_memo"] = replace_editable_text_current(
             memo_current_key,
             memo_widget_key,
@@ -10204,18 +10243,6 @@ def render_tab_after_call():
         if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
             st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
 
-        store_name_for_request = (form.get("store_name") or "").strip()
-        if store_name_for_request:
-            if st.button("販売店より修理依頼", key="append_vendor_request_memo", type="secondary"):
-                st.session_state["_pending_append_vendor_request_memo"] = True
-                st.rerun()
-            vendor_request_message = str(st.session_state.pop("_vendor_request_memo_append_message", "") or "").strip()
-            if vendor_request_message:
-                if "追記しました" in vendor_request_message:
-                    st.success(vendor_request_message)
-                else:
-                    st.info(vendor_request_message)
-
         if not snippets_df.empty:
             st.markdown("##### 定型文追記")
             selected_snippet_id = st.selectbox(
@@ -10288,6 +10315,21 @@ def render_tab_after_call():
             key="contact_phone_input",
             placeholder="例：072-950-0880　5/26 12時以降",
         )
+        vendor_request_name = vendor_request_source_name(form, counterparty_detail)
+        vendor_request_message = str(st.session_state.pop("_vendor_request_memo_append_message", "") or "").strip()
+        if counterparty_type == "販売店":
+            if vendor_request_name:
+                if st.button("販売店より修理依頼を追加", key="append_vendor_request_memo", type="secondary"):
+                    st.session_state["_pending_vendor_request_store_name"] = vendor_request_name
+                    st.session_state["_pending_append_vendor_request_memo"] = True
+                    st.rerun()
+            else:
+                st.caption("販売店名未入力のため追加不可")
+        if vendor_request_message:
+            if "追記しました" in vendor_request_message:
+                st.success(vendor_request_message)
+            else:
+                st.info(vendor_request_message)
     form["call_direction"] = call_direction
     form["counterparty_type"] = counterparty_type
     form["caller_type"] = counterparty_type

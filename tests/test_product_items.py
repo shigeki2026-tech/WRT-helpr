@@ -145,3 +145,90 @@ def test_vendor_request_memo_appends_once_and_ignores_blank_store():
     blank = {"store_name": "", "attention_memo": "既存メモ"}
     assert app.append_vendor_request_to_attention_memo(blank) is False
     assert blank["attention_memo"] == "既存メモ"
+
+
+def test_vendor_request_memo_uses_counterparty_detail_fallback():
+    form = {"store_name": "", "counterparty_detail": "あかりと空調の専門店 山田様", "attention_memo": ""}
+
+    assert app.vendor_request_source_name(form) == "あかりと空調の専門店 山田様"
+    assert app.append_vendor_request_to_attention_memo(form) is True
+    assert form["attention_memo"] == "【あかりと空調の専門店 山田様より修理依頼】"
+
+
+def test_apply_extracted_fields_preserves_existing_values_when_parsed_values_are_empty():
+    existing = app.empty_form()
+    existing.update({
+        "call_line": "なかやしき",
+        "manual_call_line": True,
+        "appliance_type": "住設",
+        "appliance_category": "住設（既築）",
+        "housing_phase": "既築",
+        "case_category": "手動分類",
+        "warranty_plan": "既存保証",
+        "warranty_start_date": "2026/06/01",
+        "warranty_end_date": "2036/05/31",
+        "product": "食器洗い乾燥機",
+        "series": "既存シリーズ",
+        "manufacturer": "パナソニック",
+        "model_number": "ABC-123",
+        "store_name": "阪神支店",
+        "operating_company": "既存運営",
+        "product_items": [{"attached_plan_name": "既存製品", "product": "食器洗い乾燥機"}],
+        "selected_product_item_index": 0,
+    })
+    extracted = {
+        "plan": "",
+        "warranty_start_date": "",
+        "warranty_end_date": None,
+        "product_price": "",
+        "manufacturer": "",
+        "model_number": "",
+        "series": "",
+        "store_name": "",
+        "operating_company": "",
+        "genre": "",
+        "category": "",
+        "prefecture": "不正な都道府県",
+        "product_items": [],
+    }
+
+    merged = app.apply_extracted_fields_to_form(extracted, existing)
+
+    for field in (
+        "call_line", "manual_call_line", "appliance_type", "appliance_category", "housing_phase",
+        "case_category", "warranty_plan", "warranty_start_date", "warranty_end_date",
+        "product", "series", "manufacturer", "model_number", "store_name",
+        "operating_company", "product_items", "selected_product_item_index",
+    ):
+        assert merged[field] == existing[field]
+
+
+def test_apply_extracted_fields_updates_clear_non_empty_values_and_keeps_manual_call_line():
+    existing = app.empty_form()
+    existing.update({
+        "call_line": "なかやしき",
+        "manual_call_line": True,
+        "warranty_plan": "古い保証",
+        "product": "古い製品",
+        "manufacturer": "古いメーカー",
+        "store_name": "古い販売店",
+    })
+
+    merged = app.apply_extracted_fields_to_form(
+        {
+            "plan": "新保証",
+            "series": "エコキュート",
+            "manufacturer": "コロナ",
+            "store_name": "新販売店",
+            "model_number": "CHP-46AY1",
+        },
+        existing,
+    )
+
+    assert merged["call_line"] == "なかやしき"
+    assert merged["manual_call_line"] is True
+    assert merged["warranty_plan"] == "新保証"
+    assert merged["product"] == "エコキュート"
+    assert merged["manufacturer"] == "コロナ"
+    assert merged["store_name"] == "新販売店"
+    assert merged["model_number"] == "CHP-46AY1"

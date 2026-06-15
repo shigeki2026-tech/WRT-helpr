@@ -3608,6 +3608,8 @@ def test_hearing_shortcut_buttons_append_without_overwriting():
     assert "電源が入らない" in source
     assert "水漏れしている" in source
     assert "occurrence_today_option()" in source
+    assert "occurrence_yesterday_option()" in source
+    assert '"昨日から"' not in source
     assert "1か月ほど前から" in source
     assert "以前から" not in source
     assert "たまに" in source

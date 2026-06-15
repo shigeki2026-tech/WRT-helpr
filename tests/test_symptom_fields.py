@@ -392,13 +392,16 @@ def test_occurrence_frequency_options_do_not_include_sono_ta():
 
 def test_occurrence_time_options_include_predefined():
     """発生時期の選択肢に主要な候補が含まれる。"""
-    for expected in [app.occurrence_today_option(), "昨日から", "数日前から", "不明"]:
+    for expected in [app.occurrence_today_option(), app.occurrence_yesterday_option(), "数日前から", "不明"]:
         assert expected in app.OCCURRENCE_TIME_OPTIONS, f"'{expected}' が OCCURRENCE_TIME_OPTIONS にない"
     assert "以前から" not in app.OCCURRENCE_TIME_OPTIONS
+    assert "昨日から" not in app.OCCURRENCE_TIME_OPTIONS
+    assert "本日（6/15）から" not in app.occurrence_time_options(date(2026, 6, 15))
 
 
 def test_occurrence_today_option_uses_month_day_without_zero_padding():
-    assert app.occurrence_today_option(date(2026, 6, 4)) == "本日（6/4）から"
+    assert app.occurrence_today_option(date(2026, 6, 4)) == "本日（6/4）"
+    assert app.occurrence_yesterday_option(date(2026, 6, 15)) == "昨日（6/14）"
 
 
 def test_occurrence_frequency_options_include_predefined():
