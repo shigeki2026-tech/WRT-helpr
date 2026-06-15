@@ -3449,7 +3449,7 @@ def test_call_start_line_buttons_hide_after_selection_until_change_requested():
     app.request_call_line_change(state)
 
     assert state["call_line_change_mode"] is True
-    assert app.should_show_call_start_line_buttons(form, state) is True
+    assert app.should_show_call_start_line_buttons(form, state) is False
 
 
 def test_call_start_line_change_closes_buttons_and_updates_selected_line():
@@ -3523,8 +3523,7 @@ def test_call_start_line_buttons_render_status_without_recording_controls():
     assert "render_call_start_line_buttons(form)" in source
     assert "start_call_with_line(form, st.session_state, call_line)" in source
     assert "should_show_call_start_line_buttons(form, st.session_state)" in source
-    assert 'key="call_start_line_change"' in source
-    assert "request_call_line_change(st.session_state)" in source
+    assert 'key="call_start_line_change"' not in source
     assert "選択中回線名：" in source
     assert "通話中状態：" in source
     assert "録音状態：" in source
@@ -3537,6 +3536,39 @@ def test_call_start_line_buttons_render_status_without_recording_controls():
     assert "通話メモを症状欄へ追記" not in source
     for forbidden in ["audio_devices.py", "transcribe.py", "recordings/", "microphone", "sounddevice", "pyaudio"]:
         assert forbidden not in call_tab_source
+
+
+def test_call_start_current_line_uses_form_call_line_as_source_of_truth():
+    form = app.empty_form()
+    form.update({"call_line": "なかやしき", "manual_call_line": True})
+    state = {"call_selected_line": "家電", "call_in_progress": True}
+
+    assert app.current_call_start_line(form, state) == "なかやしき"
+    assert app.should_show_call_start_line_buttons(form, state) is False
+
+
+def test_case_basic_call_line_widget_change_updates_call_start_state_and_generated_texts():
+    revision = 0
+    call_line_key = app.case_basic_widget_key("call_line", revision)
+    form = app.empty_form()
+    form.update({"call_line": "家電", "product": "エアコン", "manual_call_line": True})
+    state = {
+        "case_basic_revision": revision,
+        call_line_key: "なかやしき",
+        "_case_basic_widget_synced_values": {call_line_key: "家電"},
+        "call_selected_line": "家電",
+        "call_in_progress": True,
+    }
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+    rakutel_text = app._build_rakutel_text(synced, "加入者", "")
+    teams_message = app._build_teams_chat_message(synced, "ユナイトサービス㈱")
+
+    assert synced["call_line"] == "なかやしき"
+    assert synced["manual_call_line"] is True
+    assert state["call_selected_line"] == "なかやしき"
+    assert "【なかやしき回線へ入電】" in rakutel_text
+    assert teams_message.startswith("楽テルNO未入力　なかやしき　エアコン")
 
 
 def test_hearing_shortcut_buttons_append_without_overwriting():

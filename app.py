@@ -2338,6 +2338,23 @@ def append_attention_memo_snippets(form: dict, snippet_ids: list[str]) -> list[d
     return added
 
 
+def vendor_request_memo_text(store_name: str) -> str:
+    store = (store_name or "").strip()
+    return f"【{store}より修理依頼】" if store else ""
+
+
+def append_vendor_request_to_attention_memo(form: dict, store_name: str | None = None) -> bool:
+    memo_text = vendor_request_memo_text(store_name if store_name is not None else form.get("store_name", ""))
+    if not memo_text:
+        return False
+    current = sanitize_generated_body_text(form.get("attention_memo", ""))
+    if memo_text in current:
+        form["attention_memo"] = current
+        return False
+    form["attention_memo"] = "\n".join(part for part in [current, memo_text] if part).strip()
+    return True
+
+
 def memo_snippet_option_label(row) -> str:
     label = str(row.get("label") or row.get("snippet_id") or "").strip()
     return label
@@ -3465,6 +3482,23 @@ def _sync_case_basic_call_line_widget(session_state, call_line: str) -> None:
     session_state["_case_basic_widget_synced_values"] = synced
 
 
+def sync_call_line_selection_to_form_state(
+    form: dict,
+    session_state,
+    call_line: str,
+    manual: bool = True,
+) -> dict:
+    effective_line = normalize_call_line_for_display(call_line)
+    form["call_line"] = effective_line
+    if manual:
+        form["manual_call_line"] = bool(effective_line)
+    if bool(session_state.get("call_in_progress")):
+        session_state["call_selected_line"] = effective_line
+    _sync_case_basic_call_line_widget(session_state, effective_line)
+    session_state["form"] = form
+    return form
+
+
 def start_call_with_line(form: dict, session_state, call_line: str, preserve_manual: bool = False) -> dict:
     selected_line = normalize_call_line_for_display(call_line)
     current_line = normalize_call_line_for_display(form.get("call_line", ""))
@@ -3472,9 +3506,7 @@ def start_call_with_line(form: dict, session_state, call_line: str, preserve_man
     effective_line = current_line if manual_line_locked and current_line != selected_line else selected_line
 
     if effective_line:
-        form["call_line"] = effective_line
-        form["manual_call_line"] = True
-        _sync_case_basic_call_line_widget(session_state, effective_line)
+        form = sync_call_line_selection_to_form_state(form, session_state, effective_line, manual=True)
 
     session_state["call_in_progress"] = True
     session_state["call_selected_line"] = effective_line
@@ -3489,15 +3521,13 @@ def request_call_line_change(session_state) -> None:
 
 
 def current_call_start_line(form: dict, session_state) -> str:
-    selected_line = session_state.get("call_selected_line") or form.get("call_line", "")
-    return normalize_call_line_for_display(selected_line)
+    return normalize_call_line_for_display(form.get("call_line", ""))
 
 
 def should_show_call_start_line_buttons(form: dict, session_state) -> bool:
     selected_line = current_call_start_line(form, session_state)
     call_started = bool(session_state.get("call_in_progress"))
-    change_mode = bool(session_state.get("call_line_change_mode"))
-    return not (selected_line and call_started and not change_mode)
+    return not (selected_line and call_started)
 
 
 def request_case_clear(session_state) -> None:
@@ -3533,6 +3563,7 @@ CASE_BASIC_WIDGET_PREFIXES = (
     "case_basic_prefecture_",
     "case_basic_warranty_plan_",
     "case_basic_product_price_",
+    "case_basic_target_product_item_",
 )
 
 CASE_BASIC_FIELD_TO_WIDGET_STEM = {
@@ -4965,7 +4996,190 @@ def extract_fields_from_pasted_text(text: str) -> dict:
     addr = result.get("address", "")
     if addr:
         result["prefecture"] = extract_prefecture(addr)
+    product_items = extract_product_items_from_pasted_text(text)
+    if product_items:
+        result["product_items"] = product_items
     return result
+
+
+_PRODUCT_ITEM_LABEL_TO_FIELD = {
+    "プラン": "attached_plan_name",
+    "付属プラン": "attached_plan_name",
+    "付属プラン名": "attached_plan_name",
+    "商品価格": "product_price",
+    "商品金額": "product_price",
+    "購入金額": "product_price",
+    "税込価格": "product_price",
+    "ジャンル": "genre",
+    "分類": "category",
+    "シリーズ": "series",
+    "商品名": "series",
+    "製品名": "series",
+    "品目": "series",
+    "メーカー": "manufacturer",
+    "メーカー名": "manufacturer",
+    "製造メーカー": "manufacturer",
+    "型番": "model_number",
+    "品番": "model_number",
+    "モデル": "model_number",
+    "モデル番号": "model_number",
+    "製造番号": "serial_number",
+}
+
+
+def _clean_product_item_value(value: str) -> str:
+    return re.sub(r"[ \t　]+", " ", str(value or "")).strip()
+
+
+def _product_name_from_plan(value: str) -> str:
+    return re.sub(r"【[^】]*保証[^】]*】", "", value or "").strip()
+
+
+def normalized_product_from_product_item(product_item: dict) -> str:
+    candidates = [
+        normalize_product(product_item.get("series", ""), product_item.get("category") or product_item.get("genre", "")),
+        product_item.get("category", ""),
+        product_item.get("genre", ""),
+        _product_name_from_plan(product_item.get("attached_plan_name", "")),
+        product_item.get("series", ""),
+    ]
+    for candidate in candidates:
+        normalized = normalize_product_for_select(candidate)
+        if normalized and normalized != PRODUCT_OTHER:
+            return normalized
+    return normalize_product_for_select(candidates[0] if candidates else "")
+
+
+def _product_item_has_detail(item: dict) -> bool:
+    return any(_clean_product_item_value(item.get(field)) for field in (
+        "product_price", "genre", "category", "series", "manufacturer",
+        "model_number", "serial_number",
+    ))
+
+
+def _append_product_item(items: list[dict], item: dict) -> None:
+    cleaned = {
+        field: _clean_product_item_value(item.get(field, ""))
+        for field in (
+            "attached_plan_name", "product_price", "genre", "category",
+            "series", "manufacturer", "model_number", "serial_number",
+        )
+    }
+    if _product_item_has_detail(cleaned):
+        cleaned["product_original"] = (
+            cleaned.get("series")
+            or cleaned.get("category")
+            or cleaned.get("genre")
+            or cleaned.get("attached_plan_name")
+            or ""
+        )
+        cleaned["product"] = normalized_product_from_product_item(cleaned)
+        items.append(cleaned)
+
+
+def _line_label_pairs(line: str) -> list[tuple[str, str]]:
+    tokens = [token.strip() for token in str(line or "").split("\t")]
+    pairs = []
+    label_names = set(_PRODUCT_ITEM_LABEL_TO_FIELD)
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in label_names:
+            value = tokens[idx + 1].strip() if idx + 1 < len(tokens) else ""
+            pairs.append((token, value))
+            idx += 2
+            continue
+        for label in sorted(label_names, key=len, reverse=True):
+            m = re.match(rf"^{re.escape(label)}[ \t　]*[:：][ \t　]*(.*)$", token)
+            if m:
+                pairs.append((label, m.group(1).strip()))
+                break
+        idx += 1
+    return pairs
+
+
+def extract_product_items_from_pasted_text(text: str) -> list[dict]:
+    """製品情報セクション内の複数製品ブロックを抽出する。"""
+    section = _extract_section(
+        text,
+        "製品情報",
+        ["販売店情報", "保証情報", "顧客情報", "■プラン詳細", "聴取内容"],
+    )
+    if not section:
+        return []
+
+    items: list[dict] = []
+    current: dict = {}
+    pending_field = ""
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if pending_field:
+            if current and pending_field == "attached_plan_name" and _product_item_has_detail(current):
+                _append_product_item(items, current)
+                current = {}
+            current[pending_field] = line
+            pending_field = ""
+            continue
+        pairs = _line_label_pairs(line)
+        if not pairs and "【" in line and "保証" in line:
+            if current and _product_item_has_detail(current):
+                _append_product_item(items, current)
+                current = {}
+            current["attached_plan_name"] = line
+            continue
+        if not pairs:
+            continue
+        for label, value in pairs:
+            field = _PRODUCT_ITEM_LABEL_TO_FIELD.get(label, "")
+            if not field:
+                continue
+            if field == "attached_plan_name" and current and _product_item_has_detail(current):
+                _append_product_item(items, current)
+                current = {}
+            if value:
+                current[field] = value
+            elif len(pairs) == 1 and line == label:
+                pending_field = field
+    if current:
+        _append_product_item(items, current)
+    return items
+
+
+def apply_product_item_to_form(product_item: dict, current_form: dict) -> dict:
+    form = current_form.copy()
+    if not product_item:
+        return form
+    for field in ("product_price", "genre", "category", "series", "model_number", "serial_number"):
+        if product_item.get(field) != "":
+            form[field] = product_item.get(field, "")
+    form["attached_plan_name"] = product_item.get("attached_plan_name", "")
+    raw_product = product_item.get("product_original") or product_item.get("series") or product_item.get("category") or product_item.get("genre") or ""
+    if raw_product:
+        form["product_original"] = raw_product
+        form["product"] = normalized_product_from_product_item(product_item)
+    raw_mfr = product_item.get("manufacturer", "")
+    if raw_mfr:
+        form["manufacturer_original"] = raw_mfr
+        form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
+    form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
+    form = apply_appliance_category_to_form(form)
+    return form
+
+
+def product_item_option_label(product_item: dict, index: int) -> str:
+    product_name = (
+        _product_name_from_plan(product_item.get("attached_plan_name", "") or "")
+        or product_item.get("product")
+        or product_item.get("category")
+        or product_item.get("genre")
+        or product_item.get("series")
+        or "製品"
+    )
+    detail = product_item.get("series") or product_item.get("model_number") or ""
+    parts = [product_name, product_item.get("manufacturer", ""), detail]
+    return f"製品{index}: " + " / ".join(part for part in parts if part)
 
 
 # ============================================================
@@ -5068,8 +5282,18 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
                 form[dst] = normalize_date_text(extracted[src]) or extracted[src]
                 continue
             form[dst] = extracted[src]
+    product_items = extracted.get("product_items") or []
+    if product_items:
+        form["product_items"] = product_items
+        selected_index = int(form.get("selected_product_item_index") or 0)
+        if selected_index < 0 or selected_index >= len(product_items):
+            selected_index = 0
+        form["selected_product_item_index"] = selected_index
+        form = apply_product_item_to_form(product_items[selected_index], form)
     raw_series = extracted.get("series", "")
-    if raw_series:
+    if product_items:
+        pass
+    elif raw_series:
         form["product_original"] = raw_series
         form["product"] = normalize_product_for_select(normalize_product(raw_series, ""))
     elif extracted.get("category") or extracted.get("genre"):
@@ -8076,22 +8300,16 @@ def render_call_start_line_buttons(form: dict) -> None:
     show_line_buttons = should_show_call_start_line_buttons(form, st.session_state)
 
     if not show_line_buttons:
-        status_col, change_col = st.columns([4.5, 1.1], gap="small")
-        with status_col:
-            st.markdown(
-                f"""
-                <div class="call-start-status-grid compact">
-                    <div class="call-start-status call-active">選択中回線名：<strong>{html.escape(selected_line)}</strong></div>
-                    <div class="{call_status_class}">通話中状態：<strong>{html.escape(call_status)}</strong></div>
-                    <div class="call-start-status">録音状態：<strong>{html.escape(audio_status)}</strong></div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with change_col:
-            if st.button("回線変更", key="call_start_line_change", use_container_width=True):
-                request_call_line_change(st.session_state)
-                st.rerun()
+        st.markdown(
+            f"""
+            <div class="call-start-status-grid compact">
+                <div class="call-start-status call-active">選択中回線名：<strong>{html.escape(selected_line)}</strong></div>
+                <div class="{call_status_class}">通話中状態：<strong>{html.escape(call_status)}</strong></div>
+                <div class="call-start-status">録音状態：<strong>{html.escape(audio_status)}</strong></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     line_options = get_call_start_line_options()
@@ -8235,14 +8453,22 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
                 pass
             elif last_value is not None and widget_value != last_value:
                 if field == "call_line":
-                    form["manual_call_line"] = True
-                form[field] = widget_value
-                form_value = widget_value
+                    form = sync_call_line_selection_to_form_state(form, session_state, widget_value, manual=True)
+                    form_value = form.get(field, "")
+                else:
+                    form[field] = widget_value
+                    form_value = widget_value
             elif not form_value and widget_value:
-                form[field] = widget_value
-                form_value = widget_value
+                if field == "call_line":
+                    form = sync_call_line_selection_to_form_state(form, session_state, widget_value, manual=True)
+                    form_value = form.get(field, "")
+                else:
+                    form[field] = widget_value
+                    form_value = widget_value
             else:
                 session_state[widget_key] = widget_form_value
+        if field == "call_line" and bool(session_state.get("call_in_progress")):
+            session_state["call_selected_line"] = normalize_call_line_for_display(form.get("call_line", ""))
         next_synced[widget_key] = (
             product_price_value_for_case_basic_ui(form.get(field, ""))
             if field == "product_price" else form.get(field, "")
@@ -8597,6 +8823,47 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
     return re.sub(r"\s*円\s*$", "", (value or "").strip())
 
 
+def sync_case_basic_product_item_widgets(session_state, form: dict) -> None:
+    fields = (
+        "product", "product_price", "manufacturer", "warranty_plan",
+    )
+    synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
+    revision = get_case_basic_revision(session_state)
+    for field in fields:
+        widget_key = case_basic_widget_key(field, revision, session_state=session_state)
+        value = product_price_value_for_case_basic_ui(form.get(field, "")) if field == "product_price" else form.get(field, "")
+        session_state[widget_key] = value
+        synced[widget_key] = value
+    session_state["_case_basic_widget_synced_values"] = synced
+
+
+def render_product_item_selector(form: dict, revision: int) -> dict:
+    product_items = form.get("product_items") or []
+    if len(product_items) < 2:
+        return form
+    options = [
+        product_item_option_label(item, idx + 1)
+        for idx, item in enumerate(product_items)
+    ]
+    selected_index = int(form.get("selected_product_item_index") or 0)
+    if selected_index < 0 or selected_index >= len(options):
+        selected_index = 0
+    key = f"case_basic_target_product_item_{revision}"
+    kwargs = {"key": key}
+    if key not in st.session_state:
+        kwargs["index"] = selected_index
+    elif st.session_state.get(key) not in options:
+        st.session_state[key] = options[selected_index]
+    selected_label = st.selectbox("対象製品", options, **kwargs)
+    next_index = options.index(selected_label) if selected_label in options else selected_index
+    if next_index != selected_index:
+        form["selected_product_item_index"] = next_index
+        form = apply_product_item_to_form(product_items[next_index], form)
+        st.session_state.form = form
+        sync_case_basic_product_item_widgets(st.session_state, form)
+    return form
+
+
 def synced_selectbox(label: str, options: list[str], current_value: str, key: str):
     kwargs = {"key": key}
     if key in st.session_state:
@@ -8644,6 +8911,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     form = apply_appliance_category_to_form(form)
 
     revision = get_case_basic_revision(st.session_state)
+    form = render_product_item_selector(form, revision)
     inferred_appliance_type = infer_appliance_type_from_form(form, form.get("appliance_type", ""))
     if not form.get("appliance_category") and inferred_appliance_type != form.get("appliance_type", ""):
         form["appliance_type"] = inferred_appliance_type
@@ -8656,12 +8924,20 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap="small")
     row2 = st.columns([1.2, 2.8, 2.5], gap="small")
     with row1[0]:
+        previous_call_line = form.get("call_line", "")
         form["call_line"] = synced_selectbox(
             "回線名",
             call_line_opts,
             form.get("call_line", ""),
             case_basic_widget_key("call_line", revision),
         )
+        if form.get("call_line", "") != previous_call_line:
+            form = sync_call_line_selection_to_form_state(
+                form,
+                st.session_state,
+                form.get("call_line", ""),
+                manual=True,
+            )
     with row1[1]:
         form["appliance_category"] = synced_selectbox(
             "案件分類",
@@ -8758,7 +9034,7 @@ def sync_after_call_rakutel_action_inputs(form: dict, session_state) -> dict:
     call_line_key = case_basic_widget_key("call_line", revision)
     call_line_value = (session_state.get(call_line_key) or "").strip()
     if call_line_value:
-        form["call_line"] = normalize_call_line_for_display(call_line_value)
+        form = sync_call_line_selection_to_form_state(form, session_state, call_line_value, manual=True)
     for widget_key, field_name in [
         ("call_direction_select", "call_direction"),
         ("counterparty_type_select", "counterparty_type"),
@@ -9076,6 +9352,9 @@ def empty_form() -> dict:
     form["rakutel_text"] = ""
     form["teams_chat_message"] = ""
     form["manual_call_line"] = False
+    form["product_items"] = []
+    form["selected_product_item_index"] = 0
+    form["attached_plan_name"] = ""
     return form
 
 
@@ -9841,6 +10120,21 @@ def render_tab_after_call():
             if added_snippets else "この文言はすでに修理依頼書メモに含まれています。"
         )
 
+    if st.session_state.pop("_pending_append_vendor_request_memo", False):
+        form["attention_memo"] = sanitize_generated_body_text(st.session_state.get(memo_current_key, form.get("attention_memo", "")))
+        added_vendor_request = append_vendor_request_to_attention_memo(form)
+        form["attention_memo"] = replace_editable_text_current(
+            memo_current_key,
+            memo_widget_key,
+            form["attention_memo"],
+            sanitize_generated_body_text,
+        )
+        st.session_state.form = form
+        st.session_state["_vendor_request_memo_append_message"] = (
+            "販売店入電文を修理依頼書メモへ追記しました。"
+            if added_vendor_request else "販売店入電文はすでに修理依頼書メモに含まれています。"
+        )
+
     memo_value = ensure_editable_text_state(
         memo_current_key,
         memo_widget_key,
@@ -9927,6 +10221,18 @@ def render_tab_after_call():
             st.success(regen_message)
         if after_call_section_needs_regeneration(st.session_state, "attention_memo", attention_hash):
             st.warning("基本項目が変更されています。修理依頼書メモを再生成してください。")
+
+        store_name_for_request = (form.get("store_name") or "").strip()
+        if store_name_for_request:
+            if st.button("販売店より修理依頼", key="append_vendor_request_memo", type="secondary"):
+                st.session_state["_pending_append_vendor_request_memo"] = True
+                st.rerun()
+            vendor_request_message = str(st.session_state.pop("_vendor_request_memo_append_message", "") or "").strip()
+            if vendor_request_message:
+                if "追記しました" in vendor_request_message:
+                    st.success(vendor_request_message)
+                else:
+                    st.info(vendor_request_message)
 
         if not snippets_df.empty:
             st.markdown("##### 定型文追記")

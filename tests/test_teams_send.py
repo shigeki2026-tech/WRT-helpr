@@ -2322,7 +2322,7 @@ def test_global_case_basic_widget_state_syncs_to_shared_form_before_render():
 
     synced = app.sync_global_case_basic_widget_state(form, state)
 
-    assert synced["call_line"] == "家電保証対応業務（24時間）"
+    assert synced["call_line"] == "家電"
     assert synced["product"] == "食器洗い乾燥機"
     assert state["form"]["manufacturer"] == "三菱電機"
 
