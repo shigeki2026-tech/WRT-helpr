@@ -2769,9 +2769,10 @@ def test_rakutel_text_prefers_form_counterparty_over_legacy_caller_type_argument
 
 def test_rakutel_action_input_sync_updates_form_before_generation():
     form = app.empty_form()
+    form["call_line"] = "家電"
     state = SessionState({
         "case_basic_revision": 0,
-        app.case_basic_widget_key("call_line", 0): "家電",
+        app.case_basic_widget_key("call_line", 0): "なかやしき",
         "call_direction_select": "架電",
         "counterparty_type_select": "販売店",
         "counterparty_detail_input": "あかりと空調の専門店 山田様",
@@ -2783,11 +2784,23 @@ def test_rakutel_action_input_sync_updates_form_before_generation():
     text = app._build_rakutel_text(synced, "加入者", "")
 
     assert synced["call_line"] == "家電"
+    assert state[app.case_basic_widget_key("call_line", 0)] == "なかやしき"
     assert synced["call_direction"] == "架電"
     assert synced["counterparty_type"] == "販売店"
     assert "【家電回線から架電】" in text
     assert "MPG大濱⇒販売店（あかりと空調の専門店 山田様）" in text
     assert "日程調整時の連絡先：072-950-0880　5/26 12時以降" in text
+
+
+def test_rakutel_action_sync_does_not_touch_case_basic_call_line_widget_key():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    start = source.index("def sync_after_call_rakutel_action_inputs")
+    end = source.index("def _set_manual_check", start)
+    sync_source = source[start:end]
+
+    assert 'case_basic_widget_key("call_line"' not in sync_source
+    assert "_sync_case_basic_call_line_widget" not in sync_source
+    assert 'session_state["case_basic_call_line_0"]' not in sync_source
 
 
 def test_rakutel_text_missing_datetime_uses_placeholder_time_without_current_time():

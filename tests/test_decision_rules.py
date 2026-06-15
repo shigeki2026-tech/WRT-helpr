@@ -3547,6 +3547,23 @@ def test_call_start_current_line_uses_form_call_line_as_source_of_truth():
     assert app.should_show_call_start_line_buttons(form, state) is False
 
 
+def test_sync_call_line_selection_updates_form_without_rewriting_widget_key():
+    form = app.empty_form()
+    state = {
+        "case_basic_revision": 0,
+        app.case_basic_widget_key("call_line", 0): "家電",
+        "call_in_progress": True,
+        "call_selected_line": "家電",
+    }
+
+    synced = app.sync_call_line_selection_to_form_state(form, state, "なかやしき", manual=True)
+
+    assert synced["call_line"] == "なかやしき"
+    assert synced["manual_call_line"] is True
+    assert state["call_selected_line"] == "なかやしき"
+    assert state[app.case_basic_widget_key("call_line", 0)] == "家電"
+
+
 def test_case_basic_call_line_widget_change_updates_call_start_state_and_generated_texts():
     revision = 0
     call_line_key = app.case_basic_widget_key("call_line", revision)

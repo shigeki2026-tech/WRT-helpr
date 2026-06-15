@@ -3470,18 +3470,6 @@ def reset_call_start_state(session_state) -> None:
             del session_state[stale_key]
 
 
-def _sync_case_basic_call_line_widget(session_state, call_line: str) -> None:
-    try:
-        revision = get_case_basic_revision(session_state)
-        widget_key = case_basic_widget_key("call_line", revision, session_state=session_state)
-    except Exception:
-        return
-    session_state[widget_key] = call_line
-    synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
-    synced[widget_key] = call_line
-    session_state["_case_basic_widget_synced_values"] = synced
-
-
 def sync_call_line_selection_to_form_state(
     form: dict,
     session_state,
@@ -3494,7 +3482,6 @@ def sync_call_line_selection_to_form_state(
         form["manual_call_line"] = bool(effective_line)
     if bool(session_state.get("call_in_progress")):
         session_state["call_selected_line"] = effective_line
-    _sync_case_basic_call_line_widget(session_state, effective_line)
     session_state["form"] = form
     return form
 
@@ -9030,11 +9017,6 @@ def render_global_case_basic_panel(form: dict) -> dict:
 
 
 def sync_after_call_rakutel_action_inputs(form: dict, session_state) -> dict:
-    revision = get_case_basic_revision(session_state)
-    call_line_key = case_basic_widget_key("call_line", revision)
-    call_line_value = (session_state.get(call_line_key) or "").strip()
-    if call_line_value:
-        form = sync_call_line_selection_to_form_state(form, session_state, call_line_value, manual=True)
     for widget_key, field_name in [
         ("call_direction_select", "call_direction"),
         ("counterparty_type_select", "counterparty_type"),
