@@ -4366,6 +4366,7 @@ def test_nav_uses_stateful_radio_not_buttons_or_uncontrolled_tabs():
     assert "st.radio(" in nav_source
     assert "st.button(" not in nav_source
     assert "main_tab_nav_" not in nav_source
+    assert "wrt-main-tab-radio" in nav_source
     assert 'key=f"main_tab_radio_{active_tab}"' in nav_source
     assert "active_tab == MAIN_TAB_AFTER_CALL" in main_source
     assert 'key="main_nav_tab"' not in main_source
@@ -4414,7 +4415,7 @@ def test_main_renders_only_selected_active_tab_body():
 
 def test_nav_radio_style_uses_neutral_blue_not_red_or_primary_button():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
-    radio_style_start = source.index('div[role="radiogroup"] label[data-baseweb="radio"]')
+    radio_style_start = source.index("div:has(.wrt-main-tab-radio) + div")
     radio_style = source[radio_style_start:source.index("</style>", radio_style_start)]
     nav_index = source.index("def render_main_tab_navigation")
     main_index = source.index("def main():")
@@ -4423,9 +4424,26 @@ def test_nav_radio_style_uses_neutral_blue_not_red_or_primary_button():
     assert "#2563EB" in radio_style
     assert "#EFF6FF" in radio_style
     assert "#BFDBFE" in radio_style
+    assert '[role="radiogroup"]' in radio_style
+    assert 'label[data-baseweb="radio"]' in radio_style
     for red_token in ("#dc2626", "#ef4444", "#fca5a5", "#fef2f2", "danger", "primary"):
         assert red_token not in radio_style.lower()
         assert red_token not in nav_source.lower()
+
+
+def test_main_nav_radio_css_hides_circle_and_looks_like_page_tabs():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    radio_style_start = source.index("div:has(.wrt-main-tab-radio) + div")
+    radio_style = source[radio_style_start:source.index("</style>", radio_style_start)]
+
+    assert 'border-bottom: 1px solid #D0D5DD' in radio_style
+    assert 'label[data-baseweb="radio"] > div:first-child' in radio_style
+    assert "display: none" in radio_style
+    assert "border-radius: 8px 8px 0 0" in radio_style
+    assert "padding: 9px 18px" in radio_style
+    assert "cursor: pointer" in radio_style
+    assert ":has(input:checked)" in radio_style
+    assert "font-weight: 700" in radio_style
 
 
 def test_active_main_tab_helpers_default_and_reset_to_during_call():

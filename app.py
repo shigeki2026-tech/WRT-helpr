@@ -7640,21 +7640,42 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: #475569;
     background-color: #F8FAFC;
 }
-div[role="radiogroup"] label[data-baseweb="radio"] {
+div:has(.wrt-main-tab-radio) + div {
+    border-bottom: 1px solid #D0D5DD;
+    margin: 10px 0 16px;
+}
+div:has(.wrt-main-tab-radio) + div [role="radiogroup"] {
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+}
+div:has(.wrt-main-tab-radio) + div label[data-baseweb="radio"] {
     border: 1px solid #D0D5DD;
-    border-radius: 8px;
-    padding: 8px 14px;
-    margin-right: 6px;
+    border-bottom-color: transparent;
+    border-radius: 8px 8px 0 0;
+    padding: 9px 18px;
+    margin: 0;
     background-color: white;
     color: #475569;
+    cursor: pointer;
+    min-height: 38px;
 }
-div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
+div:has(.wrt-main-tab-radio) + div label[data-baseweb="radio"] > div:first-child {
+    display: none;
+}
+div:has(.wrt-main-tab-radio) + div label[data-baseweb="radio"]:hover {
     border-color: #BFDBFE;
+    background-color: #F8FAFC;
+    color: #2563EB;
+}
+div:has(.wrt-main-tab-radio) + div label[data-baseweb="radio"]:has(input:checked) {
+    border-color: #BFDBFE;
+    border-bottom-color: #EFF6FF;
     background-color: #EFF6FF;
     color: #2563EB;
     font-weight: 700;
 }
-div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) * {
+div:has(.wrt-main-tab-radio) + div label[data-baseweb="radio"]:has(input:checked) * {
     color: #2563EB !important;
 }
 </style>
@@ -11275,6 +11296,7 @@ def render_main_tab_navigation() -> str:
     active_tab = get_active_main_tab(st.session_state)
     labels = [MAIN_TAB_LABELS[tab_name] for tab_name in MAIN_TAB_ORDER]
     current_label = MAIN_TAB_LABELS.get(active_tab, MAIN_TAB_LABELS[MAIN_TAB_DURING_CALL])
+    st.markdown('<div class="wrt-main-tab-radio"></div>', unsafe_allow_html=True)
     selected_label = st.radio(
         "画面切替",
         labels,
