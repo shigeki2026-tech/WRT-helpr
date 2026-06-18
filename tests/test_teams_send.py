@@ -3321,7 +3321,7 @@ def test_send_teams_message_script_documents_graph_contract():
     assert "[string]$MessageFile" in source
     assert "Get-Content -LiteralPath $MessageFile -Raw -Encoding UTF8" in source
     assert "Import-Module Microsoft.Graph.Authentication" in source
-    assert "Import-Module Microsoft.Graph.Teams" in source
+    assert "Import-Module Microsoft.Graph.Teams" not in source
     import_lines = [
         line.strip()
         for line in source.splitlines()
@@ -3329,7 +3329,12 @@ def test_send_teams_message_script_documents_graph_contract():
     ]
     assert "Import-Module Microsoft.Graph" not in import_lines
     assert 'Connect-MgGraph -Scopes "ChatMessage.Send"' in source
-    assert "New-MgChatMessage -ChatId $ChatId -BodyParameter $bodyParameter" in source
+    assert "New-MgChatMessage" not in source
+    assert "Invoke-MgGraphRequest -Method POST -Uri $requestUri -Body $requestBody -ContentType \"application/json\"" in source
+    assert '"https://graph.microsoft.com/v1.0/chats/$encodedChatId/messages"' in source
+    assert "[System.Uri]::EscapeDataString($ChatId)" in source
+    assert "$requestBody = $bodyParameter | ConvertTo-Json -Depth 10" in source
+    assert 'contentType = "html"' in source
     assert 'Write-Output ("SUCCESS " + $message.Id)' in source
     assert "exit 0" in source
     assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
@@ -3377,11 +3382,11 @@ def test_send_teams_message_script_writes_perf_log_phases_without_payload():
         "config_read",
         "module_import_total",
         "module_import_auth",
-        "module_import_teams",
+        "module_import_teams_skipped",
         "graph_context_check",
         "graph_connect",
         "message_file_read",
-        "graph_send",
+        "graph_send_rest",
         "ps_script_end",
     ]:
         assert phase in source
