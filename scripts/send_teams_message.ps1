@@ -167,10 +167,15 @@ try {
     End-TeamsPerfPhase -Phase "config_read" -Result "skipped"
 
     Write-TeamsDebugLog -Phase "module_import_start" -Result "start"
-    Start-TeamsPerfPhase -Phase "module_import"
+    $moduleImportTotalStartedAt = Get-Date
+    Write-TeamsPerfLog -Phase "module_import_total" -Result "start"
+    Start-TeamsPerfPhase -Phase "module_import_auth"
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+    End-TeamsPerfPhase -Phase "module_import_auth"
+    Start-TeamsPerfPhase -Phase "module_import_teams"
     Import-Module Microsoft.Graph.Teams -ErrorAction Stop
-    End-TeamsPerfPhase -Phase "module_import"
+    End-TeamsPerfPhase -Phase "module_import_teams"
+    Write-TeamsPerfLog -Phase "module_import_total" -Result "success" -PhaseStartedAt $moduleImportTotalStartedAt
     Write-TeamsDebugLog -Phase "module_import_end" -Result "success"
 
     Write-TeamsDebugLog -Phase "graph_context_check_start" -Result "start"

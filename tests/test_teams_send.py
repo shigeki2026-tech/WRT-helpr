@@ -3322,6 +3322,12 @@ def test_send_teams_message_script_documents_graph_contract():
     assert "Get-Content -LiteralPath $MessageFile -Raw -Encoding UTF8" in source
     assert "Import-Module Microsoft.Graph.Authentication" in source
     assert "Import-Module Microsoft.Graph.Teams" in source
+    import_lines = [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip().startswith("Import-Module")
+    ]
+    assert "Import-Module Microsoft.Graph" not in import_lines
     assert 'Connect-MgGraph -Scopes "ChatMessage.Send"' in source
     assert "New-MgChatMessage -ChatId $ChatId -BodyParameter $bodyParameter" in source
     assert 'Write-Output ("SUCCESS " + $message.Id)' in source
@@ -3369,7 +3375,9 @@ def test_send_teams_message_script_writes_perf_log_phases_without_payload():
     for phase in [
         "ps_script_start",
         "config_read",
-        "module_import",
+        "module_import_total",
+        "module_import_auth",
+        "module_import_teams",
         "graph_context_check",
         "graph_connect",
         "message_file_read",
@@ -3391,6 +3399,7 @@ def test_send_teams_message_script_writes_perf_log_phases_without_payload():
     assert "WRT_TEAMS_PERF_LOG_PATH" in source
     assert "Start-TeamsPerfPhase" in source
     assert "End-TeamsPerfPhase" in source
+    assert '$moduleImportTotalStartedAt = Get-Date' in source
     assert "Performance logging must never affect Teams sending" in source
     assert 'Write-Output ("SUCCESS " + $message.Id)' in source
     assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
