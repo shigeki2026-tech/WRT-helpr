@@ -172,7 +172,9 @@ try {
     Start-TeamsPerfPhase -Phase "module_import_auth"
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
     End-TeamsPerfPhase -Phase "module_import_auth"
-    Write-TeamsPerfLog -Phase "module_import_teams_skipped" -Result "skipped"
+    Start-TeamsPerfPhase -Phase "module_import_teams"
+    Import-Module Microsoft.Graph.Teams -ErrorAction Stop
+    End-TeamsPerfPhase -Phase "module_import_teams"
     Write-TeamsPerfLog -Phase "module_import_total" -Result "success" -PhaseStartedAt $moduleImportTotalStartedAt
     Write-TeamsDebugLog -Phase "module_import_end" -Result "success"
 
@@ -202,14 +204,11 @@ try {
             content = $messageBody
         }
     }
-    $requestBody = $bodyParameter | ConvertTo-Json -Depth 10
-    $encodedChatId = [System.Uri]::EscapeDataString($ChatId)
-    $requestUri = "https://graph.microsoft.com/v1.0/chats/$encodedChatId/messages"
 
     Write-TeamsDebugLog -Phase "graph_send_start" -Result "start"
-    Start-TeamsPerfPhase -Phase "graph_send_rest"
-    $message = Invoke-MgGraphRequest -Method POST -Uri $requestUri -Body $requestBody -ContentType "application/json"
-    End-TeamsPerfPhase -Phase "graph_send_rest"
+    Start-TeamsPerfPhase -Phase "graph_send"
+    $message = New-MgChatMessage -ChatId $ChatId -BodyParameter $bodyParameter
+    End-TeamsPerfPhase -Phase "graph_send"
     Write-TeamsDebugLog -Phase "graph_send_end" -Result "success"
     Write-TeamsDebugLog -Phase "ps_script_end" -Result "success"
     Write-TeamsPerfLog -Phase "ps_script_end" -Result "success" -PhaseStartedAt $script:TeamsPerfStartedAt
