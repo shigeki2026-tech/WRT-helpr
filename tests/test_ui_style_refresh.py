@@ -83,17 +83,51 @@ def test_audio_probe_plan_is_not_wired_into_wrt_app():
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     plan_path = ROOT / "docs" / "audio_recording_probe_plan.md"
     plan = plan_path.read_text(encoding="utf-8")
+    probe_path = ROOT / "scripts" / "audio_device_probe.py"
+    probe = probe_path.read_text(encoding="utf-8")
 
     assert plan_path.exists()
-    assert "WRT 本体とは切り離して検証" in plan
-    assert "本番通話中に実行しない" in plan
+    assert probe_path.exists()
+    assert "WRT 本体と完全に分離" in plan
+    assert "本番通話中に検証しない" in plan
+    assert "既定入力デバイス、既定出力デバイス、既定通信デバイスを変更しない" in plan
+    assert "異常時の即時撤退条件" in plan
+    assert "音声デバイスを開かない" in plan
+    assert "録音しない" in plan
     assert "録音ファイルを保存しない" in plan
-    assert "Windows の既定デバイス" in plan
     assert "audio_recording_probe_plan" not in source
+    assert "audio_device_probe" not in source
     assert "audio_readonly_probe" not in source
     assert "tools/audio_readonly_probe.py" not in source
+    assert "pages/09_通話録音.py" not in source
     for dependency in ("sounddevice", "soundfile", "faster-whisper", "faster_whisper", "numpy"):
         assert dependency not in requirements
+        assert dependency not in probe
+
+
+def test_audio_device_probe_is_read_only_and_standard_library_only():
+    probe = (ROOT / "scripts" / "audio_device_probe.py").read_text(encoding="utf-8")
+
+    assert "subprocess.run" in probe
+    assert "Get-CimInstance Win32_SoundDevice" in probe
+    assert "Get-PnpDevice" in probe
+    assert "ConvertTo-Csv" in probe
+    assert "sounddevice" not in probe
+    assert "soundfile" not in probe
+    assert "faster-whisper" not in probe
+    assert "faster_whisper" not in probe
+    assert "numpy" not in probe
+    assert "InputStream" not in probe
+    assert ".record" not in probe.lower()
+    assert "start_recording" not in probe.lower()
+    assert "stop_recording" not in probe.lower()
+    assert "rec(" not in probe
+    assert "Set-DefaultAudioDevice" not in probe
+    assert "Set-AudioDevice" not in probe
+    assert "Set-CimInstance" not in probe
+    assert "Set-PnpDevice" not in probe
+    assert "New-MgChatMessage" not in probe
+    assert "Invoke-MgGraphRequest" not in probe
 
 
 def test_decision_tag_basic_wording_is_not_changed_by_card_html():
