@@ -4354,13 +4354,19 @@ def test_master_csv_cache_clear_is_secondary_not_danger():
 
 # ── ナビゲーション構造テスト ──
 
-def test_nav_uses_stateful_buttons_not_uncontrolled_tabs():
+def test_nav_uses_stateful_radio_not_buttons_or_uncontrolled_tabs():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
 
     main_index = source.index("def main():")
     main_source = source[main_index:]
+    nav_index = source.index("def render_main_tab_navigation")
+    nav_source = source[nav_index:main_index]
     assert "render_main_tab_navigation()" in main_source
     assert "st.tabs(" not in main_source
+    assert "st.radio(" in nav_source
+    assert "st.button(" not in nav_source
+    assert "main_tab_nav_" not in nav_source
+    assert 'key=f"main_tab_radio_{active_tab}"' in nav_source
     assert "active_tab == MAIN_TAB_AFTER_CALL" in main_source
     assert 'key="main_nav_tab"' not in main_source
 
@@ -4375,6 +4381,51 @@ def test_nav_has_three_labels():
     assert '"終話後処理"' in source[source.index("MAIN_TAB_LABELS"):nav_index]
     assert '"マスタ管理"' in source[source.index("MAIN_TAB_LABELS"):nav_index]
     assert "MAIN_TAB_ORDER" in nav_source
+    assert "MAIN_TAB_LABEL_TO_KEY" in nav_source
+
+
+def test_nav_radio_updates_active_main_tab_from_selected_label():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    nav_index = source.index("def render_main_tab_navigation")
+    main_index = source.index("def main():")
+    nav_source = source[nav_index:main_index]
+
+    assert "selected_label = st.radio(" in nav_source
+    assert "index=labels.index(current_label)" in nav_source
+    assert "horizontal=True" in nav_source
+    assert "label_visibility=\"collapsed\"" in nav_source
+    assert "return set_active_main_tab(" in nav_source
+    assert "MAIN_TAB_LABEL_TO_KEY.get(selected_label, MAIN_TAB_DURING_CALL)" in nav_source
+
+
+def test_main_renders_only_selected_active_tab_body():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    main_index = source.index("def main():")
+    main_source = source[main_index:]
+
+    assert "active_tab = render_main_tab_navigation()" in main_source
+    assert "if active_tab == MAIN_TAB_DURING_CALL:" in main_source
+    assert "render_tab_call()" in main_source
+    assert "elif active_tab == MAIN_TAB_AFTER_CALL:" in main_source
+    assert "render_tab_after_call()" in main_source
+    assert "elif active_tab == MAIN_TAB_MASTER:" in main_source
+    assert "render_tab_master()" in main_source
+
+
+def test_nav_radio_style_uses_neutral_blue_not_red_or_primary_button():
+    source = (ROOT / "app.py").read_text(encoding="utf-8")
+    radio_style_start = source.index('div[role="radiogroup"] label[data-baseweb="radio"]')
+    radio_style = source[radio_style_start:source.index("</style>", radio_style_start)]
+    nav_index = source.index("def render_main_tab_navigation")
+    main_index = source.index("def main():")
+    nav_source = source[nav_index:main_index]
+
+    assert "#2563EB" in radio_style
+    assert "#EFF6FF" in radio_style
+    assert "#BFDBFE" in radio_style
+    for red_token in ("#dc2626", "#ef4444", "#fca5a5", "#fef2f2", "danger", "primary"):
+        assert red_token not in radio_style.lower()
+        assert red_token not in nav_source.lower()
 
 
 def test_active_main_tab_helpers_default_and_reset_to_during_call():

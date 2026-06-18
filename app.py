@@ -798,6 +798,7 @@ MAIN_TAB_LABELS = {
     MAIN_TAB_MASTER: "マスタ管理",
 }
 MAIN_TAB_ORDER = [MAIN_TAB_DURING_CALL, MAIN_TAB_AFTER_CALL, MAIN_TAB_MASTER]
+MAIN_TAB_LABEL_TO_KEY = {label: tab_name for tab_name, label in MAIN_TAB_LABELS.items()}
 
 
 def set_active_main_tab(session_state, tab_name: str) -> str:
@@ -7639,6 +7640,23 @@ button[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
     color: #475569;
     background-color: #F8FAFC;
 }
+div[role="radiogroup"] label[data-baseweb="radio"] {
+    border: 1px solid #D0D5DD;
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin-right: 6px;
+    background-color: white;
+    color: #475569;
+}
+div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
+    border-color: #BFDBFE;
+    background-color: #EFF6FF;
+    color: #2563EB;
+    font-weight: 700;
+}
+div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) * {
+    color: #2563EB !important;
+}
 </style>
 """, unsafe_allow_html=True)
     st.markdown("""
@@ -11255,17 +11273,20 @@ def render_tab_master():
 # ============================================================
 def render_main_tab_navigation() -> str:
     active_tab = get_active_main_tab(st.session_state)
-    cols = st.columns(len(MAIN_TAB_ORDER), gap="small")
-    for idx, tab_name in enumerate(MAIN_TAB_ORDER):
-        with cols[idx]:
-            if st.button(
-                MAIN_TAB_LABELS[tab_name],
-                key=f"main_tab_nav_{tab_name}",
-                type="primary" if tab_name == active_tab else "secondary",
-                use_container_width=True,
-            ):
-                active_tab = set_active_main_tab(st.session_state, tab_name)
-    return active_tab
+    labels = [MAIN_TAB_LABELS[tab_name] for tab_name in MAIN_TAB_ORDER]
+    current_label = MAIN_TAB_LABELS.get(active_tab, MAIN_TAB_LABELS[MAIN_TAB_DURING_CALL])
+    selected_label = st.radio(
+        "画面切替",
+        labels,
+        index=labels.index(current_label),
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"main_tab_radio_{active_tab}",
+    )
+    return set_active_main_tab(
+        st.session_state,
+        MAIN_TAB_LABEL_TO_KEY.get(selected_label, MAIN_TAB_DURING_CALL),
+    )
 
 
 def main():
