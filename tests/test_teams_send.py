@@ -3224,6 +3224,7 @@ def test_send_teams_message_uses_chat_id_and_message_file_arguments(monkeypatch,
         assert args[6:9] == ["-ChatId", "chat-456", "-MessageFile"]
         assert Path(args[9]).read_text(encoding="utf-8") == "hello teams"
         assert env["WRT_TEAMS_DEBUG_LOG_PATH"] == app.TEAMS_SEND_DEBUG_LOG_PATH
+        assert env["WRT_TEAMS_PERF_LOG_PATH"] == app.TEAMS_SEND_PERF_LOG_PATH
         assert env["WRT_TEAMS_DEBUG_DESTINATION_KEY"] == "self_test"
         assert env["WRT_TEAMS_DEBUG_DESTINATION_LABEL"] == "自分宛てテスト"
         return SimpleNamespace(returncode=0, stdout="SUCCESS message-001\n", stderr="")
@@ -3360,6 +3361,47 @@ def test_send_teams_message_script_writes_timing_debug_log_without_stdout_noise(
     assert "Write-Output" not in debug_function
     assert "$messageBody" not in debug_function
     assert "$ChatId" not in debug_function
+
+
+def test_send_teams_message_script_writes_perf_log_phases_without_payload():
+    source = (ROOT / "scripts" / "send_teams_message.ps1").read_text(encoding="utf-8")
+
+    for phase in [
+        "ps_script_start",
+        "config_read",
+        "module_import",
+        "graph_context_check",
+        "graph_connect",
+        "message_file_read",
+        "graph_send",
+        "ps_script_end",
+    ]:
+        assert phase in source
+
+    for column in [
+        "timestamp",
+        "phase",
+        "elapsed_ms",
+        "cumulative_ms",
+        "result",
+        "error_message",
+    ]:
+        assert column in source
+
+    assert "WRT_TEAMS_PERF_LOG_PATH" in source
+    assert "Start-TeamsPerfPhase" in source
+    assert "End-TeamsPerfPhase" in source
+    assert "Performance logging must never affect Teams sending" in source
+    assert 'Write-Output ("SUCCESS " + $message.Id)' in source
+    assert 'Write-Output ("ERROR " + $_.Exception.Message)' in source
+
+    perf_function = source[
+        source.index("function Write-TeamsPerfLog"):
+        source.index("function Start-TeamsPerfPhase")
+    ]
+    assert "Write-Output" not in perf_function
+    assert "$messageBody" not in perf_function
+    assert "$ChatId" not in perf_function
 
 
 def test_teams_send_log_includes_preview(monkeypatch):

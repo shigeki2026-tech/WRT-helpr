@@ -30,6 +30,7 @@ LOCAL_USER_SETTINGS_PATH = os.path.join(APP_DIR, "config", "local_user_settings.
 TEAMS_SEND_SCRIPT_PATH = os.path.join(APP_DIR, "scripts", "send_teams_message.ps1")
 TEAMS_SEND_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_log.csv")
 TEAMS_SEND_DEBUG_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_debug_log.csv")
+TEAMS_SEND_PERF_LOG_PATH = os.path.join(APP_DIR, "logs", "teams_send_perf_log.csv")
 DEFAULT_TEAMS_CONFIG = {
     "enabled": False,
     "chat_id": "",
@@ -3870,6 +3871,7 @@ def send_teams_message_via_powershell(message: str, chat_id_override: str = "",
 
         ps_env = os.environ.copy()
         ps_env["WRT_TEAMS_DEBUG_LOG_PATH"] = TEAMS_SEND_DEBUG_LOG_PATH
+        ps_env["WRT_TEAMS_PERF_LOG_PATH"] = TEAMS_SEND_PERF_LOG_PATH
         ps_env["WRT_TEAMS_DEBUG_DESTINATION_KEY"] = (destination_key or "").strip()
         ps_env["WRT_TEAMS_DEBUG_DESTINATION_LABEL"] = (destination_label or "").strip()
 
