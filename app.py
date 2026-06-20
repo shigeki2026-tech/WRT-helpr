@@ -8988,7 +8988,131 @@ def synced_text_area(label: str, current_value: str, key: str, **kwargs):
     return st.text_area(label, **input_kwargs)
 
 
+
+# >>> WRT_FIX_CASE_BASIC_WIDGET_SEED_DEF >>>
+def _case_basic_value_is_filled(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+def _case_basic_has_extracted_values(form: dict) -> bool:
+    if not isinstance(form, dict):
+        return False
+
+    fields = (
+        "prefecture",
+        "product",
+        "product_price",
+        "store_name",
+        "manufacturer",
+        "manufacturer_original",
+        "warranty_plan",
+    )
+    if any(_case_basic_value_is_filled(form.get(field)) for field in fields):
+        return True
+
+    return bool(form.get("product_items"))
+
+
+def _case_basic_widget_key_safe(field: str, revision, session_state=None) -> str:
+    try:
+        return case_basic_widget_key(field, revision, session_state=session_state)
+    except TypeError:
+        try:
+            return case_basic_widget_key(field, revision)
+        except Exception:
+            return f"case_basic_{field}_{revision}"
+    except Exception:
+        return f"case_basic_{field}_{revision}"
+
+
+def _case_basic_find_previous_call_line(session_state) -> str:
+    candidates = []
+
+    for key in ("call_selected_line", "selected_call_line", "current_call_line"):
+        value = session_state.get(key)
+        if _case_basic_value_is_filled(value):
+            candidates.append(str(value).strip())
+
+    widget_items = []
+    for key in session_state.keys():
+        key_text = str(key)
+        if not key_text.startswith("case_basic_call_line_"):
+            continue
+
+        suffix = key_text.rsplit("_", 1)[-1]
+        try:
+            order = int(suffix)
+        except ValueError:
+            order = -1
+
+        widget_items.append((order, key_text, session_state.get(key)))
+
+    for _, _, value in sorted(widget_items, reverse=True):
+        if _case_basic_value_is_filled(value):
+            candidates.append(str(value).strip())
+
+    for value in candidates:
+        if value:
+            return value
+
+    return ""
+
+
+def seed_case_basic_widgets_from_form(form: dict, session_state=None) -> None:
+    """Keep extracted case values visible when Streamlit widget keys rotate.
+
+    This intentionally does not overwrite non-empty widget values.
+    It only fills empty/missing current-revision widgets from non-empty form values.
+    """
+    if not isinstance(form, dict):
+        return
+
+    if session_state is None:
+        session_state = st.session_state
+
+    # Clipboard import can drop call_line while keeping the extracted case values.
+    # Restore call_line only when there is actual extracted case data, so clearing a case
+    # does not resurrect an old line.
+    if not _case_basic_value_is_filled(form.get("call_line")) and _case_basic_has_extracted_values(form):
+        previous_call_line = _case_basic_find_previous_call_line(session_state)
+        if previous_call_line:
+            form["call_line"] = previous_call_line
+
+    revision = session_state.get("case_basic_revision", 0)
+
+    fields = (
+        "call_line",
+        "appliance_category",
+        "prefecture",
+        "product",
+        "product_price",
+        "store_name",
+        "manufacturer",
+        "warranty_plan",
+    )
+
+    for field in fields:
+        value = form.get(field)
+        if not _case_basic_value_is_filled(value):
+            continue
+
+        key = _case_basic_widget_key_safe(field, revision, session_state=session_state)
+        current_widget_value = session_state.get(key)
+
+        if not _case_basic_value_is_filled(current_widget_value):
+            session_state[key] = value
+# <<< WRT_FIX_CASE_BASIC_WIDGET_SEED_DEF >>>
+
 def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_result: bool = True) -> dict:
+    # >>> WRT_FIX_CASE_BASIC_WIDGET_SEED_CALL >>>
+    seed_case_basic_widgets_from_form(form)
+    # <<< WRT_FIX_CASE_BASIC_WIDGET_SEED_CALL <<<
     st.markdown('<div class="wrt-compact-case-basic">', unsafe_allow_html=True)
     header_col, action_col = st.columns([2.2, 1])
     with header_col:
