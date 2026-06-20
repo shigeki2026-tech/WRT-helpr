@@ -3499,7 +3499,7 @@ def ensure_call_status_state(session_state) -> None:
 
 def reset_call_start_state(session_state) -> None:
     session_state["call_in_progress"] = False
-    session_state["call_selected_line"] = ""
+    # Keep selected call line until the case itself is cleared.
     session_state["call_line_change_mode"] = False
     session_state["call_audio_status"] = CALL_AUDIO_STATUS_NONE
     form = session_state.get("form")
@@ -3515,14 +3515,18 @@ def sync_call_line_selection_to_form_state(
     form: dict,
     session_state,
     call_line: str,
-    manual: bool = True,
+    manual: bool = False,
 ) -> dict:
     effective_line = normalize_call_line_for_display(call_line)
     form["call_line"] = effective_line
+
     if manual:
         form["manual_call_line"] = bool(effective_line)
-    if bool(session_state.get("call_in_progress")):
-        session_state["call_selected_line"] = effective_line
+
+    # The selected line is case UI state, not only active-call state.
+    # Keep the top "selected line" display aligned with the case basic editor.
+    session_state["call_selected_line"] = effective_line
+    session_state["call_line_change_mode"] = False
     session_state["form"] = form
     return form
 
