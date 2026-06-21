@@ -9966,10 +9966,14 @@ def render_tab_call():
 
         if "担当エスカ" in (vendor or "") or vendor_result.get("needs_escalation", False):  # UI v3
             esc = build_vendor_escalation_info(vendor, vendor_result)
+            vendor_contact = vendor_card.get("contact", "")
+            vendor_candidate_label = vendor or "未確定"
+            if vendor_contact and vendor_contact not in vendor_candidate_label:
+                vendor_candidate_label = f"{vendor_candidate_label}（{vendor_contact}）"
             drive_line = ""
             if request_folder.get("required"):
                 drive_line = (
-                    f'<div><strong>依頼書PDF格納先：</strong>'
+                    f'<div><strong>Drive格納先：</strong>'
                     f'<a href="{_ui_v3_escape(request_folder.get("url", ""))}" target="_blank">'
                     f'{_ui_v3_escape(request_folder.get("name", ""))} Google Drive を開く↗</a></div>'
                 )
@@ -9978,6 +9982,9 @@ def render_tab_call():
                     '<div style="background:#fff3cd;border:1px solid #f1c40f;'
                     'border-radius:8px;padding:14px 16px;color:#3b2f00;line-height:1.7;">'
                     f'<div style="font-weight:700;">{_ui_v3_escape(esc["title"])}</div>'
+                    f'<div><strong>修理拠点候補：</strong>{_ui_v3_escape(vendor_candidate_label)}</div>'
+                    '<div><strong>状態：</strong>終話後エスカ</div>'
+                    f'<div><strong>手配方法：</strong>{_ui_v3_escape(vendor_card.get("arrangement_method", "") or "担当確認")}</div>'
                     f'<div><strong>理由：</strong>{_ui_v3_escape(esc["reason"])}</div>'
                     f'<div><strong>次アクション：</strong>{_ui_v3_escape(esc["next_action"])}</div>'
                     f'{drive_line}'
@@ -9987,6 +9994,10 @@ def render_tab_call():
             )  # UI v3
         else:  # UI v3
             st.success(f"✅ 拠点確定：{vendor}\n\n{format_confirmed_vendor_block(vendor, vendor_card)}")  # UI v3
+            if request_folder.get("required"):
+                st.markdown(
+                    f"**Drive格納先：** [{request_folder.get('name', '')} Google Drive を開く]({request_folder.get('url', '')})"
+                )
 
         # UI改修: ゾーンD（詳細）は折りたたみ
         with st.expander("✅ 確認項目リスト", expanded=True):  # UI v3
