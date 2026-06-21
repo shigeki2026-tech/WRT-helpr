@@ -115,6 +115,7 @@ def test_product_item_selection_reflects_selected_product_and_preserves_case_fie
     assert len(form["product_items"]) == 10
     assert form["wrt_no"] == "W026700099999"
     assert form["store_name"] == "阪神支店"
+    assert form["model_number"] == ""
 
     ecocute = app.apply_product_item_to_form(form["product_items"][8], form)
     assert ecocute["product"] == "エコキュート"
@@ -132,6 +133,70 @@ def test_product_item_selection_reflects_selected_product_and_preserves_case_fie
     assert dishwasher["model_number"] == "QSS45RD7SD"
     assert dishwasher["wrt_no"] == "W026700099999"
     assert dishwasher["call_memo"] == "既存聴取内容"
+
+
+def test_apply_product_item_clears_previous_product_scoped_values():
+    form = app.empty_form()
+    form.update({
+        "call_line": "なかやしき",
+        "manual_call_line": True,
+        "store_name": "阪神支店",
+        "wrt_no": "W026700099999",
+        "customer_name": "山田太郎",
+        "phone_number": "090-1111-2222",
+        "address": "大阪府大阪市北区梅田1-1-1",
+        "prefecture": "大阪府",
+        "warranty_start_date": "2026/06/01",
+        "warranty_end_date": "2036/05/31",
+        "product": "エコキュート",
+        "product_original": "エコキュート",
+        "product_price": "100,000円",
+        "genre": "住宅設備",
+        "category": "エコキュート",
+        "series": "エコキュート",
+        "manufacturer": "コロナ",
+        "manufacturer_original": "コロナ",
+        "model_number": "CHP-46AY1",
+        "serial_number": "SERIAL-1",
+        "attached_plan_name": "給湯器【10年保証】",
+        "appliance_type": "住設",
+        "appliance_category": "住設（既築）",
+        "housing_phase": "既築",
+    })
+    next_item = {
+        "attached_plan_name": "システムキッチン【10年保証】",
+        "product_price": "0円",
+        "genre": "住宅設備",
+        "category": "システムキッチン",
+        "series": "ラクシーナ",
+        "manufacturer": "パナソニック",
+        "model_number": "",
+        "serial_number": "",
+        "product_original": "ラクシーナ",
+        "product": "システムキッチン",
+    }
+
+    merged = app.apply_product_item_to_form(next_item, form)
+
+    assert merged["product"] == "システムキッチン"
+    assert merged["product_original"] == "ラクシーナ"
+    assert merged["product_price"] == "0円"
+    assert merged["manufacturer"] == "パナソニック"
+    assert merged["manufacturer_original"] == "パナソニック"
+    assert merged["model_number"] == ""
+    assert merged["serial_number"] == ""
+    assert merged["attached_plan_name"] == "システムキッチン【10年保証】"
+    assert merged["appliance_type"] == "住設"
+    assert merged["call_line"] == "なかやしき"
+    assert merged["manual_call_line"] is True
+    assert merged["store_name"] == "阪神支店"
+    assert merged["wrt_no"] == "W026700099999"
+    assert merged["customer_name"] == "山田太郎"
+    assert merged["phone_number"] == "090-1111-2222"
+    assert merged["address"] == "大阪府大阪市北区梅田1-1-1"
+    assert merged["prefecture"] == "大阪府"
+    assert merged["warranty_start_date"] == "2026/06/01"
+    assert merged["warranty_end_date"] == "2036/05/31"
 
 
 def test_vendor_request_memo_appends_once_and_ignores_blank_store():

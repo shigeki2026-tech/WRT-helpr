@@ -5186,18 +5186,26 @@ def apply_product_item_to_form(product_item: dict, current_form: dict) -> dict:
     form = current_form.copy()
     if not product_item:
         return form
-    for field in ("product_price", "genre", "category", "series", "model_number", "serial_number"):
-        if product_item.get(field) != "":
-            form[field] = product_item.get(field, "")
+    for field in (
+        "product_price", "genre", "category", "series", "model_number",
+        "serial_number", "appliance_type", "appliance_category", "housing_phase",
+    ):
+        form[field] = product_item.get(field, "")
     form["attached_plan_name"] = product_item.get("attached_plan_name", "")
-    raw_product = product_item.get("product_original") or product_item.get("series") or product_item.get("category") or product_item.get("genre") or ""
+    raw_product = (
+        product_item.get("product_original") or product_item.get("series")
+        or product_item.get("category") or product_item.get("genre")
+        or product_item.get("product") or ""
+    )
     if raw_product:
         form["product_original"] = raw_product
         form["product"] = normalized_product_from_product_item(product_item)
+    else:
+        form["product_original"] = ""
+        form["product"] = ""
     raw_mfr = product_item.get("manufacturer", "")
-    if raw_mfr:
-        form["manufacturer_original"] = raw_mfr
-        form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
+    form["manufacturer_original"] = raw_mfr
+    form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr) if raw_mfr else ""
     form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
     form = apply_appliance_category_to_form(form)
     return form
@@ -8921,7 +8929,7 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
 
 def sync_case_basic_product_item_widgets(session_state, form: dict) -> None:
     fields = (
-        "product", "product_price", "manufacturer", "warranty_plan",
+        "appliance_category", "product", "product_price", "manufacturer", "warranty_plan",
     )
     synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
     revision = get_case_basic_revision(session_state)
