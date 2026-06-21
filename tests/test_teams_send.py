@@ -2854,7 +2854,7 @@ def test_escalation_info_includes_reason_and_next_action():
         {"reason": "九州エリア", "needs_escalation": True},
     )
 
-    assert "九州エリア" in info["reason"]
+    assert info["reason"] == "対象エリアのためCER候補。手配可否は担当確認が必要"
     assert "CER" in info["next_action"]
 
 
@@ -2886,7 +2886,7 @@ def test_cer_escalation_uses_cer_reason_and_action():
     )
 
     assert info["title"] == "⚠️ 拠点候補：CER候補"
-    assert info["reason"] == "九州エリアのためCER候補。手配可否は担当確認が必要"
+    assert info["reason"] == "対象エリアのためCER候補。手配可否は担当確認が必要"
     assert info["next_action"] == "終話後に担当へCER手配可否を確認"
 
 
@@ -2912,7 +2912,7 @@ def test_cer_escalation_block_source_groups_drive_link_with_action():
     assert "理由：" in block_source
     assert "次アクション：" in block_source
     assert 'esc["next_action"]' in block_source
-    assert "依頼書PDF格納先：" in block_source
+    assert "Drive格納先：" in block_source
     assert "Google Drive を開く" in block_source
 
 

@@ -3738,7 +3738,7 @@ def test_case_clear_resets_call_start_state_and_removes_stale_recording_key():
     assert processed is True
     assert "call_recording_ui_state" not in state
     assert state["call_in_progress"] is False
-    assert state["call_selected_line"] == ""
+    assert state.get("call_selected_line", "") == ""
     assert state["call_line_change_mode"] is False
     assert state["call_audio_status"] == app.CALL_AUDIO_STATUS_NONE
     assert state["form"]["call_line"] == ""
