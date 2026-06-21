@@ -978,6 +978,62 @@ def test_tc09_okinawa():
     check("TC09 修理拠点 → 宗建リノベーション",      d["vendor"], "宗建リノベーション")
 
 
+def test_vendor_candidate_region_fallbacks_before_cer_expansion():
+    cases = [
+        ("沖縄県", "", "宗建リノベーション"),
+        ("滋賀県", "洗濯機", "ユナイトサービス㈱"),
+        ("東京都", "洗濯機", "WRT修理センター"),
+        ("神奈川県", "洗濯機", "WRT修理センター"),
+        ("福岡県", "", "CER候補（担当確認）"),
+    ]
+
+    for prefecture, product, expected_vendor in cases:
+        form = make_form(prefecture=prefecture, product=product)
+        assert app.determine_vendor_candidate(form) == expected_vendor
+
+
+def test_vendor_decision_and_request_folder_regression_before_cer_expansion():
+    cases = [
+        ("沖縄県", "", "宗建リノベーション", None, False, ""),
+        ("滋賀県", "洗濯機", "ユナイトサービス㈱", None, False, ""),
+        ("東京都", "洗濯機", "WRT修理センター", False, True, "WRT修理受付センター"),
+        ("神奈川県", "洗濯機", "WRT修理センター", False, True, "WRT修理受付センター"),
+        ("福岡県", "", "CER候補（担当確認）", True, True, "CER"),
+    ]
+
+    for prefecture, product, expected_vendor, needs_escalation, folder_required, folder_name in cases:
+        decision = app.run_decision(make_form(prefecture=prefecture, product=product))
+        vendor_result = decision["vendor_result"]
+        vendor_card = app.build_vendor_candidate_card_info(decision["vendor"], vendor_result)
+        request_folder = vendor_card["request_folder"]
+
+        assert decision["vendor"] == expected_vendor
+        if needs_escalation is not None:
+            assert vendor_result["needs_escalation"] is needs_escalation
+            assert vendor_card["needs_escalation"] is needs_escalation
+        assert request_folder["required"] is folder_required
+        assert request_folder["name"] == folder_name
+
+        if expected_vendor == "CER候補（担当確認）":
+            assert vendor_card["arrangement_method"] == "依頼書PDF格納"
+            assert vendor_card["contact"] == "担当確認"
+            assert vendor_card["escalation"]
+            assert not (vendor_result.get("matched") and not vendor_result.get("needs_escalation"))
+
+
+def test_request_pdf_folder_info_regression_before_cer_expansion():
+    cer = app.get_request_pdf_folder_info("CER候補（担当確認）")
+    wrt = app.get_request_pdf_folder_info("WRT修理センター")
+    unite = app.get_request_pdf_folder_info("ユナイトサービス㈱")
+
+    assert cer["required"] is True
+    assert cer["name"] == "CER"
+    assert wrt["required"] is True
+    assert wrt["name"] == "WRT修理受付センター"
+    assert unite["required"] is False
+    assert unite["name"] == ""
+
+
 # ============================================================
 # TC10: ビックカメラ案件 → ソフマップ修理センター / 金額案内不可
 # ============================================================
