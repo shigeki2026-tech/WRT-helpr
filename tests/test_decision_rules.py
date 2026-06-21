@@ -978,13 +978,20 @@ def test_tc09_okinawa():
     check("TC09 修理拠点 → 宗建リノベーション",      d["vendor"], "宗建リノベーション")
 
 
-def test_vendor_candidate_region_fallbacks_before_cer_expansion():
+def test_vendor_candidate_region_fallbacks_include_chugoku_shikoku_cer():
     cases = [
         ("沖縄県", "", "宗建リノベーション"),
         ("滋賀県", "洗濯機", "ユナイトサービス㈱"),
         ("東京都", "洗濯機", "WRT修理センター"),
         ("神奈川県", "洗濯機", "WRT修理センター"),
         ("福岡県", "", "CER候補（担当確認）"),
+        ("岡山県", "", "CER候補（担当確認）"),
+        ("広島県", "", "CER候補（担当確認）"),
+        ("山口県", "", "CER候補（担当確認）"),
+        ("徳島県", "", "CER候補（担当確認）"),
+        ("香川県", "", "CER候補（担当確認）"),
+        ("愛媛県", "", "CER候補（担当確認）"),
+        ("高知県", "", "CER候補（担当確認）"),
     ]
 
     for prefecture, product, expected_vendor in cases:
@@ -992,13 +999,20 @@ def test_vendor_candidate_region_fallbacks_before_cer_expansion():
         assert app.determine_vendor_candidate(form) == expected_vendor
 
 
-def test_vendor_decision_and_request_folder_regression_before_cer_expansion():
+def test_vendor_decision_and_request_folder_regression_after_cer_expansion():
     cases = [
         ("沖縄県", "", "宗建リノベーション", None, False, ""),
         ("滋賀県", "洗濯機", "ユナイトサービス㈱", None, False, ""),
         ("東京都", "洗濯機", "WRT修理センター", False, True, "WRT修理受付センター"),
         ("神奈川県", "洗濯機", "WRT修理センター", False, True, "WRT修理受付センター"),
         ("福岡県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("岡山県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("広島県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("山口県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("徳島県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("香川県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("愛媛県", "", "CER候補（担当確認）", True, True, "CER"),
+        ("高知県", "", "CER候補（担当確認）", True, True, "CER"),
     ]
 
     for prefecture, product, expected_vendor, needs_escalation, folder_required, folder_name in cases:
@@ -1021,7 +1035,7 @@ def test_vendor_decision_and_request_folder_regression_before_cer_expansion():
             assert not (vendor_result.get("matched") and not vendor_result.get("needs_escalation"))
 
 
-def test_request_pdf_folder_info_regression_before_cer_expansion():
+def test_request_pdf_folder_info_regression_after_cer_expansion():
     cer = app.get_request_pdf_folder_info("CER候補（担当確認）")
     wrt = app.get_request_pdf_folder_info("WRT修理センター")
     unite = app.get_request_pdf_folder_info("ユナイトサービス㈱")
@@ -1032,6 +1046,17 @@ def test_request_pdf_folder_info_regression_before_cer_expansion():
     assert wrt["name"] == "WRT修理受付センター"
     assert unite["required"] is False
     assert unite["name"] == ""
+
+
+def test_cer_escalation_reason_uses_target_area_after_expansion():
+    info = app.build_vendor_escalation_info(
+        "CER候補（担当確認）",
+        {"needs_escalation": True, "reason": "中国エリア"},
+    )
+
+    assert info["title"] == "⚠️ 拠点候補：CER候補"
+    assert info["reason"] == "対象エリアのためCER候補。手配可否は担当確認が必要"
+    assert info["next_action"] == "終話後に担当へCER手配可否を確認"
 
 
 # ============================================================
