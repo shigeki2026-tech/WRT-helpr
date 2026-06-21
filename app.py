@@ -180,90 +180,27 @@ def diagnostic_field_links(field_names: list) -> list:
     return [field_link(field_name) for field_name in field_names]
 
 
-def render_copy_button(label: str, text: str, key: str):
-    """Render a browser-side clipboard copy button for editable text."""
-    text_json = json.dumps(text or "", ensure_ascii=False)
-    label_json = json.dumps(label, ensure_ascii=False)
-    key_json = json.dumps(key, ensure_ascii=False)
-    st.components.v1.html(
-        f"""
-<div id="copy-root"></div>
-<script>
-const copyText = {text_json};
-const copyLabel = {label_json};
-const copyKey = {key_json};
-const root = document.getElementById("copy-root");
-root.innerHTML = "";
+def render_copy_button(label: str, text: str, key: str, target_widget_key: str = "",
+                       sanitizer=None) -> None:
+    """Copy the latest Streamlit widget value after button click syncs state."""
+    if not _PYPERCLIP_AVAILABLE:
+        st.button(label, key=key, disabled=True)
+        st.caption("クリップボード操作が使えません。")
+        return
 
-const button = document.createElement("button");
-button.type = "button";
-button.textContent = copyLabel;
-button.disabled = !copyText;
-button.setAttribute("data-copy-key", copyKey);
-button.style.cssText = [
-  "border:1px solid #d0d7de",
-  "border-radius:6px",
-  "background:#ffffff",
-  "color:#24292f",
-  "padding:0.42rem 0.75rem",
-  "font-size:0.92rem",
-  "line-height:1.2",
-  "cursor:pointer"
-].join(";");
-if (!copyText) {{
-  button.style.opacity = "0.55";
-  button.style.cursor = "not-allowed";
-}}
-
-const status = document.createElement("span");
-status.style.cssText = "margin-left:0.6rem;font-size:0.82rem;color:#57606a;";
-status.textContent = copyText ? "" : "コピー対象がありません";
-
-function fallbackCopy(value) {{
-  const area = document.createElement("textarea");
-  area.value = value;
-  area.setAttribute("readonly", "");
-  area.style.position = "fixed";
-  area.style.top = "-1000px";
-  area.style.left = "-1000px";
-  document.body.appendChild(area);
-  area.focus();
-  area.select();
-  const ok = document.execCommand("copy");
-  document.body.removeChild(area);
-  if (!ok) {{
-    throw new Error("copy command failed");
-  }}
-}}
-
-button.addEventListener("click", async () => {{
-  if (!copyText) {{
-    status.textContent = "コピー対象がありません";
-    return;
-  }}
-  try {{
-    if (navigator.clipboard && window.isSecureContext) {{
-      await navigator.clipboard.writeText(copyText);
-    }} else {{
-      fallbackCopy(copyText);
-    }}
-    status.textContent = "コピーしました";
-  }} catch (error) {{
-    try {{
-      fallbackCopy(copyText);
-      status.textContent = "コピーしました";
-    }} catch (fallbackError) {{
-      status.textContent = "コピーに失敗しました";
-    }}
-  }}
-}});
-
-root.appendChild(button);
-root.appendChild(status);
-</script>
-        """,
-        height=42,
-    )
+    if st.button(label, key=key, disabled=not bool(text or st.session_state.get(target_widget_key, ""))):
+        copy_text = st.session_state.get(target_widget_key, text) if target_widget_key else text
+        if sanitizer:
+            copy_text = sanitizer(copy_text)
+        copy_text = str(copy_text or "")
+        if not copy_text:
+            st.warning("コピー対象がありません。")
+            return
+        try:
+            pyperclip.copy(copy_text)
+            st.success("コピーしました。")
+        except Exception as e:
+            st.warning(f"コピーに失敗しました（{e}）。")
 
 
 def sort_diagnostic_items(items: list) -> list:
@@ -8323,13 +8260,14 @@ def render_wrs_handover_transfer_text(form: dict, wrs_action: dict | None) -> No
     if not transfer_text:
         return
     st.markdown("##### WRS引き継ぎ表 転記用")
+    transfer_widget_key = f"wrs_handover_transfer_{stable_hash_text(transfer_text, 12)}"
     st.text_area(
         "WRS引き継ぎ表 転記用",
         transfer_text,
         height=190,
-        key=f"wrs_handover_transfer_{stable_hash_text(transfer_text, 12)}",
+        key=transfer_widget_key,
     )
-    render_copy_button("📋 コピー", transfer_text, "copy_wrs_handover_transfer")
+    render_copy_button("📋 コピー", transfer_text, "copy_wrs_handover_transfer", target_widget_key=transfer_widget_key)
 
 
 def wrs_handover_call_summary_lines(wrs_action: dict | None) -> list[str]:
@@ -10409,7 +10347,13 @@ def render_tab_after_call():
                 st.session_state["_pending_regenerate_attention_memo"] = True
                 st.rerun()
         with memo_button_cols[2]:
-            render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")
+            render_copy_button(
+                "コピー",
+                sanitize_generated_body_text(form["attention_memo"]),
+                "copy_attention_memo",
+                target_widget_key=memo_widget_key,
+                sanitizer=sanitize_generated_body_text,
+            )
 
     with memo_action_col:
         st.markdown("##### 手配情報")
@@ -10605,7 +10549,12 @@ def render_tab_after_call():
                 st.session_state["_pending_regenerate_rakutel_text"] = True
                 st.rerun()
         with rakutel_button_cols[2]:
-            render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")
+            render_copy_button(
+                "コピー",
+                st.session_state["rakutel_text_current"],
+                "copy_rakutel_text",
+                target_widget_key="rakutel_text_widget",
+            )
 
     # ── Teams報告文 ──
     st.markdown("##### 💬 Teams報告文")
@@ -10666,7 +10615,12 @@ def render_tab_after_call():
                 st.session_state["_pending_regenerate_teams_chat_message"] = True
                 st.rerun()
         with teams_button_cols[2]:
-            render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")
+            render_copy_button(
+                "コピー",
+                st.session_state["teams_chat_message_current"],
+                "copy_teams_chat_message",
+                target_widget_key="teams_chat_message_widget",
+            )
     st.session_state.form = form
 
     with teams_action_col:
@@ -10937,7 +10891,12 @@ def render_tab_after_call():
             args=("history_after_current", "history_after_widget"),
         )
         st.session_state["history_after_current"] = history_display or history_value
-        render_copy_button("📋 コピー", st.session_state["history_after_current"], "copy_history_after_template")
+        render_copy_button(
+            "📋 コピー",
+            st.session_state["history_after_current"],
+            "copy_history_after_template",
+            target_widget_key="history_after_widget",
+        )
 
 
 # ============================================================

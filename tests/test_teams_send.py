@@ -398,7 +398,8 @@ def test_after_call_history_template_is_collapsed_as_legacy_format():
     assert 'st.expander("対応履歴テンプレ（旧形式・必要時のみ）", expanded=False)' in after_source
     assert "通常はラクテル用テキストまたはTeams報告文を使用してください。" in after_source
     assert "旧形式の履歴貼付が必要な場合のみ使用します。" in after_source
-    assert after_source.index('render_copy_button("📋 コピー", st.session_state["history_after_current"], "copy_history_after_template")') > history_index
+    assert after_source.index("copy_history_after_template") > history_index
+    assert 'target_widget_key="history_after_widget"' in after_source
 
 
 def test_after_call_contact_method_table_avoids_nested_expander():
@@ -4026,7 +4027,8 @@ def test_repair_request_memo_sanitizes_stale_body_emoji_for_display_and_copy():
     assert 'key=memo_widget_key' in memo_area
     assert '"memo_after_widget"' in after_source
     assert 'form["attention_memo"] = sanitize_generated_body_text(memo_display)' in memo_area
-    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
+    assert "copy_attention_memo" in after_source
+    assert "target_widget_key=memo_widget_key" in after_source
 
 
 def test_unite_vendor_summary_uses_handoff_table_mail_and_contact():
@@ -4081,7 +4083,8 @@ def test_after_call_display_uses_repair_request_memo_not_attention_memo():
     assert "##### 📝 修理依頼書メモ" in after_source
     assert "修理依頼書メモ 操作" not in after_source
     assert 'key="regenerate_attention_memo"' in after_source
-    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in after_source
+    assert "copy_attention_memo" in after_source
+    assert "target_widget_key=memo_widget_key" in after_source
 
 
 def test_contact_phone_input_is_inside_rakutel_section_only():
@@ -4171,12 +4174,11 @@ def test_render_copy_button_helper_exists():
     helper_index = source.index("def render_copy_button")
     helper_source = source[helper_index:source.index("def sort_diagnostic_items", helper_index)]
 
-    assert "st.components.v1.html" in helper_source
+    assert "st.components.v1.html" not in helper_source
     assert "st.iframe" not in helper_source
-    assert "json.dumps(text or \"\", ensure_ascii=False)" in helper_source
-    assert "navigator.clipboard.writeText(copyText)" in helper_source
-    assert 'document.createElement("textarea")' in helper_source
-    assert "document.execCommand(\"copy\")" in helper_source
+    assert "target_widget_key" in helper_source
+    assert "st.session_state.get(target_widget_key, text)" in helper_source
+    assert "pyperclip.copy(copy_text)" in helper_source
     assert "コピーしました" in helper_source
     assert "コピー対象がありません" in helper_source
 
@@ -4211,14 +4213,17 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "st.code(" not in memo_area
     assert "use_container_width=True" not in memo_area
     assert "コピー用：修理依頼書メモ" not in memo_area
-    assert 'render_copy_button("コピー", sanitize_generated_body_text(form["attention_memo"]), "copy_attention_memo")' in memo_and_snippet_area
+    assert "copy_attention_memo" in memo_and_snippet_area
+    assert "target_widget_key=memo_widget_key" in memo_and_snippet_area
+    assert "sanitizer=sanitize_generated_body_text" in memo_and_snippet_area
     assert memo_and_snippet_area.index('form["attention_memo"] = sanitize_generated_body_text(memo_display)') < memo_and_snippet_area.index("copy_attention_memo")
     assert memo_and_snippet_area.index("copy_attention_memo") < memo_and_snippet_area.index("##### 定型文追記")
 
     assert "st.code(" not in rakutel_area
     assert "use_container_width=True" not in rakutel_area
     assert "コピー用：ラクテル用テキスト" not in rakutel_area
-    assert 'render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")' in rakutel_area
+    assert "copy_rakutel_text" in rakutel_area
+    assert 'target_widget_key="rakutel_text_widget"' in rakutel_area
     assert rakutel_area.index('form["rakutel_text"] = rakutel_text_display') < rakutel_area.index("copy_rakutel_text")
 
     assert "st.code(" not in teams_text_area
@@ -4227,7 +4232,8 @@ def test_after_call_copy_buttons_exist_under_each_text_area():
     assert "height=160" in teams_text_area
     assert "送信内容プレビュー：" not in teams_area
     assert "送信文プレビュー" not in teams_area
-    assert 'render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")' in teams_area
+    assert "copy_teams_chat_message" in teams_area
+    assert 'target_widget_key="teams_chat_message_widget"' in teams_area
     assert teams_area.index('form["teams_chat_message"] = teams_chat_message') < teams_area.index("copy_teams_chat_message")
 
 
@@ -4238,7 +4244,8 @@ def test_teams_copy_button_uses_plain_text_without_drive_url_source():
     copy_end_index = source.index("st.session_state.form = form", teams_copy_index)
     teams_copy_area = source[teams_copy_index:copy_end_index]
 
-    assert 'render_copy_button("コピー", st.session_state["teams_chat_message_current"], "copy_teams_chat_message")' in teams_copy_area
+    assert "copy_teams_chat_message" in teams_copy_area
+    assert 'target_widget_key="teams_chat_message_widget"' in teams_copy_area
     assert "_get_teams_send_body" not in teams_copy_area
     assert "teams_plain_text_to_html" not in teams_copy_area
     assert "<b>" not in teams_copy_area
@@ -4260,7 +4267,8 @@ def test_rakutel_text_area_copy_uses_current_text_state():
     assert '"rakutel_text_current"' in rakutel_area
     assert 'key="rakutel_text_widget"' in rakutel_area
     assert 'on_change=sync_editable_text_current' in rakutel_area
-    assert 'render_copy_button("コピー", st.session_state["rakutel_text_current"], "copy_rakutel_text")' in rakutel_area
+    assert "copy_rakutel_text" in rakutel_area
+    assert 'target_widget_key="rakutel_text_widget"' in rakutel_area
     assert 'form["rakutel_text"] = replace_editable_text_current(' in after_source
 
 

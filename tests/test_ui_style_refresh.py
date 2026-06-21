@@ -163,7 +163,8 @@ def test_wrs_handover_simple_display_and_transfer_remain():
     assert "WRS引き継ぎ：なし" in source
     assert "def render_wrs_handover_transfer_text" in source
     assert "##### WRS引き継ぎ表 転記用" in source
-    assert 'render_copy_button("📋 コピー", transfer_text, "copy_wrs_handover_transfer")' in source
+    assert "copy_wrs_handover_transfer" in source
+    assert "target_widget_key=transfer_widget_key" in source
 
 
 def test_generated_message_builders_do_not_depend_on_ui_style_cards():
