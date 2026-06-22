@@ -13,6 +13,17 @@ sys.modules["streamlit"] = _st_mock
 import app  # noqa: E402
 
 
+class SessionState(dict):
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
 AI_KOUMUTEN_MULTI_PRODUCT_TEXT = """■プラン詳細
 販売店情報
 運営会社	株式会社アイ工務店	販売店	阪神支店
@@ -197,6 +208,74 @@ def test_apply_product_item_clears_previous_product_scoped_values():
     assert merged["prefecture"] == "大阪府"
     assert merged["warranty_start_date"] == "2026/06/01"
     assert merged["warranty_end_date"] == "2036/05/31"
+
+
+def test_selecting_toilet_faucet_product_item_does_not_keep_toilet_seat_widget_value():
+    form = app.empty_form()
+    form.update({
+        "product": "多機能便座",
+        "product_original": "多機能便座",
+        "manufacturer": "その他・要確認",
+        "manufacturer_original": "LIXIL",
+        "warranty_start_date": "2026/01/01",
+        "warranty_end_date": "2036/12/31",
+        "product_items": [
+            {
+                "attached_plan_name": "多機能便座【10年保証】",
+                "product_price": "0円",
+                "genre": "住宅設備",
+                "category": "多機能便座",
+                "series": "多機能便座",
+                "manufacturer": "LIXIL",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "多機能便座",
+                "product": "多機能便座",
+            },
+            {
+                "attached_plan_name": "トイレ水栓【10年保証】",
+                "product_price": "0円",
+                "genre": "住宅設備",
+                "category": "トイレ水栓",
+                "series": "トイレ水栓",
+                "manufacturer": "国内メーカー",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "トイレ水栓",
+                "product": "その他・要確認",
+            },
+        ],
+        "selected_product_item_index": 0,
+    })
+    revision = 0
+    product_key = app.case_basic_widget_key("product", revision)
+    manufacturer_key = app.case_basic_widget_key("manufacturer", revision)
+    price_key = app.case_basic_widget_key("product_price", revision)
+    state = SessionState({
+        "case_basic_revision": revision,
+        product_key: "多機能便座",
+        manufacturer_key: "その他・要確認",
+        price_key: "0",
+        "_case_basic_widget_synced_values": {
+            product_key: "多機能便座",
+            manufacturer_key: "その他・要確認",
+            price_key: "0",
+        },
+    })
+
+    selected = app.apply_product_item_to_form(form["product_items"][1], form)
+    selected["selected_product_item_index"] = 1
+    app.sync_case_basic_product_item_widgets(state, selected)
+    synced = app.sync_global_case_basic_widget_state(selected, state)
+    decision = app.run_decision(synced)
+
+    assert selected["product_original"] == "トイレ水栓"
+    assert selected["product"] != "多機能便座"
+    assert selected["manufacturer_original"] == "国内メーカー"
+    assert synced["product"] != "多機能便座"
+    assert state[product_key] == synced["product"]
+    assert decision["normalized_product"] == "トイレ水栓"
+    assert "ビルトイン" not in decision["repair_result"].get("reason", "")
 
 
 def test_vendor_request_memo_appends_once_and_ignores_blank_store():

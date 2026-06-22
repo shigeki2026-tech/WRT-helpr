@@ -5182,6 +5182,12 @@ def extract_prefecture(address: str) -> str:
 
 def normalize_product(series: str, product: str = "") -> str:
     """既存ロジックフォールバック。CSVエイリアスにヒットしない場合に使う。"""
+    source_text = " ".join([series or "", product or ""]).strip()
+    if "水栓" in source_text and not any(
+        keyword in source_text
+        for keyword in ("温水便座", "温水洗浄便座", "多機能便座", "シャワートイレ", "ウォシュレット")
+    ):
+        return series or product or ""
     mapping = {
         "ドライヤー・ヘアアイロン": "ドライヤー", "ドライヤー": "ドライヤー",
         "ヘアアイロン": "ドライヤー", "洗濯機": "洗濯機", "冷蔵庫": "冷蔵庫",
@@ -8968,7 +8974,11 @@ def render_product_item_selector(form: dict, revision: int) -> dict:
         form["selected_product_item_index"] = next_index
         form = apply_product_item_to_form(product_items[next_index], form)
         st.session_state.form = form
+        revision = bump_case_basic_revision(st.session_state)
+        new_key = f"case_basic_target_product_item_{revision}"
+        st.session_state[new_key] = options[next_index]
         sync_case_basic_product_item_widgets(st.session_state, form)
+        st.rerun()
     return form
 
 
