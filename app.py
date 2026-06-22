@@ -8492,7 +8492,13 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
         if widget_key in session_state:
             widget_value = session_state.get(widget_key, "")
             last_value = last_synced.get(widget_key)
-            if field == "product_price" and not form_value and widget_value:
+            if (
+                field == "product_price"
+                and not form_value
+                and widget_value
+                and last_value is not None
+                and widget_value == last_value
+            ):
                 session_state[widget_key] = ""
                 widget_value = ""
             if widget_value == widget_form_value:

@@ -2563,6 +2563,24 @@ def test_global_case_basic_blank_form_clears_stale_product_price_widget():
     assert state[price_key] == ""
 
 
+def test_global_case_basic_manual_product_price_edit_updates_blank_form():
+    form = app.empty_form()
+    revision = 0
+    price_key = app.case_basic_widget_key("product_price", revision)
+    state = SessionState({
+        "case_basic_revision": revision,
+        price_key: "0",
+        "_case_basic_widget_synced_values": {
+            price_key: "",
+        },
+    })
+
+    synced = app.sync_global_case_basic_widget_state(form, state)
+
+    assert synced["product_price"] == "0"
+    assert state[price_key] == "0"
+
+
 def test_global_case_basic_manual_widget_edit_updates_form():
     form = app.empty_form()
     form["product"] = "洗濯機"
