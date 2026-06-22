@@ -5776,6 +5776,14 @@ def _nakayashiki_vendor_result(form: dict, warranty_result: dict | None = None) 
     }
 
 
+def _is_vendor_no7_fallback_row(row) -> bool:
+    return (
+        (row.get("area_group") or "").strip() == "全国"
+        and (row.get("repair_type") or "").strip() == "出張修理"
+        and "依頼先一覧 No.7" in (row.get("reason") or "")
+    )
+
+
 def determine_vendor_from_rules(form: dict, repair_type: str, warranty_result: dict | None = None) -> dict:
     """
     master_vendor_rules.csv を使って修理拠点候補を判定する。
@@ -5803,6 +5811,7 @@ def determine_vendor_from_rules(form: dict, repair_type: str, warranty_result: d
         return nakayashiki_result
 
     if not df.empty:
+        no7_fallback_result = None
         for _, row in df.iterrows():
             cl   = (row.get("call_line") or "").strip()
             pref = (row.get("prefecture") or "").strip()
@@ -5839,7 +5848,7 @@ def determine_vendor_from_rules(form: dict, repair_type: str, warranty_result: d
             if io10 == "1" and not form_over:                  continue
             if io10 == "0" and form_over:                      continue
 
-            return {
+            matched_result = {
                 "matched":          True,
                 "vendor_name":      (row.get("vendor_name") or "担当エスカ（要確認）").strip(),
                 "reason":           (row.get("reason") or "").strip(),
@@ -5850,6 +5859,25 @@ def determine_vendor_from_rules(form: dict, repair_type: str, warranty_result: d
                 "csv_name":         "master_vendor_rules.csv",
                 "notes":            (row.get("notes") or "").strip(),
             }
+            if _is_vendor_no7_fallback_row(row):
+                no7_fallback_result = matched_result
+                continue
+            return matched_result
+
+        candidate = determine_vendor_candidate(form)
+        if candidate and "担当エスカ" not in candidate and "要確認" not in candidate:
+            return {
+                "matched": False,
+                "vendor_name": candidate,
+                "reason": "対象エリアのためCER候補" if "CER候補" in candidate else "",
+                "needs_escalation": "CER候補" in candidate,
+                "keyword": prefecture,
+                "priority": None,
+                "csv_name": "",
+                "notes": "No.7 fallback より前に既存フォールバック特殊ルールを優先",
+            }
+        if no7_fallback_result is not None:
+            return no7_fallback_result
 
     return {
         "matched": False, "vendor_name": "担当エスカ（要確認）",
@@ -6939,6 +6967,7 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
         script_tag,
         repair_tag,
         cost_tag,
+        vendor_tag,
         handover_tag,
     ]
 
@@ -7500,7 +7529,7 @@ def run_decision(form: dict) -> dict:
         if "担当エスカ" in vendor or "要確認" in vendor:
             vendor_result["reason"] = vendor_result.get("vendor_missing_reason") or build_vendor_missing_reason(working_form, repair_type)
         else:
-            vendor_result["reason"] = ""
+            vendor_result["reason"] = vendor_result.get("reason", "") if "CER候補" in vendor else ""
             vendor_result["vendor_missing_reason"] = ""
     handover_requirement = determine_handover_requirement(
         working_form,

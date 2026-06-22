@@ -697,13 +697,15 @@ def test_initial_decision_tags_are_unjudged_with_missing_items():
     script_reference = app.build_script_reference_info(decision)
     tags = app.build_decision_tag_items(decision, form, script_reference)
 
-    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "確認中", "不要"]
+    assert [tag["primary"] for tag in tags] == ["未判定", "未判定", "未判定", "確認中", "未判定", "不要"]
     assert all(tag["color"] == app.TAG_COLOR_MISSING for tag in tags[:3])
     assert tags[3]["color"] == app.TAG_COLOR_WARNING
-    assert tags[4]["color"] == app.TAG_COLOR_NEUTRAL
+    assert tags[4]["color"] == app.TAG_COLOR_MISSING
+    assert tags[5]["color"] == app.TAG_COLOR_NEUTRAL
     assert "保証期間" in tags[0]["secondary"]
     assert "回線名" in tags[1]["secondary"]
     assert "製品" in tags[2]["secondary"]
+    assert "拠点対応" == tags[4]["title"]
 
 
 def test_decision_tags_confirm_only_when_required_information_is_present():
@@ -747,16 +749,16 @@ def test_repair_tag_shows_missing_manufacturer_and_model_when_needed():
     assert "型番" in printer_repair_tag["secondary"]
 
 
-def test_vendor_tag_is_not_in_upper_decision_tags_when_vendor_needs_area():
+def test_vendor_tag_is_in_upper_decision_tags_when_vendor_needs_area():
     form = make_form(product="エアコン", manufacturer="ダイキン", model_number="AN123", appliance_type="家電")
     decision = app.run_decision(form)
     tags = app.build_decision_tag_items(decision, form)
 
-    assert "拠点対応" not in [tag["title"] for tag in tags]
+    assert "拠点対応" in [tag["title"] for tag in tags]
     assert decision["vendor_result"]
 
 
-def test_confirmed_vendor_is_not_in_upper_decision_tags():
+def test_confirmed_vendor_is_in_upper_decision_tags():
     form = make_form(
         product="エアコン",
         manufacturer="ダイキン",
@@ -768,7 +770,7 @@ def test_confirmed_vendor_is_not_in_upper_decision_tags():
     decision = app.run_decision(form)
     tags = app.build_decision_tag_items(decision, form)
 
-    assert "拠点対応" not in [tag["title"] for tag in tags]
+    assert "拠点対応" in [tag["title"] for tag in tags]
     assert decision["vendor"]
 
 
@@ -1046,6 +1048,43 @@ def test_request_pdf_folder_info_regression_after_cer_expansion():
     assert wrt["name"] == "WRT修理受付センター"
     assert unite["required"] is False
     assert unite["name"] == ""
+
+
+def test_cer_expanded_area_visit_repair_wins_over_no7_fallback():
+    cases = ["岡山県", "広島県", "山口県", "徳島県", "香川県", "愛媛県", "高知県"]
+
+    for prefecture in cases:
+        decision = app.run_decision(make_form(
+            product="洗濯機",
+            manufacturer="パナソニック",
+            prefecture=prefecture,
+            appliance_type="家電",
+        ))
+        vendor_card = app.build_vendor_candidate_card_info(decision["vendor"], decision["vendor_result"])
+
+        assert decision["repair_type"] == "出張修理"
+        assert decision["vendor"] == "CER候補（担当確認）"
+        assert decision["vendor_result"]["needs_escalation"] is True
+        assert decision["vendor_result"]["reason"] == "対象エリアのためCER候補"
+        assert decision["vendor_result"]["reason"] != "依頼先一覧 No.7 上記以外・全国・全メーカー"
+        assert vendor_card["arrangement_method"] == "依頼書PDF格納"
+        assert vendor_card["request_folder"]["required"] is True
+        assert vendor_card["request_folder"]["name"] == "CER"
+        assert vendor_card["escalation"]["next_action"] == "終話後に担当へCER手配可否を確認"
+
+
+def test_no7_fallback_still_applies_outside_cer_target_area():
+    decision = app.run_decision(make_form(
+        product="システムキッチン",
+        manufacturer="パナソニック",
+        prefecture="滋賀県",
+        appliance_type="住設",
+    ))
+
+    assert decision["repair_type"] == "出張修理"
+    assert decision["vendor"] == "ユナイトサービス㈱"
+    assert decision["vendor_result"]["needs_escalation"] is False
+    assert decision["vendor_result"]["reason"] == "依頼先一覧 No.7 上記以外・全国・全メーカー"
 
 
 def test_cer_escalation_reason_uses_target_area_after_expansion():
@@ -2539,7 +2578,7 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
     check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
     check("AI工務店 cost tag primary", cost_tag["primary"], "5,000円～7,000円前後")
-    assert "拠点対応" not in [tag["title"] for tag in tags]
+    assert "拠点対応" in [tag["title"] for tag in tags]
     check("AI工務店 script tag primary", script_tag["primary"], "参照スクリプト")
     check("AI工務店 script tag matches reference", script_tag["secondary"], script_reference["display"])
     assert "ユナイトサービス㈱へFAX済み" not in teams_message
@@ -3778,7 +3817,7 @@ def test_decision_tags_are_split_structured_items():
     d = app.run_decision(form)
     tags = app.build_decision_tag_items(d, form)
 
-    assert [tag["title"] for tag in tags] == ["受付可否", "参照スクリプト", "修理形態", "概算費用", "引継要否"]
+    assert [tag["title"] for tag in tags] == ["受付可否", "参照スクリプト", "修理形態", "概算費用", "拠点対応", "引継要否"]
     assert all(" / " not in tag["title"] for tag in tags)
     assert all(tag["primary"] for tag in tags)
     assert all(tag["secondary"] for tag in tags)
@@ -3796,7 +3835,7 @@ def test_decision_tags_handover_required_for_wrs_case():
     )
     form["operating_company"] = "株式会社アイ工務店"
     decision = app.run_decision(form)
-    tag = app.build_decision_tag_items(decision, form)[4]
+    tag = app.build_decision_tag_items(decision, form)[5]
 
     assert tag["title"] == "引継要否"
     assert tag["primary"] == "必要"
@@ -3814,7 +3853,7 @@ def test_decision_tags_handover_not_required_for_normal_case():
         warranty_plan="一般家電延長保証【5年】",
     )
     decision = app.run_decision(form)
-    tag = app.build_decision_tag_items(decision, form)[4]
+    tag = app.build_decision_tag_items(decision, form)[5]
 
     assert tag["title"] == "引継要否"
     assert tag["primary"] == "不要"
