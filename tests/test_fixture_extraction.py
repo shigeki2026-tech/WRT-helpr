@@ -55,6 +55,50 @@ def debug_payload(extracted: dict, form: dict, decision: dict) -> str:
     return f"extracted={extracted_part}\nform={form_part}\ndecision={decision_part}"
 
 
+def test_labeled_clipboard_case_basic_fields_reflect_and_decide_cer():
+    text = """回線名\t家電
+案件分類\t家電
+都道府県\t岡山県
+製品\t洗濯機
+メーカー\tパナソニック
+商品価格\t0円
+販売店\tテスト販売店
+保証プラン\t自然故障 10年保証
+保証開始日\t2026/01/01
+保証終了日\t2036/12/31
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    decision = app.run_decision(form)
+    vendor_card = app.build_vendor_candidate_card_info(decision["vendor"], decision["vendor_result"])
+    dbg = f"extracted={extracted}\nform={form}\ndecision={decision}\nvendor_card={vendor_card}"
+
+    assert extracted["call_line"] == "家電", dbg
+    assert extracted["appliance_category"] == "家電", dbg
+    assert extracted["prefecture"] == "岡山県", dbg
+    assert extracted["product"] == "洗濯機", dbg
+    assert extracted["manufacturer"] == "パナソニック", dbg
+    assert extracted["product_price"] == "0円", dbg
+    assert extracted["store_name"] == "テスト販売店", dbg
+    assert extracted["warranty_plan"] == "自然故障 10年保証", dbg
+
+    assert form["call_line"] == "家電", dbg
+    assert form["appliance_category"] == "家電", dbg
+    assert form["appliance_type"] == "家電", dbg
+    assert form["prefecture"] == "岡山県", dbg
+    assert form["product"] == "洗濯機", dbg
+    assert form["product_original"] == "洗濯機", dbg
+    assert form["manufacturer"] == "パナソニック", dbg
+    assert form["product_price"] == "0円", dbg
+    assert form["store_name"] == "テスト販売店", dbg
+    assert form["warranty_plan"] == "自然故障 10年保証", dbg
+
+    assert decision["repair_type"] == "出張修理", dbg
+    assert decision["vendor"] == "CER候補（担当確認）", dbg
+    assert decision["vendor_result"]["needs_escalation"] is True, dbg
+    assert vendor_card["request_folder"]["name"] == "CER", dbg
+
+
 def test_case_dryer_active():
     extracted, form, decision = run_fixture("case_dryer_active.txt")
 

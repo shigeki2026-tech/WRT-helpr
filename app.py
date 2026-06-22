@@ -4930,6 +4930,11 @@ def extract_fields_from_pasted_text(text: str) -> dict:
     result = {}
     date_pattern = r"([0-9]{4}[/-][0-9]{1,2}[/-][0-9]{1,2}|[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日)"
     field_specs = {
+        "call_line": (["回線名", "入電回線", "受付回線"], r"([^\t\n]+)"),
+        "appliance_category": (["案件分類", "案件種別", "家電/住設", "家電・住設"], r"([^\t\n]+)"),
+        "prefecture": (["都道府県"], r"([^\t\n]+)"),
+        "warranty_plan": (["保証プラン", "保証プラン名"], r"([^\t\n]+)"),
+        "product": (["製品", "対象製品"], r"([^\t\n]+)"),
         "operating_company": (["運営会社"], r"([^\t\n]+)"),
         "store_name": (["販売店", "店舗名", "購入店舗", "販売店名"], r"([^\t\n]+)"),
         "plan": (["プラン"], r"([^\t\n]+)"),
@@ -5257,7 +5262,9 @@ def parsed_case_field_value(extracted: dict, field: str):
 def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     """抽出結果をフォーム辞書にマッピングして返す。"""
     mapping = {
-        "plan": "warranty_plan", "warranty_start_date": "warranty_start_date",
+        "call_line": "call_line", "appliance_category": "appliance_category",
+        "plan": "warranty_plan", "warranty_plan": "warranty_plan",
+        "warranty_start_date": "warranty_start_date",
         "warranty_end_date": "warranty_end_date", "customer_code": "customer_code",
         "customer_name": "customer_name", "phone_number": "phone_number",
         "address": "address", "prefecture": "prefecture",
@@ -5281,6 +5288,16 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             if dst in ("warranty_start_date", "warranty_end_date"):
                 form[dst] = normalize_date_text(value) or value
                 continue
+            if dst == "call_line":
+                form[dst] = normalize_call_line_for_display(value)
+                continue
+            if dst == "appliance_category":
+                form[dst] = normalize_appliance_category(
+                    value,
+                    form.get("appliance_type", ""),
+                    form.get("housing_phase", ""),
+                )
+                continue
             form[dst] = value
     product_items = parsed_case_field_value(extracted, "product_items") or []
     if product_items:
@@ -5291,9 +5308,13 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         form["selected_product_item_index"] = selected_index
         form = apply_product_item_to_form(product_items[selected_index], form)
         form.update(locked_case_category_values)
+    raw_product = parsed_case_field_value(extracted, "product") or ""
     raw_series = parsed_case_field_value(extracted, "series") or ""
     if product_items:
         pass
+    elif raw_product:
+        form["product_original"] = raw_product
+        form["product"] = normalize_product_for_select(normalize_product(raw_product, ""))
     elif raw_series:
         form["product_original"] = raw_series
         form["product"] = normalize_product_for_select(normalize_product(raw_series, ""))
@@ -5316,7 +5337,13 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         )
     category_locked = any(field in locked_case_category_values for field in ("appliance_category", "housing_phase", "case_category"))
     genre = parsed_case_field_value(extracted, "genre") or ""
-    if (genre or parsed_case_field_value(extracted, "category") or parsed_case_field_value(extracted, "plan")) and not category_locked:
+    if (
+        genre
+        or parsed_case_field_value(extracted, "category")
+        or parsed_case_field_value(extracted, "appliance_category")
+        or parsed_case_field_value(extracted, "plan")
+        or parsed_case_field_value(extracted, "warranty_plan")
+    ) and not category_locked:
         form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
         form = apply_appliance_category_to_form(form)
     return form
