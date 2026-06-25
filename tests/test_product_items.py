@@ -278,6 +278,56 @@ def test_selecting_toilet_faucet_product_item_does_not_keep_toilet_seat_widget_v
     assert "ビルトイン" not in decision["repair_result"].get("reason", "")
 
 
+def test_selecting_system_bath_faucet_keeps_product_and_manufacturer_originals_separate():
+    form = app.empty_form()
+    form.update({
+        "product": "多機能便座",
+        "product_original": "多機能便座",
+        "manufacturer": "その他・要確認",
+        "manufacturer_original": "LIXIL",
+        "product_items": [
+            {
+                "attached_plan_name": "多機能便座【10年保証】",
+                "product_price": "0円",
+                "genre": "住宅設備",
+                "category": "多機能便座",
+                "series": "多機能便座",
+                "manufacturer": "LIXIL",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "多機能便座",
+                "product": "多機能便座",
+            },
+            {
+                "attached_plan_name": "システムバス混合水栓",
+                "product_price": "0円",
+                "genre": "住宅設備",
+                "category": "システムバス混合水栓",
+                "series": "水栓",
+                "manufacturer": "国内メーカー",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "国内メーカー",
+                "product": "その他・要確認",
+            },
+        ],
+        "selected_product_item_index": 0,
+    })
+
+    assert app.product_item_option_label(form["product_items"][1], 10) == "製品10: システムバス混合水栓 / 国内メーカー / 水栓"
+
+    selected = app.apply_product_item_to_form(form["product_items"][1], form)
+    selected["selected_product_item_index"] = 1
+    decision = app.run_decision(selected)
+    candidate = app.build_master_registration_candidate(selected, decision)
+
+    assert selected["product_original"] in ("システムバス混合水栓", "水栓")
+    assert selected["manufacturer_original"] == "国内メーカー"
+    assert selected["product"] != "多機能便座"
+    assert selected["product_original"] != "国内メーカー"
+    assert "水栓" in candidate["product_alias"]["keyword"]
+
+
 def test_vendor_request_memo_appends_once_and_ignores_blank_store():
     form = {"store_name": "阪神支店", "attention_memo": "既存メモ"}
 

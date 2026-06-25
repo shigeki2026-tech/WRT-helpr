@@ -4481,7 +4481,7 @@ def get_product_options() -> list:
     fallback = [
         "洗濯機", "冷蔵庫", "エアコン", "給湯器", "温水便座", "多機能便座",
         "温水洗浄便座", "シャワートイレ", "ウォシュレット", "IH",
-        "レンジフード", "食器洗い乾燥機", "ドライヤー", "パソコン",
+        "レンジフード", "食器洗い乾燥機", "水栓", "ドライヤー", "パソコン",
         "タブレット", "掃除機", "炊飯器", "トースター", "カーナビ",
         "ゲーム機", "Airdog", "テレビ", "プリンター", "サウンドバー",
         "プロジェクター", "ホームシアター", "腕時計",
@@ -5027,6 +5027,26 @@ def normalized_product_from_product_item(product_item: dict) -> str:
     return normalize_product_for_select(candidates[0] if candidates else "")
 
 
+def _product_item_product_original(product_item: dict) -> str:
+    manufacturer = _clean_product_item_value(product_item.get("manufacturer", ""))
+    candidates = [
+        product_item.get("product_original", ""),
+        product_item.get("series", ""),
+        product_item.get("category", ""),
+        product_item.get("genre", ""),
+        _product_name_from_plan(product_item.get("attached_plan_name", "")),
+        product_item.get("product", ""),
+    ]
+    for candidate in candidates:
+        value = _clean_product_item_value(candidate)
+        if not value or value == PRODUCT_OTHER:
+            continue
+        if manufacturer and value == manufacturer:
+            continue
+        return value
+    return ""
+
+
 def _product_item_has_detail(item: dict) -> bool:
     return any(_clean_product_item_value(item.get(field)) for field in (
         "product_price", "genre", "category", "series", "manufacturer",
@@ -5134,11 +5154,7 @@ def apply_product_item_to_form(product_item: dict, current_form: dict) -> dict:
     ):
         form[field] = product_item.get(field, "")
     form["attached_plan_name"] = product_item.get("attached_plan_name", "")
-    raw_product = (
-        product_item.get("product_original") or product_item.get("series")
-        or product_item.get("category") or product_item.get("genre")
-        or product_item.get("product") or ""
-    )
+    raw_product = _product_item_product_original(product_item)
     if raw_product:
         form["product_original"] = raw_product
         form["product"] = normalized_product_from_product_item(product_item)
