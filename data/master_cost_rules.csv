@@ -1,4 +1,4 @@
-priority,enabled,product_keyword,manufacturer_keyword,manufacturer_group,condition_keyword,repair_type,cost_estimate,can_announce_cost,needs_escalation,required_fields,cost_status,guidance_scope,required_questions,customer_notice,internal_note,notes
+﻿priority,enabled,product_keyword,manufacturer_keyword,manufacturer_group,condition_keyword,repair_type,cost_estimate,can_announce_cost,needs_escalation,required_fields,cost_status,guidance_scope,required_questions,customer_notice,internal_note,notes
 4,1,エアコン,ダイキン,,ガス漏れ,出張修理,"30,000円前後",可,0,,confirmed,eu_asked_only,,EUから質問があった場合のみ案内,ガス漏れ検査費用。EU質問時のみ案内。,ガス漏れ検査
 5,1,エアコン,ダイキン,,業務用,出張修理,"15,000円～22,000円前後",可,0,,confirmed,always,,,業務用エアコン専用,業務用エアコン
 10,1,エアコン,ダイキン,,家庭用,出張修理,"7,000円～16,000円前後",可,0,,confirmed,always,,,家庭用エアコン専用,家庭用エアコン
@@ -39,3 +39,5 @@ priority,enabled,product_keyword,manufacturer_keyword,manufacturer_group,conditi
 85,1,ヘッドホン,,,,持込修理,"2,000円～5,000円前後",可,0,,confirmed,always,,,,ヘッドホン持込修理
 90,1,,,,,出張修理,"5,000円～7,000円前後",可,0,,confirmed,always,,,,汎用出張修理
 90,1,,,,,持込修理,"2,000円～5,000円前後",可,0,,confirmed,always,,,,汎用持込修理
+18,1,水栓,クリンスイ,,,出張修理,未確定,不可,1,,unavailable,,クリンスイは概算費用も事前提示不可,,メーカー別注意点：2025年6月以降、修理完了後報告。概算費用も事前提示不可。,クリンスイ水栓は水栓汎用費用より優先
+88,1,水栓,,,,出張修理,"5,000円～7,000円前後",可,0,,confirmed,,,,保証対象外時費用（概算）：生活家電製品全般（出張修理）下記製品以外,水栓系汎用出張修理費用

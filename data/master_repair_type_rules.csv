@@ -1,4 +1,4 @@
-priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_keyword,repair_type,manufacturer_required,model_required,manual_required,needs_confirmation,notes,certainty,reason,memo_note,rakutel_repair_type_override,active
+﻿priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_keyword,repair_type,manufacturer_required,model_required,manual_required,needs_confirmation,notes,certainty,reason,memo_note,rakutel_repair_type_override,active
 1,1,BDレコーダー,東芝,,,持込修理,0,0,0,0,東芝は持込修理のみ,confirmed,東芝BDレコーダーは付録①で持込修理,,,1
 1,1,オーブンレンジ,ツインバード,,,持込修理,0,0,0,0,エリア表に準ずる。九州は要確認,confirmed,ツインバード製オーブンレンジは付録①で持込修理,,,1
 1,1,オーブンレンジ,バルミューダ,,,要確認,0,0,0,1,バルミューダのオーブンレンジは取説・過去履歴確認,needs_check,バルミューダのオーブンレンジは付録①で要確認,,,1
@@ -108,3 +108,4 @@ priority,enabled,product_keyword,manufacturer_keyword,model_keyword,condition_ke
 40,1,,山善,,,要確認,0,0,1,1,山善製品は取説の出張修理明記有無を確認,needs_check,山善製品は付録①で取説確認要,,,1
 40,1,腕時計,,,,要確認,0,0,0,1,腕時計ルール未登録 / 担当確認（腕時計はSV/担当確認）,needs_check,腕時計はSV/担当確認,,,1
 999,1,,,,,要確認,0,0,0,1,該当する修理形態ルールが未登録,needs_check,CSVに明確な出張/持込ルールがないため要確認,,,1
+24,1,水栓,,,,出張修理,,,,,水栓 / 混合水栓 / トイレ水栓 / システムバス混合水栓を包含,,保証対象外時費用／修理依頼先一覧：水栓系は住設出張修理,,,1

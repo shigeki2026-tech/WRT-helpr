@@ -1,4 +1,4 @@
-priority,enabled,call_line,prefecture,area_group,manufacturer_keyword,product_keyword,store_keyword,repair_type,is_over_10years,vendor_name,reason,needs_escalation,notes,contact_type
+﻿priority,enabled,call_line,prefecture,area_group,manufacturer_keyword,product_keyword,store_keyword,repair_type,is_over_10years,vendor_name,reason,needs_escalation,notes,contact_type
 10,1,ビックカメラ,,,,,,出張修理,,ソフマップ修理センター,ビックカメラ回線,0,,
 10,1,ソフマップ,,,,,,出張修理,,ソフマップ修理センター,ソフマップ回線,0,,
 20,1,,沖縄県,,,,,出張修理,,宗建リノベーション,沖縄,0,,
@@ -49,3 +49,5 @@ priority,enabled,call_line,prefecture,area_group,manufacturer_keyword,product_ke
 999,1,住設業務,,,,,,,0,ユナイトサービス㈱,賃貸その他10年未満,0,,
 999,1,住設業務,,,,,,,1,担当エスカ（要確認）,賃貸その他10年以上,1,,
 5,1,,,,,,電算システム,,,WRT修理センター（翌営業日折り返し）,電算システム回線,0,,callback
+870,1,,,全国,,水栓,,出張修理,1,クラシアン（交換）,既築／中古 水栓 10年以上,0,保証対象外時費用／修理依頼先一覧：水栓 10年以上はクラシアン（交換）,電話依頼
+880,1,,,全国,,水栓,,出張修理,0,ユナイトサービス㈱,既築／中古 水栓 10年以内・年数不明,0,保証対象外時費用／修理依頼先一覧：水栓 10年以内・年数不明はユナイト,
