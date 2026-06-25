@@ -2534,6 +2534,22 @@ def get_request_pdf_folder_info(vendor: str) -> dict:
     return {"required": False, "name": "", "url": ""}
 
 
+def request_pdf_folder_notice_lines(request_folder: dict | None) -> list[str]:
+    folder = request_folder or {}
+    if not folder.get("required"):
+        return []
+    folder_name = (folder.get("name") or "正規フォルダ").strip()
+    return [
+        f"マイドライブではなく、この{folder_name}正規フォルダへ格納してください。",
+        "Drive検索で見つかることと、正規フォルダ格納済みは別です。",
+        "PDF格納後に「依頼書PDF格納済み」をチェックしてください。",
+    ]
+
+
+def request_pdf_folder_notice_text(request_folder: dict | None) -> str:
+    return "\n".join(request_pdf_folder_notice_lines(request_folder))
+
+
 def build_vendor_escalation_info(vendor: str, vendor_result: dict | None = None,
                                  repair_result: dict | None = None,
                                  script_result: dict | None = None,
@@ -10328,6 +10344,9 @@ def render_tab_after_call():
                 st.markdown("###### Drive格納先リンク")
                 st.caption("依頼書PDF格納先：")
                 st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
+                request_folder_notice = request_pdf_folder_notice_text(request_folder)
+                if request_folder_notice:
+                    st.warning(f"注意：\n{request_folder_notice}")
 
             st.markdown("###### 手配方法・連絡先の詳細")
             with st.container():
@@ -10512,6 +10531,9 @@ def render_tab_after_call():
         if request_folder.get("required"):
             st.caption(f"依頼書PDF格納先：{request_folder['name']}")
             st.markdown(f"[{request_folder['name']} Google Drive を開く]({request_folder['url']})")
+            request_folder_notice = request_pdf_folder_notice_text(request_folder)
+            if request_folder_notice:
+                st.warning(f"注意：\n{request_folder_notice}")
         if selected_notes:
             st.caption(f"注意：{selected_notes}")
         if template_data_erase_required:
@@ -10748,8 +10770,14 @@ def render_tab_after_call():
 
     with teams_action_col:
         cer_request_folder = get_request_pdf_folder_info(vendor)
-        if cer_request_folder.get("required") and cer_request_folder.get("name") == "CER":
-            st.markdown(f"[CERドライブ：リンクを開く]({cer_request_folder.get('url', '')})")
+        if cer_request_folder.get("required"):
+            if cer_request_folder.get("name") == "CER":
+                st.markdown(f"[CERドライブ：リンクを開く]({cer_request_folder.get('url', '')})")
+            else:
+                st.markdown(f"[{cer_request_folder['name']} Google Drive を開く]({cer_request_folder.get('url', '')})")
+            request_folder_notice = request_pdf_folder_notice_text(cer_request_folder)
+            if request_folder_notice:
+                st.warning(f"注意：\n{request_folder_notice}")
         teams_config = load_teams_config()
         teams_send_mode = (teams_config.get("send_mode") or "").strip()
         destination_options = list(WARRANTY_REPORT_DESTINATION_LABELS.values())

@@ -1280,6 +1280,23 @@ def test_request_pdf_folder_info_returns_drive_links():
     assert other["url"] == ""
 
 
+def test_request_pdf_folder_notice_is_generated_for_cer_and_wrt_only():
+    cer = app.get_request_pdf_folder_info("CER候補（担当確認）")
+    wrt = app.get_request_pdf_folder_info("WRT修理センター")
+    unite = app.get_request_pdf_folder_info("ユナイトサービス㈱")
+
+    cer_notice = app.request_pdf_folder_notice_text(cer)
+    wrt_notice = app.request_pdf_folder_notice_text(wrt)
+
+    assert cer["required"] is True
+    assert "このCER正規フォルダへ格納してください" in cer_notice
+    assert "Drive検索で見つかることと、正規フォルダ格納済みは別です" in cer_notice
+    assert "依頼書PDF格納済み" in cer_notice
+    assert wrt["required"] is True
+    assert "このWRT修理受付センター正規フォルダへ格納してください" in wrt_notice
+    assert app.request_pdf_folder_notice_text(unite) == ""
+
+
 def test_drive_url_is_not_in_teams_message_or_send_body():
     form = app.empty_form()
     form.update({
@@ -1296,6 +1313,24 @@ def test_drive_url_is_not_in_teams_message_or_send_body():
     assert "drive.google.com" not in send_body
     assert "依頼書PDF格納済み" not in message
     assert message.endswith("ご確認お願いします")
+
+
+def test_request_pdf_folder_notice_stays_out_of_teams_message():
+    form = app.empty_form()
+    form.update({
+        "rakuteru_no": "2026_05_0174",
+        "call_line": "家電保証対応業務（24時間）",
+        "product": "エアコン",
+    })
+    request_folder = app.get_request_pdf_folder_info("CER候補（担当確認）")
+
+    message = app._build_teams_chat_message(form, "CER候補（担当確認）")
+    notice = app.request_pdf_folder_notice_text(request_folder)
+
+    assert "drive.google.com" not in message
+    assert "正規フォルダ" not in message
+    for line in notice.splitlines():
+        assert line not in message
 
 
 def test_dp_short_note_is_preserved_with_auto_action():
@@ -1589,6 +1624,24 @@ def test_teams_send_validation_blocks_wrt_cer_when_pdf_storage_is_unchecked():
     assert any("依頼書PDF" in error for error in errors)
 
 
+def test_teams_send_validation_blocks_cer_when_pdf_storage_is_unchecked():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\n家電回線\nエアコン\nご確認お願いします",
+    }
+
+    errors = app.validate_teams_send_request(
+        form,
+        teams_enabled=True,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=False,
+        vendor="CER候補（担当確認）",
+    )
+
+    assert any("依頼書PDF" in error for error in errors)
+
+
 def test_teams_send_validation_allows_wrt_cer_when_pdf_storage_is_checked():
     form = {
         "rakuteru_no": "2026_05_0174",
@@ -1664,6 +1717,34 @@ def test_teams_send_panel_reasons_collect_config_rakuteru_and_pdf():
     assert "楽テルNO未入力" in reasons
     assert "PDF格納チェック未完了" in reasons
     assert app.teams_send_status_label(reasons, already_sent=False) == "送信不可"
+
+
+def test_teams_send_panel_pdf_reason_clears_when_storage_is_confirmed():
+    form = {
+        "rakuteru_no": "2026_05_0174",
+        "teams_chat_message": "2026_05_0174\n家電回線\nエアコン\nご確認お願いします",
+    }
+    config = {"enabled": True, "chat_id": "chat-123", "send_mode": "powershell_graph"}
+
+    unchecked_reasons = app.build_teams_send_incomplete_reasons(
+        form,
+        config,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=False,
+        vendor="WRT修理センター",
+    )
+    checked_reasons = app.build_teams_send_incomplete_reasons(
+        form,
+        config,
+        send_confirmed=True,
+        action_confirmed=True,
+        pdf_storage_confirmed=True,
+        vendor="WRT修理センター",
+    )
+
+    assert "PDF格納チェック未完了" in unchecked_reasons
+    assert "PDF格納チェック未完了" not in checked_reasons
 
 
 def test_teams_test_send_allows_missing_rakuteru_confirmation_and_action():
