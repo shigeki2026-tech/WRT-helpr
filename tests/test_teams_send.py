@@ -4403,6 +4403,137 @@ def test_after_call_regeneration_dirty_state_helpers():
     assert app.after_call_section_needs_regeneration(state, "teams_chat_message", second_hash) is True
 
 
+def konan_system_kitchen_after_call_form():
+    form = app.empty_form()
+    form.update({
+        "call_line": "コーナン住設",
+        "appliance_type": "住設",
+        "appliance_category": "住設（既築）",
+        "housing_phase": "既築",
+        "product": "システムキッチン",
+        "product_original": "システムキッチン",
+        "series": "システムキッチン",
+        "category": "システムキッチン",
+        "manufacturer": "パナソニック",
+        "manufacturer_original": "パナソニック",
+        "product_price": "0円",
+        "wrt_no": "W026700099999",
+        "customer_name": "山田太郎",
+        "phone_number": "090-1111-2222",
+        "operator_name": "大濱",
+        "template_code": "",
+        "template_label": "",
+    })
+    return form
+
+
+def test_after_call_text_generation_uses_current_system_kitchen_form():
+    form = konan_system_kitchen_after_call_form()
+    decision = app.run_decision(form)
+    texts = app._build_after_call_texts(
+        form,
+        decision["warranty_result"],
+        decision["repair_type"],
+        decision["vendor"],
+        "加入者",
+        "",
+        decision["vendor_result"].get("contact_type", ""),
+    )
+    wrs_text = app.build_wrs_handover_transfer_text(
+        form,
+        {
+            "needs_wrs_handover": True,
+            "priority": "1",
+            "rule_name": "テストWRS",
+            "action_type": "転記",
+            "handover_request_content": "確認",
+            "note_template": "",
+        },
+    )
+
+    assert "システムキッチン" in texts["attention_memo"]
+    assert "システムキッチン" in texts["rakutel_text"]
+    assert "システムキッチン" in texts["teams_chat_message"]
+    assert "製品：システムキッチン" in wrs_text
+    assert "多機能便座" not in "\n".join([*texts.values(), wrs_text])
+    assert form["appliance_category"] == "住設（既築）"
+    assert form["product_price"] == "0円"
+
+
+def test_after_call_regeneration_overwrites_stale_toilet_text_state():
+    form = konan_system_kitchen_after_call_form()
+    stale_text = "製品：多機能便座\nメーカー：その他・要確認"
+    state = SessionState({
+        "form": dict(form, product="多機能便座", product_original="多機能便座"),
+        "attention_memo_current": stale_text,
+        "memo_after_widget": stale_text,
+        "rakutel_text_current": stale_text,
+        "rakutel_text_widget": stale_text,
+        "teams_chat_message_current": "コーナン住設　多機能便座　ご確認お願いします",
+        "teams_chat_message_widget": "コーナン住設　多機能便座　ご確認お願いします",
+    })
+    decision = app.run_decision(form)
+    texts = app._build_after_call_texts(
+        form,
+        decision["warranty_result"],
+        decision["repair_type"],
+        decision["vendor"],
+        "加入者",
+        "",
+        decision["vendor_result"].get("contact_type", ""),
+    )
+
+    for section, value in texts.items():
+        app.replace_after_call_generated_text(state, form, section, value)
+
+    assert "システムキッチン" in state["attention_memo_current"]
+    assert "システムキッチン" in state["rakutel_text_current"]
+    assert "システムキッチン" in state["teams_chat_message_current"]
+    assert "多機能便座" not in state["attention_memo_current"]
+    assert "多機能便座" not in state["rakutel_text_current"]
+    assert "多機能便座" not in state["teams_chat_message_current"]
+    assert state["form"]["product"] == "システムキッチン"
+    assert state["form"]["manufacturer"] == "パナソニック"
+    assert state["form"]["appliance_category"] == "住設（既築）"
+    assert state["form"]["product_price"] == "0円"
+
+
+def test_after_call_form_sync_prefers_current_case_basic_widgets():
+    stale_form = konan_system_kitchen_after_call_form()
+    stale_form.update({
+        "product": "多機能便座",
+        "product_original": "多機能便座",
+        "manufacturer": "その他・要確認",
+        "manufacturer_original": "その他・要確認",
+        "appliance_category": "",
+        "product_price": "0円",
+    })
+    revision = 0
+    state = SessionState({
+        "case_basic_revision": revision,
+        "form": stale_form,
+        app.case_basic_widget_key("call_line", revision): "コーナン住設",
+        app.case_basic_widget_key("appliance_category", revision): "住設（既築）",
+        app.case_basic_widget_key("product", revision): "システムキッチン",
+        app.case_basic_widget_key("manufacturer", revision): "パナソニック",
+        app.case_basic_widget_key("product_price", revision): "0",
+        "_case_basic_widget_synced_values": {
+            app.case_basic_widget_key("call_line", revision): "コーナン住設",
+            app.case_basic_widget_key("appliance_category", revision): "住設（既築）",
+            app.case_basic_widget_key("product", revision): "多機能便座",
+            app.case_basic_widget_key("manufacturer", revision): "その他・要確認",
+            app.case_basic_widget_key("product_price", revision): "0",
+        },
+    })
+
+    synced = app.sync_after_call_form_state(stale_form, state)
+
+    assert synced["product"] == "システムキッチン"
+    assert synced["manufacturer"] == "パナソニック"
+    assert synced["appliance_category"] == "住設（既築）"
+    assert synced["product_price"] == "0円"
+
+
 def test_tab_css_uses_blue_selected_state_not_red():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     css = source[source.index("div[data-baseweb=\"tab-list\"]"):source.index("</style>", source.index("div[data-baseweb=\"tab-list\"]"))]

@@ -1733,7 +1733,7 @@ def infer_appliance_type_from_form(form: dict, current_value: str = "") -> str:
 
 def normalize_appliance_category(value: str, appliance_type: str = "", housing_phase: str = "") -> str:
     category = (value or "").strip()
-    if category in APPLIANCE_CATEGORY_OPTIONS:
+    if category and category in APPLIANCE_CATEGORY_OPTIONS:
         return category
     if category in ("住設新築", "住設 新築"):
         return "住設（新築）"
@@ -1746,13 +1746,18 @@ def normalize_appliance_category(value: str, appliance_type: str = "", housing_p
     if category == "賃貸" and (appliance_type or "").strip() == "住設":
         return "住設（賃貸）"
     base_type = (appliance_type or "").strip()
+    if category in ("住設", "住宅設備", "住宅設備機器"):
+        base_type = "住設"
     phase = (housing_phase or "").strip()
     if base_type == "家電":
         return "家電"
     if base_type == "住設":
         if phase == "賃貸":
             return "住設（賃貸）"
-        return "住設（新築）" if phase in ("新築", "新設") else "住設（既築）"
+        if phase in ("新築", "新設"):
+            return "住設（新築）"
+        if phase in ("", "既築", "中古", "既築/中古"):
+            return "住設（既築）"
     return ""
 
 
@@ -2273,6 +2278,23 @@ def replace_editable_text_current(current_key: str, widget_key: str, value: str,
     return value
 
 
+AFTER_CALL_TEXT_STATE_KEYS = {
+    "attention_memo": ("attention_memo_current", "memo_after_widget", sanitize_generated_body_text),
+    "rakutel_text": ("rakutel_text_current", "rakutel_text_widget", None),
+    "teams_chat_message": ("teams_chat_message_current", "teams_chat_message_widget", None),
+}
+
+
+def replace_after_call_generated_text(session_state, form: dict, section: str, value: str) -> str:
+    current_key, widget_key, sanitizer = AFTER_CALL_TEXT_STATE_KEYS[section]
+    generated = sanitizer(value) if sanitizer else value
+    session_state[current_key] = generated
+    session_state[widget_key] = generated
+    form[section] = generated
+    session_state["form"] = form
+    return generated
+
+
 def _join_text_blocks(existing: str, addition: str) -> str:
     existing = sanitize_generated_body_text(existing).rstrip()
     addition = sanitize_generated_body_text(addition).strip()
@@ -2761,18 +2783,21 @@ def _build_after_call_texts(form: dict, warranty_result: dict, repair_type: str,
 
 AFTER_CALL_REGEN_SECTION_FIELDS = {
     "attention_memo": (
-        "call_line", "appliance_type", "product", "manufacturer", "store_name",
+        "call_line", "appliance_type", "appliance_category", "product", "product_original",
+        "manufacturer", "manufacturer_original", "store_name",
         "warranty_plan", "warranty_start_date", "warranty_end_date", "product_price",
         "template_code", "template_label",
     ),
     "rakutel_text": (
-        "call_line", "appliance_type", "product", "manufacturer", "store_name",
+        "call_line", "appliance_type", "appliance_category", "product", "product_original",
+        "manufacturer", "manufacturer_original", "product_price", "store_name",
         "model_number", "wrt_no", "customer_name", "phone_number", "contact_phone",
         "operator_name", "extracted_time", "rakuteru_no", "warranty_plan",
         "call_direction", "counterparty_type", "counterparty_detail", "caller_type", "template_code", "template_label",
     ),
     "teams_chat_message": (
-        "call_line", "product", "operator_name", "rakuteru_no", "teams_action",
+        "call_line", "appliance_category", "product", "product_original",
+        "manufacturer", "manufacturer_original", "product_price", "operator_name", "rakuteru_no", "teams_action",
         "warranty_plan", "template_code", "template_label",
     ),
 }
@@ -4932,6 +4957,7 @@ def extract_fields_from_pasted_text(text: str) -> dict:
     field_specs = {
         "call_line": (["回線名", "入電回線", "受付回線"], r"([^\t\n]+)"),
         "appliance_category": (["案件分類", "案件種別", "家電/住設", "家電・住設"], r"([^\t\n]+)"),
+        "housing_phase": (["住設区分", "住宅区分", "建物区分", "住居区分"], r"([^\t\n]+)"),
         "prefecture": (["都道府県"], r"([^\t\n]+)"),
         "warranty_plan": (["保証プラン", "保証プラン名"], r"([^\t\n]+)"),
         "product": (["製品", "対象製品"], r"([^\t\n]+)"),
@@ -5150,9 +5176,13 @@ def apply_product_item_to_form(product_item: dict, current_form: dict) -> dict:
         return form
     for field in (
         "product_price", "genre", "category", "series", "model_number",
-        "serial_number", "appliance_type", "appliance_category", "housing_phase",
+        "serial_number",
     ):
         form[field] = product_item.get(field, "")
+    for field in ("appliance_type", "appliance_category", "housing_phase"):
+        value = product_item.get(field, "")
+        if _clean_product_item_value(value):
+            form[field] = value
     form["attached_plan_name"] = product_item.get("attached_plan_name", "")
     raw_product = _product_item_product_original(product_item)
     if raw_product:
@@ -5285,6 +5315,7 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     """抽出結果をフォーム辞書にマッピングして返す。"""
     mapping = {
         "call_line": "call_line", "appliance_category": "appliance_category",
+        "housing_phase": "housing_phase",
         "plan": "warranty_plan", "warranty_plan": "warranty_plan",
         "warranty_start_date": "warranty_start_date",
         "warranty_end_date": "warranty_end_date", "customer_code": "customer_code",
@@ -5312,13 +5343,6 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
                 continue
             if dst == "call_line":
                 form[dst] = normalize_call_line_for_display(value)
-                continue
-            if dst == "appliance_category":
-                form[dst] = normalize_appliance_category(
-                    value,
-                    form.get("appliance_type", ""),
-                    form.get("housing_phase", ""),
-                )
                 continue
             form[dst] = value
     product_items = parsed_case_field_value(extracted, "product_items") or []
@@ -5357,9 +5381,15 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
             form.get("manufacturer_original", ""),
             form.get("manufacturer", ""),
         )
+    explicit_case_category = any(
+        parsed_case_field_value(extracted, field)
+        for field in ("appliance_category", "housing_phase")
+    )
     category_locked = any(field in locked_case_category_values for field in ("appliance_category", "housing_phase", "case_category"))
     genre = parsed_case_field_value(extracted, "genre") or ""
-    if (
+    if explicit_case_category:
+        form = apply_appliance_category_to_form(form)
+    elif (
         genre
         or parsed_case_field_value(extracted, "category")
         or parsed_case_field_value(extracted, "appliance_category")
@@ -8609,6 +8639,12 @@ def sync_global_case_basic_widget_state(form: dict, session_state) -> dict:
     return form
 
 
+def sync_after_call_form_state(form: dict, session_state) -> dict:
+    """Use the shared case-basic widgets as the source before after-call generation."""
+    synced = sync_global_case_basic_widget_state((form or {}).copy(), session_state)
+    return synced
+
+
 def remember_case_basic_widget_synced_values(form: dict, session_state) -> None:
     session_state["_case_basic_widget_synced_values"] = {
         widget_key: (
@@ -10186,6 +10222,7 @@ def render_tab_call():
 def render_tab_after_call():
     set_active_main_tab(st.session_state, MAIN_TAB_AFTER_CALL)
     form = st.session_state.form
+    form = sync_after_call_form_state(form, st.session_state)
     decision = run_decision(form)
     repair_type = decision["repair_type"]
     cost_estimate = decision["cost_estimate"]
@@ -10360,14 +10397,8 @@ def render_tab_after_call():
     memo_current_key = "attention_memo_current"
 
     if st.session_state.pop("_pending_regenerate_attention_memo", False):
-        form["attention_memo"] = replace_editable_text_current(
-            memo_current_key,
-            memo_widget_key,
-            generated_attention_memo,
-            sanitize_generated_body_text,
-        )
+        replace_after_call_generated_text(st.session_state, form, "attention_memo", generated_attention_memo)
         mark_after_call_section_regenerated(st.session_state, "attention_memo", attention_hash)
-        st.session_state.form = form
         st.session_state["_attention_memo_regenerate_message"] = "修理依頼書メモを再生成しました。"
 
     pending_snippet_id = str(st.session_state.pop("_pending_append_memo_snippet_id", "") or "").strip()

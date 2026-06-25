@@ -328,6 +328,109 @@ def test_selecting_system_bath_faucet_keeps_product_and_manufacturer_originals_s
     assert "水栓" in candidate["product_alias"]["keyword"]
 
 
+def test_appliance_category_normalization_recovers_residential_phase():
+    assert app.normalize_appliance_category("", "住設", "既築") == "住設（既築）"
+    assert app.normalize_appliance_category("", "住設", "新築") == "住設（新築）"
+    assert app.normalize_appliance_category("", "住設", "賃貸") == "住設（賃貸）"
+    assert app.normalize_appliance_category("住設", "", "既築") == "住設（既築）"
+
+
+def test_extract_labeled_residential_phase_restores_appliance_category():
+    text = """回線名\tコーナン住設
+案件分類\t住設
+住設区分\t既築
+製品\t水栓
+メーカー\t国内メーカー
+商品価格\t0円
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+
+    assert extracted["appliance_category"] == "住設"
+    assert extracted["housing_phase"] == "既築"
+    assert form["appliance_category"] == "住設（既築）"
+    assert form["appliance_type"] == "住設"
+    assert form["housing_phase"] == "既築"
+
+
+def test_selecting_faucet_product_item_preserves_residential_category_and_price():
+    form = app.empty_form()
+    form.update({
+        "call_line": "コーナン住設",
+        "appliance_type": "住設",
+        "appliance_category": "住設（既築）",
+        "housing_phase": "既築",
+        "product": "多機能便座",
+        "product_original": "多機能便座",
+        "manufacturer": "その他・要確認",
+        "manufacturer_original": "LIXIL",
+        "product_price": "120,000円",
+        "product_items": [
+            {
+                "attached_plan_name": "多機能便座【10年保証】",
+                "product_price": "120,000円",
+                "genre": "住宅設備",
+                "category": "多機能便座",
+                "series": "多機能便座",
+                "manufacturer": "LIXIL",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "多機能便座",
+                "product": "多機能便座",
+                "appliance_type": "",
+                "appliance_category": "",
+                "housing_phase": "",
+            },
+            {
+                "attached_plan_name": "システムバス混合水栓",
+                "product_price": "0円",
+                "genre": "住宅設備",
+                "category": "システムバス混合水栓",
+                "series": "水栓",
+                "manufacturer": "国内メーカー",
+                "model_number": "",
+                "serial_number": "",
+                "product_original": "システムバス混合水栓",
+                "product": "その他・要確認",
+                "appliance_type": "",
+                "appliance_category": "",
+                "housing_phase": "",
+            },
+        ],
+        "selected_product_item_index": 0,
+    })
+    revision = 0
+    state = SessionState({
+        "case_basic_revision": revision,
+        app.case_basic_widget_key("appliance_category", revision): "住設（既築）",
+        app.case_basic_widget_key("product", revision): "多機能便座",
+        app.case_basic_widget_key("manufacturer", revision): "その他・要確認",
+        app.case_basic_widget_key("product_price", revision): "120,000",
+        "_case_basic_widget_synced_values": {
+            app.case_basic_widget_key("appliance_category", revision): "住設（既築）",
+            app.case_basic_widget_key("product", revision): "多機能便座",
+            app.case_basic_widget_key("manufacturer", revision): "その他・要確認",
+            app.case_basic_widget_key("product_price", revision): "120,000",
+        },
+    })
+
+    selected = app.apply_product_item_to_form(form["product_items"][1], form)
+    selected["selected_product_item_index"] = 1
+    app.sync_case_basic_product_item_widgets(state, selected)
+    synced = app.sync_global_case_basic_widget_state(selected, state)
+
+    assert selected["appliance_category"] == "住設（既築）"
+    assert selected["appliance_type"] == "住設"
+    assert selected["housing_phase"] == "既築"
+    assert selected["product"] == "水栓"
+    assert selected["manufacturer_original"] == "国内メーカー"
+    assert selected["product_price"] == "0円"
+    assert synced["appliance_category"] == "住設（既築）"
+    assert synced["product"] == "水栓"
+    assert synced["manufacturer_original"] == "国内メーカー"
+    assert synced["product_price"] == "0円"
+
+
 def test_vendor_request_memo_appends_once_and_ignores_blank_store():
     form = {"store_name": "阪神支店", "attention_memo": "既存メモ"}
 
