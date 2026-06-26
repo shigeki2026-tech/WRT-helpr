@@ -4338,4 +4338,112 @@ if __name__ == "__main__":
 
     if failed:
         sys.exit(1)
+# === water fixture run_decision regression tests: start ===
 
+from app import run_decision as _run_decision_for_water_fixture_regression
+
+
+def _water_fixture_regression_form(**overrides):
+    form = {
+        "call_line": "住設",
+        "appliance_type": "住設",
+        "appliance_category": "住設（既築）",
+        "housing_phase": "既築",
+        "prefecture": "大阪府",
+        "address": "大阪府大阪市",
+        "product": "水栓",
+        "manufacturer": "パナソニック",
+        "warranty_plan": "住宅設備機器【10年保証】",
+        "warranty_start_date": "2025/01/01",
+        "warranty_end_date": "2030/12/31",
+        "store_name": "通常販売店",
+        "symptom_detail": "水漏れ",
+        "is_over_10years": False,
+    }
+    form.update(overrides)
+    return form
+
+
+def test_water_fixture_under_or_unknown_10years_routes_to_unite():
+    result = _run_decision_for_water_fixture_regression(
+        _water_fixture_regression_form(is_over_10years=False)
+    )
+
+    assert result["repair_type"] == "出張修理"
+    assert result["cost_estimate"] == "5,000円～7,000円前後"
+    assert result["vendor"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["vendor_name"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["reason"] == "既築／中古 水栓 10年以内・年数不明"
+
+
+def test_water_fixture_over_10years_routes_to_kurashian_replacement():
+    result = _run_decision_for_water_fixture_regression(
+        _water_fixture_regression_form(is_over_10years=True)
+    )
+
+    assert result["repair_type"] == "出張修理"
+    assert result["vendor"] == "クラシアン（交換）"
+    assert result["vendor_result"]["vendor_name"] == "クラシアン（交換）"
+    assert result["vendor_result"]["reason"] == "既築／中古 水栓 10年以上"
+
+
+def test_crinsui_water_fixture_cost_is_unavailable_not_generic_water_cost():
+    result = _run_decision_for_water_fixture_regression(
+        _water_fixture_regression_form(
+            manufacturer="クリンスイ",
+            is_over_10years=False,
+        )
+    )
+
+    cost_result = result["cost_result"]
+
+    assert result["repair_type"] == "出張修理"
+    assert result["cost_estimate"] != "5,000円～7,000円前後"
+    assert cost_result["can_announce_cost"] is False
+    assert (
+        str(cost_result.get("cost_status", "")).lower() in {"unavailable", "not_available", "na"}
+        or "不可" in str(result.get("cost_estimate", ""))
+        or "不可" in str(cost_result.get("cost_estimate", ""))
+    )
+
+
+def test_keihan_water_fixture_wrs_coexists_without_vendor_override():
+    result = _run_decision_for_water_fixture_regression(
+        _water_fixture_regression_form(
+            call_line="京阪不動産",
+            store_name="京阪",
+            is_over_10years=False,
+        )
+    )
+
+    wrs = result["wrs_handover_action"]
+
+    assert result["repair_type"] == "出張修理"
+    assert result["vendor"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["vendor_name"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["reason"] == "既築／中古 水栓 10年以内・年数不明"
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["action_type"] == "受付報告"
+
+
+def test_kohnan_jusetsu_water_fixture_wrs_coexists_without_vendor_override():
+    result = _run_decision_for_water_fixture_regression(
+        _water_fixture_regression_form(
+            call_line="コーナン住設",
+            store_name="コーナン住設",
+            prefecture="大阪府",
+            is_over_10years=False,
+        )
+    )
+
+    wrs = result["wrs_handover_action"]
+
+    assert result["repair_type"] == "出張修理"
+    assert result["vendor"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["vendor_name"] == "ユナイトサービス㈱"
+    assert result["vendor_result"]["reason"] == "既築／中古 水栓 10年以内・年数不明"
+    assert wrs["needs_wrs_handover"] is True
+    assert wrs["action_type"] == "受付報告"
+
+
+# === water fixture run_decision regression tests: end ===
