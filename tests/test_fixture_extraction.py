@@ -99,6 +99,73 @@ def test_labeled_clipboard_case_basic_fields_reflect_and_decide_cer():
     assert vendor_card["request_folder"]["name"] == "CER", dbg
 
 
+def test_product_price_colon_without_yen_reflects_to_form():
+    extracted = app.extract_fields_from_pasted_text("商品価格：50000")
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    dbg = f"extracted={extracted}\nform={form}"
+
+    assert extracted["product_price"] == "50000", dbg
+    assert form["product_price"] == "50000", dbg
+
+
+def test_product_price_colon_with_comma_and_yen_reflects_to_form():
+    extracted = app.extract_fields_from_pasted_text("商品価格：50,000円")
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    dbg = f"extracted={extracted}\nform={form}"
+
+    assert extracted["product_price"] == "50,000円", dbg
+    assert form["product_price"] == "50,000円", dbg
+
+
+def test_product_price_yen_label_variations_reflect_to_form():
+    cases = {
+        "商品価格（円）：50000": "50000",
+        "商品価格 (円)：50,000円": "50,000円",
+        "価格：50,000": "50,000",
+    }
+    for text, expected in cases.items():
+        extracted = app.extract_fields_from_pasted_text(text)
+        form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+        dbg = f"text={text}\nextracted={extracted}\nform={form}"
+
+        assert extracted["product_price"] == expected, dbg
+        assert form["product_price"] == expected, dbg
+
+
+def test_missing_product_price_does_not_clear_manual_value():
+    existing = app.empty_form()
+    existing["product_price"] = "手入力価格"
+
+    extracted = app.extract_fields_from_pasted_text("製品：水栓")
+    form = app.apply_extracted_fields_to_form(extracted, existing)
+
+    assert "product_price" not in extracted
+    assert form["product_price"] == "手入力価格"
+
+
+def test_water_faucet_decision_is_unchanged_after_price_extraction_change():
+    text = """回線名：住設
+案件分類：住設
+住設区分：既築
+製品：水栓
+メーカー：TOTO
+商品価格：50000
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    decision = app.run_decision(form)
+    dbg = f"extracted={extracted}\nform={form}\ndecision={decision}"
+
+    assert form["call_line"] == "住設", dbg
+    assert form["appliance_type"] == "住設", dbg
+    assert form["product"] == "水栓", dbg
+    assert form["manufacturer"] == "TOTO", dbg
+    assert form["product_price"] == "50000", dbg
+    assert decision["repair_type"] == "出張修理", dbg
+    assert decision["cost_estimate"] == "5,000円～7,000円前後", dbg
+    assert decision["vendor"] == "ユナイトサービス㈱", dbg
+
+
 def test_case_dryer_active():
     extracted, form, decision = run_fixture("case_dryer_active.txt")
 
