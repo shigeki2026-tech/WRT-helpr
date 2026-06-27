@@ -3868,20 +3868,24 @@ def test_clipboard_notice_is_collapsed_and_direct_extract_is_secondary():
     assert 'type="primary"' not in clipboard_button_line
 
 
-def test_case_clear_controls_are_near_case_basic_heading_not_copy_import():
+def test_case_clear_controls_are_in_app_header_not_copy_import_or_case_basic():
     source = (ROOT / "app.py").read_text(encoding="utf-8")
     copy_section = source[source.index('st.markdown("##### 📋 コピー情報取り込み")'):source.index("form = st.session_state.form")]
+    header_index = source.index("def render_app_header")
+    header_source = source[header_index:source.index("def _src_badge", header_index)]
     basic_index = source.index("def render_shared_case_basic_editor")
     basic_source = source[basic_index:source.index("def render_global_case_basic_panel", basic_index)]
 
     assert 'render_case_clear_controls("call")' not in copy_section
     assert 'render_case_clear_controls("after")' not in source
     assert 'with st.expander("案件操作", expanded=False):' not in basic_source
-    assert 'render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)' in basic_source
-    heading_index = basic_source.index('st.markdown("##### 🧾 案件情報")')
-    clear_index = basic_source.index('render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)')
+    assert 'render_case_clear_controls("app_header", use_container_width=True)' in header_source
+    assert 'render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)' not in basic_source
+    title_index = header_source.index("wrt-app-header-title")
+    clear_index = header_source.index('render_case_clear_controls("app_header", use_container_width=True)')
     first_field_index = basic_source.index('form["call_line"] = normalize_call_line_for_display')
-    assert heading_index < clear_index < first_field_index
+    assert title_index < clear_index
+    assert basic_source.index('st.markdown("##### 🧾 案件情報")') < first_field_index
 
 
 def test_case_clear_controls_require_confirmation_dialog_or_fallback():

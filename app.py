@@ -7765,9 +7765,6 @@ body {
     background: #f6f8fb;
 }
 .wrt-app-header {
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
     padding: 12px 2px 10px;
     margin: 0 0 12px;
     border-bottom: 1px solid #e2e8f0;
@@ -8066,16 +8063,20 @@ h6 { font-size: 0.9rem !important; font-weight: 700 !important; margin-top: 0.2r
 
 
 def render_app_header() -> None:
-    st.markdown(
-        """
+    title_col, clear_col = st.columns([4, 1], gap="small")
+    with title_col:
+        st.markdown(
+            """
 <div class="wrt-app-header">
   <div>
     <div class="wrt-app-header-title">修理受付 支援ツール</div>
   </div>
 </div>
 """,
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
+    with clear_col:
+        render_case_clear_controls("app_header", use_container_width=True)
 
 
 def _src_badge(source: str) -> str:
@@ -8460,7 +8461,6 @@ def get_call_start_line_options() -> list[str]:
 
 
 def render_call_start_line_buttons(form: dict) -> None:
-    st.markdown("##### 通話開始")
     selected_line = current_call_start_line(form, st.session_state)
     call_in_progress = bool(st.session_state.get("call_in_progress"))
     call_status = "開始済み" if call_in_progress else "未開始"
@@ -8505,8 +8505,83 @@ def render_call_start_line_buttons(form: dict) -> None:
     )
 
 
+def render_copy_import_panel() -> None:
+    st.markdown("##### 📋 コピー情報取り込み")
+    with st.expander(
+        "保証画面などのテキストを貼り付ける",
+        expanded=show_copy_import(st.session_state),
+    ):
+        if _PYPERCLIP_AVAILABLE:
+            if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="secondary"):
+                try:
+                    text = pyperclip.paste()
+                    if not text or not text.strip():
+                        st.warning("クリップボードが空です。手動貼り付け欄を使ってください。")
+                    else:
+                        st.session_state["pasted_text"] = text
+                        extracted = extract_fields_from_pasted_text(text)
+                        st.session_state["extracted"] = extracted
+                        if extracted:
+                            st.session_state["form"] = apply_extracted_fields_to_form(
+                                extracted, st.session_state["form"])
+                            st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                            request_case_basic_widget_refresh(st.session_state)
+                            close_copy_import_panel(st.session_state)
+                            st.rerun()
+                        else:
+                            st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
+                except Exception as e:
+                    st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
+        else:
+            st.info("pyperclip が使えません。手動貼り付け欄を使ってください。")
+
+        pasted = st.text_area(
+            "保証画面などのテキストを貼り付け",
+            value=st.session_state.pasted_text,
+            height=190,
+            key="paste_area",
+            placeholder="ここにコピーしたテキストを貼り付けてください...",
+        )
+        st.session_state.pasted_text = pasted
+
+        if st.button("🔍 抽出する", use_container_width=True):
+            if pasted.strip():
+                extracted = extract_fields_from_pasted_text(pasted)
+                st.session_state.extracted = extracted
+                if extracted:
+                    st.success("抽出しました。内容を確認してからフォームへ反映してください。")
+                else:
+                    st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
+            else:
+                st.warning("テキストを貼り付けてください。")
+
+        if st.session_state.extracted:
+            st.markdown("**抽出結果**")
+            ext = st.session_state.extracted
+            label_map = {
+                "plan": "保証プラン", "warranty_start_date": "保証開始日",
+                "warranty_end_date": "保証終了日", "customer_code": "お客様コード",
+                "customer_name": "お客様名", "phone_number": "電話番号",
+                "address": "住所", "prefecture": "都道府県",
+                "wrt_no": "WRT-NO", "product_price": "商品価格",
+                "manufacturer": "メーカー", "model_number": "型番",
+                "series": "シリーズ", "store_name": "販売店",
+            }
+            rows = [f"- **{lbl}**: {ext.get(k,'') or '─'}" for k, lbl in label_map.items()]
+            st.markdown("\n".join(rows))
+            if st.button("📥 フォームへ反映", use_container_width=True):
+                st.session_state.form = apply_extracted_fields_to_form(
+                    st.session_state.extracted, st.session_state.form)
+                st.session_state["form"]["extracted_time"] = _format_extracted_time()
+                request_case_basic_widget_refresh(st.session_state)
+                close_copy_import_panel(st.session_state)
+                st.success("フォームへ反映しました。")
+                st.rerun()
+
+
 def render_global_top_panels(form: dict) -> None:
     st.markdown('<div class="wrt-top-panels">', unsafe_allow_html=True)
+    render_copy_import_panel()
     render_call_start_line_buttons(form)
     tags_col, memo_col = st.columns([2, 1], gap="medium")
     with tags_col:
@@ -9208,11 +9283,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
     seed_case_basic_widgets_from_form(form)
     # <<< WRT_FIX_CASE_BASIC_WIDGET_SEED_CALL <<<
     st.markdown('<div class="wrt-compact-case-basic">', unsafe_allow_html=True)
-    header_col, action_col = st.columns([2.2, 1])
-    with header_col:
-        st.markdown("##### 🧾 案件情報")
-    with action_col:
-        render_case_clear_controls(f"case_basic_{key_suffix}", use_container_width=True)
+    st.markdown("##### 🧾 案件情報")
 
     form["call_line"] = normalize_call_line_for_display(form.get("call_line", ""))
     call_line_opts = get_call_line_options()
@@ -9717,80 +9788,8 @@ def render_tab_call():
     # UI改修: 左=入力パネル、右=判定結果の2カラム構成
     col_input, col_result = st.columns([1, 2], gap="medium")
 
-    # UI改修: 左カラムにコピー取り込みとフォームを集約
+    # UI改修: 左カラムに通話中の補足フォームを集約
     with col_input:
-        st.markdown("##### 📋 コピー情報取り込み")
-        with st.expander(
-            "保証画面などのテキストを貼り付ける",
-            expanded=show_copy_import(st.session_state),
-        ):
-            if _PYPERCLIP_AVAILABLE:
-                if st.button("📋 クリップボードから直接抽出", use_container_width=True, type="secondary"):
-                    try:
-                        text = pyperclip.paste()
-                        if not text or not text.strip():
-                            st.warning("クリップボードが空です。手動貼り付け欄を使ってください。")
-                        else:
-                            st.session_state["pasted_text"] = text
-                            extracted = extract_fields_from_pasted_text(text)
-                            st.session_state["extracted"] = extracted
-                            if extracted:
-                                st.session_state["form"] = apply_extracted_fields_to_form(
-                                    extracted, st.session_state["form"])
-                                st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                                request_case_basic_widget_refresh(st.session_state)
-                                close_copy_import_panel(st.session_state)
-                                st.rerun()
-                            else:
-                                st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
-                    except Exception as e:
-                        st.warning(f"クリップボード読み取り失敗（{e}）。手動貼り付け欄を使ってください。")
-            else:
-                st.info("pyperclip が使えません。手動貼り付け欄を使ってください。")
-
-            pasted = st.text_area(
-                "保証画面などのテキストを貼り付け",
-                value=st.session_state.pasted_text,
-                height=190,
-                key="paste_area",
-                placeholder="ここにコピーしたテキストを貼り付けてください...",
-            )
-            st.session_state.pasted_text = pasted
-
-            if st.button("🔍 抽出する", use_container_width=True):
-                if pasted.strip():
-                    extracted = extract_fields_from_pasted_text(pasted)
-                    st.session_state.extracted = extracted
-                    if extracted:
-                        st.success("抽出しました。内容を確認してからフォームへ反映してください。")
-                    else:
-                        st.warning("抽出できる項目が見つかりませんでした。貼り付け内容を確認してください。")
-                else:
-                    st.warning("テキストを貼り付けてください。")
-
-            if st.session_state.extracted:
-                st.markdown("**抽出結果**")
-                ext = st.session_state.extracted
-                label_map = {
-                    "plan": "保証プラン", "warranty_start_date": "保証開始日",
-                    "warranty_end_date": "保証終了日", "customer_code": "お客様コード",
-                    "customer_name": "お客様名", "phone_number": "電話番号",
-                    "address": "住所", "prefecture": "都道府県",
-                    "wrt_no": "WRT-NO", "product_price": "商品価格",
-                    "manufacturer": "メーカー", "model_number": "型番",
-                    "series": "シリーズ", "store_name": "販売店",
-                }
-                rows = [f"- **{lbl}**: {ext.get(k,'') or '─'}" for k, lbl in label_map.items()]
-                st.markdown("\n".join(rows))
-                if st.button("📥 フォームへ反映", use_container_width=True):
-                    st.session_state.form = apply_extracted_fields_to_form(
-                        st.session_state.extracted, st.session_state.form)
-                    st.session_state["form"]["extracted_time"] = _format_extracted_time()
-                    request_case_basic_widget_refresh(st.session_state)
-                    close_copy_import_panel(st.session_state)
-                    st.success("フォームへ反映しました。")
-                    st.rerun()
-
         form = st.session_state.form
 
         st.subheader("📝 受付補足情報")
@@ -11545,7 +11544,7 @@ def render_tab_master():
         st.markdown(f"- 持込修理製品: {sorted(CARRY_IN_REPAIR_PRODUCTS)}")
         st.markdown(f"- 要確認製品: {sorted(CONFIRM_REPAIR_PRODUCTS)}")
         st.markdown(f"- データ消去同意必要: {sorted(DATA_ERASE_PRODUCTS)}")
-    st.caption("※ このアプリでは録音・文字起こし機能を実装しません。通話開始は回線名ボタンで管理します。")
+    st.caption("※ このアプリでは録音・文字起こし機能を実装しません。通話状態は回線名ボタンで管理します。")
 
 
 # ============================================================
@@ -11578,11 +11577,11 @@ def main():
         initial_sidebar_state="collapsed",
     )
     inject_app_styles()
-    render_app_header()
     init_session()
     process_pending_case_clear(st.session_state)
     process_pending_case_basic_widget_refresh(st.session_state)
     sync_global_case_basic_widget_state(st.session_state.form, st.session_state)
+    render_app_header()
     render_global_top_panels(st.session_state.form)
     render_global_case_basic_panel(st.session_state.form)
     active_tab = render_main_tab_navigation()
