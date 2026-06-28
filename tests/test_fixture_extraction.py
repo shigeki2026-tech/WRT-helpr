@@ -198,6 +198,29 @@ def test_case_aircon_before_start():
     assert decision["cost_result"]["cost_status"] == "pending"
 
 
+def test_room_aircon_clipboard_infers_home_aircon_type_and_cost():
+    text = """ルームエアコン延長保証【10年】
+商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ ルームエアコン
+メーカー ダイキン工業
+型番 S56WTRXP-W
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert form["call_line"] == "住設", dbg
+    assert form["product"] == "エアコン", dbg
+    assert form["manufacturer"] == "ダイキン", dbg
+    assert form["manufacturer_original"] == "ダイキン工業", dbg
+    assert form["aircon_type"] == "家庭用", dbg
+    assert decision["cost_estimate"] == "7,000円～16,000円前後", dbg
+    assert decision["cost_result"]["cost_status"] == "confirmed", dbg
+
+
 def test_case_pc_expired():
     extracted, form, decision = run_fixture("case_pc_expired.txt")
 

@@ -83,6 +83,7 @@ FIELD_LABELS = {
     "series": "シリーズ",
     "manufacturer": "メーカー",
     "manufacturer_original": "メーカー原文 / コピー元メーカー名",
+    "aircon_type": "エアコン区分",
     "pc_manufacturer_type": "PCメーカー区分",
     "model_number": "型番",
     "call_memo": "通話中メモ",
@@ -633,6 +634,19 @@ PC_MANUFACTURER_TYPE_OPTIONS = [
     PC_MANUFACTURER_TYPE_DOMESTIC,
     PC_MANUFACTURER_TYPE_FOREIGN,
 ]
+AIRCON_TYPE_UNKNOWN = "未確認"
+AIRCON_TYPE_HOME = "家庭用"
+AIRCON_TYPE_BUSINESS = "業務用"
+AIRCON_TYPE_GAS_LEAK = "ガス漏れ検査"
+AIRCON_TYPE_OPTIONS = [
+    AIRCON_TYPE_UNKNOWN,
+    AIRCON_TYPE_HOME,
+    AIRCON_TYPE_BUSINESS,
+    AIRCON_TYPE_GAS_LEAK,
+]
+AIRCON_HOME_KEYWORDS = ("ルームエアコン", "家庭用")
+AIRCON_BUSINESS_KEYWORDS = ("業務用", "店舗用", "パッケージエアコン")
+AIRCON_GAS_LEAK_KEYWORDS = ("ガス漏れ検査", "ガス漏れ")
 
 # manufacturer_group 名 → メーカーセット のマッピング
 MANUFACTURER_GROUPS: dict = {
@@ -3574,6 +3588,7 @@ CASE_BASIC_WIDGET_PREFIXES = (
     "case_basic_prefecture_",
     "case_basic_warranty_plan_",
     "case_basic_product_price_",
+    "case_basic_aircon_type_",
     "case_basic_target_product_item_",
 )
 
@@ -3586,6 +3601,7 @@ CASE_BASIC_FIELD_TO_WIDGET_STEM = {
     "prefecture": "case_basic_prefecture",
     "warranty_plan": "case_basic_warranty_plan",
     "product_price": "case_basic_product_price",
+    "aircon_type": "case_basic_aircon_type",
 }
 
 APPLIANCE_CATEGORY_OPTIONS = ["", "家電", "住設（新築）", "住設（既築）", "住設（賃貸）"]
@@ -4471,6 +4487,67 @@ def infer_pc_manufacturer_type(manufacturer_original: str = "", manufacturer: st
     return PC_MANUFACTURER_TYPE_UNKNOWN
 
 
+def normalize_aircon_type(value: str = "") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return AIRCON_TYPE_UNKNOWN
+    if any(keyword in text for keyword in AIRCON_GAS_LEAK_KEYWORDS):
+        return AIRCON_TYPE_GAS_LEAK
+    if any(keyword in text for keyword in AIRCON_BUSINESS_KEYWORDS):
+        return AIRCON_TYPE_BUSINESS
+    if any(keyword in text for keyword in AIRCON_HOME_KEYWORDS):
+        return AIRCON_TYPE_HOME
+    if text in AIRCON_TYPE_OPTIONS:
+        return text
+    return AIRCON_TYPE_UNKNOWN
+
+
+def _aircon_inference_text(form: dict, fields: tuple[str, ...]) -> str:
+    return " ".join(str(form.get(field) or "") for field in fields)
+
+
+def infer_aircon_type(form: dict) -> str:
+    """エアコン区分を明示入力・補足・抽出テキストから推定する。"""
+    explicit = normalize_aircon_type(form.get("aircon_type", ""))
+    if explicit != AIRCON_TYPE_UNKNOWN:
+        return explicit
+
+    broad_text = _aircon_inference_text(form, (
+        "symptoms", "symptom", "symptom_detail", "memo", "notes", "call_memo",
+        "hearing_memo", "extra_condition", "product_original",
+    ))
+    if any(keyword in broad_text for keyword in AIRCON_GAS_LEAK_KEYWORDS):
+        return AIRCON_TYPE_GAS_LEAK
+    if any(keyword in broad_text for keyword in AIRCON_BUSINESS_KEYWORDS):
+        return AIRCON_TYPE_BUSINESS
+    if any(keyword in broad_text for keyword in AIRCON_HOME_KEYWORDS):
+        return AIRCON_TYPE_HOME
+
+    product_text = _aircon_inference_text(form, ("product", "category"))
+    series_text = _aircon_inference_text(form, ("series", "attached_plan_name"))
+    if any(keyword in series_text for keyword in AIRCON_BUSINESS_KEYWORDS):
+        return AIRCON_TYPE_BUSINESS
+    if any(keyword in series_text for keyword in AIRCON_HOME_KEYWORDS):
+        return AIRCON_TYPE_HOME
+    if "エアコン" in product_text and any(keyword in series_text for keyword in AIRCON_HOME_KEYWORDS):
+        return AIRCON_TYPE_HOME
+    return AIRCON_TYPE_UNKNOWN
+
+
+def aircon_type_basis_label(form: dict, aircon_type: str | None = None) -> str:
+    resolved = aircon_type or infer_aircon_type(form)
+    series_text = str(form.get("series") or "")
+    if resolved == AIRCON_TYPE_GAS_LEAK:
+        return "ガス漏れ/ガス漏れ検査"
+    if resolved == AIRCON_TYPE_BUSINESS:
+        return "業務用/店舗用/パッケージエアコン等"
+    if resolved == AIRCON_TYPE_HOME:
+        if "ルームエアコン" in series_text:
+            return "シリーズ：ルームエアコン"
+        return "家庭用判定"
+    return "家庭用/業務用 未確認"
+
+
 def resolve_pc_manufacturer_type(form: dict) -> str:
     current = (form.get("pc_manufacturer_type") or "").strip()
     if current in (PC_MANUFACTURER_TYPE_DOMESTIC, PC_MANUFACTURER_TYPE_FOREIGN):
@@ -4977,6 +5054,7 @@ def extract_fields_from_pasted_text(text: str) -> dict:
         "prefecture": (["都道府県"], r"([^\t\n]+)"),
         "warranty_plan": (["保証プラン", "保証プラン名"], r"([^\t\n]+)"),
         "product": (["製品", "対象製品"], r"([^\t\n]+)"),
+        "aircon_type": (["エアコン区分", "エアコン種別", "空調区分"], r"([^\t\n]+)"),
         "operating_company": (["運営会社"], r"([^\t\n]+)"),
         "store_name": (["販売店", "店舗名", "購入店舗", "販売店名"], r"([^\t\n]+)"),
         "plan": (["プラン"], r"([^\t\n]+)"),
@@ -5018,6 +5096,9 @@ def extract_fields_from_pasted_text(text: str) -> dict:
     product_items = extract_product_items_from_pasted_text(text)
     if product_items:
         result["product_items"] = product_items
+    inferred_aircon_type = infer_aircon_type(result)
+    if inferred_aircon_type != AIRCON_TYPE_UNKNOWN:
+        result["aircon_type"] = inferred_aircon_type
     return result
 
 
@@ -5213,6 +5294,9 @@ def apply_product_item_to_form(product_item: dict, current_form: dict) -> dict:
     raw_mfr = product_item.get("manufacturer", "")
     form["manufacturer_original"] = raw_mfr
     form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr) if raw_mfr else ""
+    inferred_aircon_type = infer_aircon_type(form)
+    if inferred_aircon_type != AIRCON_TYPE_UNKNOWN or form.get("product") == "エアコン":
+        form["aircon_type"] = inferred_aircon_type
     form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
     form = apply_appliance_category_to_form(form)
     return form
@@ -5344,6 +5428,7 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         "manufacturer": "manufacturer", "model_number": "model_number",
         "series": "series", "store_name": "store_name",
         "genre": "genre", "category": "category",
+        "aircon_type": "aircon_type",
         "operating_company": "operating_company",
     }
     form = current_form.copy()
@@ -5395,6 +5480,9 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
     elif form.get("manufacturer"):
         form["manufacturer"] = normalize_manufacturer_for_select(form.get("manufacturer"))
+    inferred_aircon_type = infer_aircon_type(form)
+    if inferred_aircon_type != AIRCON_TYPE_UNKNOWN or form.get("product") == "エアコン":
+        form["aircon_type"] = inferred_aircon_type
     if form.get("product") == "パソコン":
         form["pc_manufacturer_type"] = infer_pc_manufacturer_type(
             form.get("manufacturer_original", ""),
@@ -5417,6 +5505,12 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     ) and not category_locked:
         form["appliance_type"] = infer_appliance_type_from_form(form, form.get("appliance_type"))
         form = apply_appliance_category_to_form(form)
+    if (
+        not (form.get("call_line") or "").strip()
+        and form.get("appliance_type") == "住設"
+        and form.get("product") == "エアコン"
+    ):
+        form["call_line"] = "住設"
     return form
 
 
@@ -5608,7 +5702,7 @@ def guard_pending_cost_before_rules(form: dict):
     """CSV/旧ロジックより優先する、誤案内防止の最終安全ガード。"""
     product = (form.get("product") or "").strip()
     manufacturer = normalize_manufacturer(form.get("manufacturer", "")).strip()
-    condition = (form.get("extra_condition") or "").strip()
+    aircon_type = infer_aircon_type(form)
     manufacturer_needs_confirmation = manufacturer in (MANUFACTURER_OTHER, MANUFACTURER_UNKNOWN)
     pc_manufacturer_type = (form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN).strip()
 
@@ -5619,12 +5713,12 @@ def guard_pending_cost_before_rules(form: dict):
             keyword="エアコンメーカー未確認ガード",
             missing_fields=["manufacturer"],
         )
-    if product == "エアコン" and manufacturer == "ダイキン" and not condition:
+    if product == "エアコン" and manufacturer == "ダイキン" and aircon_type == AIRCON_TYPE_UNKNOWN:
         return _pending_cost_result(
             "家庭用/業務用を確認してください",
             "ダイキンエアコンは家庭用/業務用未確認時に概算費用を案内しない",
-            keyword="ダイキンエアコン補足条件未確認ガード",
-            missing_fields=["extra_condition"],
+            keyword="ダイキンエアコン区分未確認ガード",
+            missing_fields=["aircon_type"],
         )
     if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_UNKNOWN:
         return _pending_cost_result(
@@ -5636,14 +5730,15 @@ def guard_pending_cost_before_rules(form: dict):
     return None
 
 
-def _confirmed_cost_result(cost_estimate: str, keyword: str, internal_note: str = "") -> dict:
+def _confirmed_cost_result(cost_estimate: str, keyword: str, internal_note: str = "",
+                           guidance_scope: str = "always") -> dict:
     return {
         "matched": True,
         "cost_estimate": cost_estimate,
         "can_announce_cost": True,
         "needs_escalation": False,
         "cost_status": "confirmed",
-        "guidance_scope": "always",
+        "guidance_scope": guidance_scope,
         "required_questions": "",
         "customer_notice": "",
         "internal_note": internal_note,
@@ -5669,7 +5764,11 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     mfr_groups   = load_manufacturer_groups_dict()
     product      = (form.get("product") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
-    condition    = (form.get("extra_condition") or "").strip()
+    aircon_type  = infer_aircon_type(form)
+    condition    = " ".join([
+        (form.get("extra_condition") or "").strip(),
+        aircon_type if aircon_type != AIRCON_TYPE_UNKNOWN else "",
+    ]).strip()
     norm_mfr     = normalize_manufacturer(manufacturer)
 
     guarded = guard_pending_cost_before_rules(form)
@@ -5689,6 +5788,27 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
             "海外PC",
             "PCメーカー区分=海外メーカー",
         )
+    if product == "エアコン" and norm_mfr == "ダイキン":
+        basis = aircon_type_basis_label(form, aircon_type)
+        if aircon_type == AIRCON_TYPE_GAS_LEAK:
+            return _confirmed_cost_result(
+                "30,000円前後",
+                "ダイキンエアコンガス漏れ検査",
+                basis,
+                guidance_scope="eu_asked_only",
+            )
+        if aircon_type == AIRCON_TYPE_HOME:
+            return _confirmed_cost_result(
+                "7,000円～16,000円前後",
+                "ダイキンエアコン家庭用",
+                basis,
+            )
+        if aircon_type == AIRCON_TYPE_BUSINESS:
+            return _confirmed_cost_result(
+                "15,000円～22,000円前後",
+                "ダイキンエアコン業務用",
+                basis,
+            )
 
     _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
@@ -5781,6 +5901,13 @@ def determine_cost_estimate(form: dict, repair_type: str) -> str:
     manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
     if repair_type == "要確認":       return "要確認"
     if manufacturer == "ダイキン" and "エアコン" in product:
+        aircon_type = infer_aircon_type(form)
+        if aircon_type == AIRCON_TYPE_GAS_LEAK:
+            return "30,000円前後"
+        if aircon_type == AIRCON_TYPE_BUSINESS:
+            return "15,000円～22,000円前後"
+        if aircon_type == AIRCON_TYPE_HOME:
+            return "7,000円～16,000円前後"
         if form.get("appliance_type") == "住設" or "業務用" in form.get("extra_condition", ""):
             return "15,000円～22,000円前後"
         return "7,000円～16,000円前後"
@@ -6595,6 +6722,7 @@ MISSING_FIELD_SHORT_LABELS = {
     "product_price": "商品価格",
     "product": "製品",
     "manufacturer": "メーカー",
+    "aircon_type": "エアコン区分",
     "model_number": "型番",
     "prefecture": "住所/都道府県",
     "address": "住所/都道府県",
@@ -6987,6 +7115,8 @@ def build_decision_tag_items(decision: dict, form: dict | None = None,
         "secondary": summary["cost"]["status"],
         "color": cost_color,
     }
+    if (form.get("product") or decision.get("normalized_product")) == "エアコン":
+        cost_tag["tertiary"] = aircon_type_basis_label(form)
 
     vendor_reason = vendor_tag_reason_for_display(decision, missing["拠点対応"])
     if missing["拠点対応"]:
@@ -7572,6 +7702,8 @@ def run_decision(form: dict) -> dict:
         working_form["product"] = alias_result["normalized_product"]
     if working_form.get("product") == "パソコン":
         working_form["pc_manufacturer_type"] = resolve_pc_manufacturer_type(working_form)
+    if working_form.get("product") == "エアコン":
+        working_form["aircon_type"] = infer_aircon_type(working_form)
 
     # ── Layer 2: 修理形態 ──
     repair_result = determine_repair_type_from_rules(working_form)
@@ -9085,7 +9217,8 @@ def product_price_value_for_case_basic_ui(value: str) -> str:
 
 def sync_case_basic_product_item_widgets(session_state, form: dict) -> None:
     fields = (
-        "appliance_category", "product", "product_price", "manufacturer", "warranty_plan",
+        "appliance_category", "product", "aircon_type", "product_price",
+        "manufacturer", "warranty_plan",
     )
     synced = dict(session_state.get("_case_basic_widget_synced_values") or {})
     revision = get_case_basic_revision(session_state)
@@ -9180,6 +9313,7 @@ def _case_basic_has_extracted_values(form: dict) -> bool:
         "prefecture",
         "product",
         "product_price",
+        "aircon_type",
         "store_name",
         "manufacturer",
         "manufacturer_original",
@@ -9263,6 +9397,7 @@ def seed_case_basic_widgets_from_form(form: dict, session_state=None) -> None:
         "appliance_category",
         "prefecture",
         "product",
+        "aircon_type",
         "product_price",
         "store_name",
         "manufacturer",
@@ -9305,7 +9440,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             st.session_state[appliance_widget_key] = form.get("appliance_category", "")
     if form.get("call_line") and form.get("call_line") not in call_line_opts:
         call_line_opts = [form.get("call_line")] + call_line_opts
-    row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap="small")
+    row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.8, 0.75, 1.45], gap="small")
     row2 = st.columns([1.2, 2.8, 2.5], gap="small")
     with row1[0]:
         previous_call_line = form.get("call_line", "")
@@ -9345,6 +9480,14 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             case_basic_widget_key("product", revision),
         )
     with row1[4]:
+        current_aircon_type = normalize_aircon_type(form.get("aircon_type", ""))
+        form["aircon_type"] = synced_selectbox(
+            "エアコン区分",
+            AIRCON_TYPE_OPTIONS,
+            current_aircon_type,
+            case_basic_widget_key("aircon_type", revision),
+        )
+    with row1[5]:
         product_price_original = form.get("product_price", "")
         product_price_display = product_price_value_for_case_basic_ui(product_price_original)
         product_price_input = synced_text_input(
@@ -9358,7 +9501,7 @@ def render_shared_case_basic_editor(form: dict, key_suffix: str, show_template_r
             if product_price_input == product_price_display and product_price_original != product_price_display
             else product_price_input
         )
-    with row1[5]:
+    with row1[6]:
         form["store_name"] = synced_text_input(
             "販売店",
             form.get("store_name", ""),
@@ -9829,6 +9972,13 @@ def render_tab_call():
                 placeholder="コピー抽出されたシリーズ名・分類名など",
             )
             form["series"]        = st.text_input("シリーズ",     form.get("series",""))
+            current_aircon_type = normalize_aircon_type(form.get("aircon_type", ""))
+            render_field_marker("aircon_type", missing_fields_set, invalid_fields_set, pre_diagnostics)
+            form["aircon_type"] = st.selectbox(
+                "エアコン区分",
+                AIRCON_TYPE_OPTIONS,
+                index=AIRCON_TYPE_OPTIONS.index(current_aircon_type),
+            )
             form["manufacturer_original"] = st.text_input(
                 "メーカー原文 / コピー元メーカー名",
                 form.get("manufacturer_original",""),
@@ -9894,9 +10044,9 @@ def render_tab_call():
             )
             if "エアコン" in (form.get("product") or ""):
                 q_cols = st.columns(4)
-                for idx, label in enumerate(["家庭用", "業務用", "ガス漏れ", "未確認"]):
+                for idx, label in enumerate([AIRCON_TYPE_HOME, AIRCON_TYPE_BUSINESS, AIRCON_TYPE_GAS_LEAK, AIRCON_TYPE_UNKNOWN]):
                     if q_cols[idx].button(label, key=f"ac_extra_{label}", use_container_width=True):
-                        form["extra_condition"] = label
+                        form["aircon_type"] = label
                         st.session_state.form = form
                         st.rerun()
         st.session_state.form = form

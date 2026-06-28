@@ -2430,8 +2430,10 @@ def test_case_basic_widget_keys_include_revision():
     assert app.case_basic_widget_key("store_name", 7) == "case_basic_store_name_7"
     assert "prefecture" in app.CASE_BASIC_FIELD_TO_WIDGET_STEM
     assert "warranty_plan" in app.CASE_BASIC_FIELD_TO_WIDGET_STEM
+    assert "aircon_type" in app.CASE_BASIC_FIELD_TO_WIDGET_STEM
     assert app.case_basic_widget_key("prefecture", 7) == "case_basic_prefecture_7"
     assert app.case_basic_widget_key("warranty_plan", 7) == "case_basic_warranty_plan_7"
+    assert app.case_basic_widget_key("aircon_type", 7) == "case_basic_aircon_type_7"
 
 
 def test_case_basic_widget_map_covers_prefecture_and_warranty_plan():
@@ -2439,6 +2441,7 @@ def test_case_basic_widget_map_covers_prefecture_and_warranty_plan():
 
     assert widget_map["case_basic_prefecture_7"] == "prefecture"
     assert widget_map["case_basic_warranty_plan_7"] == "warranty_plan"
+    assert widget_map["case_basic_aircon_type_7"] == "aircon_type"
 
 
 def test_case_basic_refresh_success_paths_bump_revision():
@@ -2488,6 +2491,7 @@ def test_case_basic_fields_do_not_show_required_optional_badges():
     assert "render_field_label(" not in panel_source
     assert 'synced_selectbox(\n            "回線名"' in panel_source
     assert 'synced_selectbox(\n            "都道府県"' in panel_source
+    assert 'synced_selectbox(\n            "エアコン区分"' in panel_source
     assert 'synced_text_input(\n            "商品価格（円）"' in panel_source
     assert 'synced_text_input(\n            "保証プラン名"' in panel_source
 
@@ -3766,6 +3770,7 @@ def test_global_case_basic_widget_keys_are_single_global_set():
         'case_basic_widget_key("call_line", revision)',
         'case_basic_widget_key("appliance_category", revision)',
         'case_basic_widget_key("product", revision)',
+        'case_basic_widget_key("aircon_type", revision)',
         'case_basic_widget_key("manufacturer", revision)',
         'case_basic_widget_key("store_name", revision)',
         'case_basic_widget_key("product_price", revision)',
@@ -3783,7 +3788,7 @@ def test_global_case_basic_panel_updates_shared_form_fields():
     panel_end = source.index("def render_global_case_basic_panel", panel_index)
     panel_source = source[panel_index:panel_end]
 
-    for field in ["call_line", "appliance_category", "appliance_type", "product", "manufacturer", "store_name", "product_price"]:
+    for field in ["call_line", "appliance_category", "appliance_type", "product", "aircon_type", "manufacturer", "store_name", "product_price"]:
         assert f'form["{field}"]' in panel_source
     assert '"案件分類"' in panel_source
     assert "APPLIANCE_CATEGORY_OPTIONS" in panel_source
@@ -3799,19 +3804,19 @@ def test_case_basic_panel_uses_two_row_weighted_layout():
     panel_source = source[panel_index:panel_end]
 
     assert 'st.markdown("##### 🧾 案件情報")' in panel_source
-    assert "row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.75, 1.45], gap=\"small\")" in panel_source
+    assert "row1 = st.columns([0.9, 0.75, 0.65, 1.25, 0.8, 0.75, 1.45], gap=\"small\")" in panel_source
     assert "row2 = st.columns([1.2, 2.8, 2.5], gap=\"small\")" in panel_source
     row1_start = panel_source.index("with row1[0]:")
     row2_start = panel_source.index("with row2[0]:")
     row1_source = panel_source[row1_start:row2_start]
     row2_source = panel_source[row2_start:panel_source.index("if show_template_result:")]
-    assert "with row1[5]:" in panel_source
+    assert "with row1[6]:" in panel_source
     assert "with row2[2]:" not in panel_source
-    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"製品"', '"商品価格（円）"', '"販売店"']:
+    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"製品"', '"エアコン区分"', '"商品価格（円）"', '"販売店"']:
         assert label in row1_source
     for label in ['"メーカー"', '"保証プラン名"']:
         assert label in row2_source
-    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"商品価格（円）"', '"製品"', '"メーカー"', '"販売店"', '"保証プラン名"']:
+    for label in ['"回線名"', '"案件分類"', '"都道府県"', '"商品価格（円）"', '"製品"', '"エアコン区分"', '"メーカー"', '"販売店"', '"保証プラン名"']:
         assert label in panel_source
     assert 'placeholder=""' in panel_source
     assert 'placeholder="329,000"' not in panel_source

@@ -40,7 +40,7 @@ def make_form(
     prefecture="", call_line="", appliance_type="", appliance_category="",
     extra_condition="", store_name="", warranty_start_date="", warranty_end_date="",
     is_over_10years=False, manufacturer_original="", pc_manufacturer_type="",
-    warranty_plan="", symptom="",
+    warranty_plan="", symptom="", aircon_type="",
 ):
     """Build a minimal form dict for run_decision()."""
     form = app.empty_form()
@@ -62,6 +62,7 @@ def make_form(
         pc_manufacturer_type=pc_manufacturer_type,
         warranty_plan=warranty_plan,
         symptom=symptom,
+        aircon_type=aircon_type,
     )
     return form
 
@@ -1154,6 +1155,58 @@ def test_tc14_ac_daikin_gyomu():
     check("TC14 修理形態 → 出張修理",              d["repair_type"],   "出張修理")
     check("TC14 概算費用 → 15,000円～22,000円前後", d["cost_estimate"], "15,000円～22,000円前後")
     check("TC14 cost_status → confirmed",          d["cost_result"]["cost_status"], "confirmed")
+
+
+def test_daikin_aircon_home_type_confirms_cost():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        series="ルームエアコン",
+        manufacturer="ダイキン工業",
+        aircon_type="家庭用",
+    ))
+
+    assert d["working_form"]["aircon_type"] == "家庭用"
+    assert d["cost_estimate"] == "7,000円～16,000円前後"
+    assert d["cost_result"]["cost_status"] == "confirmed"
+    assert d["cost_result"]["internal_note"] == "シリーズ：ルームエアコン"
+
+
+def test_daikin_business_aircon_type_confirms_cost():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="ダイキン工業",
+        aircon_type="業務用",
+    ))
+
+    assert d["working_form"]["aircon_type"] == "業務用"
+    assert d["cost_estimate"] == "15,000円～22,000円前後"
+    assert d["cost_result"]["cost_status"] == "confirmed"
+    assert d["cost_result"]["internal_note"] == "業務用/店舗用/パッケージエアコン等"
+
+
+def test_daikin_aircon_gas_leak_type_confirms_cost():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="ダイキン",
+        symptom="ガス漏れ検査",
+    ))
+
+    assert d["working_form"]["aircon_type"] == "ガス漏れ検査"
+    assert d["cost_estimate"] == "30,000円前後"
+    assert d["cost_result"]["cost_status"] == "confirmed"
+
+
+def test_daikin_aircon_unknown_type_stays_pending():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        manufacturer="ダイキン",
+        aircon_type="未確認",
+    ))
+
+    assert d["cost_estimate"] == "未確定"
+    assert d["cost_result"]["cost_status"] == "pending"
+    assert "家庭用/業務用" in d["cost_result"]["required_questions"]
+    assert d["cost_result"]["missing_fields"] == ["aircon_type"]
 
 
 # ============================================================
@@ -4167,6 +4220,10 @@ _ALL_TESTS = [
     test_tc12_ac_daikin_no_type,
     test_tc13_ac_daikin_katei,
     test_tc14_ac_daikin_gyomu,
+    test_daikin_aircon_home_type_confirms_cost,
+    test_daikin_business_aircon_type_confirms_cost,
+    test_daikin_aircon_gas_leak_type_confirms_cost,
+    test_daikin_aircon_unknown_type_stays_pending,
     test_tc15_pc_no_manufacturer,
     test_tc16_pc_fujitsu,
     test_tc17_pc_dell,
