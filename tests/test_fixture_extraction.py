@@ -198,7 +198,7 @@ def test_case_aircon_before_start():
     assert decision["cost_result"]["cost_status"] == "pending"
 
 
-def test_room_aircon_clipboard_infers_home_aircon_type_and_cost():
+def test_room_aircon_clipboard_keeps_aircon_type_unknown_and_cost_pending():
     text = """ルームエアコン延長保証【10年】
 商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
 ジャンル (新品)住宅設備機器
@@ -216,9 +216,131 @@ def test_room_aircon_clipboard_infers_home_aircon_type_and_cost():
     assert form["product"] == "エアコン", dbg
     assert form["manufacturer"] == "ダイキン", dbg
     assert form["manufacturer_original"] == "ダイキン工業", dbg
-    assert form["aircon_type"] == "家庭用", dbg
+    assert form["aircon_type"] == "未確認", dbg
+    assert decision["working_form"]["aircon_type"] == "未確認", dbg
+    assert decision["cost_result"]["cost_status"] == "pending", dbg
+    assert decision["cost_estimate"] == "未確定", dbg
+    assert decision["cost_estimate"] != "7,000円～16,000円前後", dbg
+    assert "家庭用/業務用を確認してください" in decision["cost_result"]["required_questions"], dbg
+
+
+def test_room_aircon_manual_unknown_keeps_cost_pending_after_import():
+    text = """ルームエアコン延長保証【10年】
+商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ ルームエアコン
+メーカー ダイキン工業
+型番 S56WTRXP-W
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    assert form["aircon_type"] == "未確認"
+
+    form["aircon_type"] = "未確認"
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert decision["working_form"]["aircon_type"] == "未確認", dbg
+    assert decision["cost_result"]["cost_status"] == "pending", dbg
+    assert decision["cost_estimate"] == "未確定", dbg
+    assert decision["cost_estimate"] != "7,000円～16,000円前後", dbg
+    assert "家庭用/業務用を確認してください" in decision["cost_result"]["required_questions"], dbg
+    assert "aircon_type" in decision["cost_result"]["missing_fields"], dbg
+
+
+def test_room_aircon_manual_home_confirms_cost_after_import():
+    text = """ルームエアコン延長保証【10年】
+商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ ルームエアコン
+メーカー ダイキン工業
+型番 S56WTRXP-W
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    form["aircon_type"] = "家庭用"
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert decision["working_form"]["aircon_type"] == "家庭用", dbg
     assert decision["cost_estimate"] == "7,000円～16,000円前後", dbg
     assert decision["cost_result"]["cost_status"] == "confirmed", dbg
+
+
+def test_room_aircon_manual_business_confirms_cost_after_import():
+    text = """ルームエアコン延長保証【10年】
+商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ ルームエアコン
+メーカー ダイキン工業
+型番 S56WTRXP-W
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    form["aircon_type"] = "業務用"
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert decision["working_form"]["aircon_type"] == "業務用", dbg
+    assert decision["cost_estimate"] == "15,000円～22,000円前後", dbg
+    assert decision["cost_result"]["cost_status"] == "confirmed", dbg
+
+
+def test_room_aircon_manual_gas_leak_confirms_cost_after_import():
+    text = """ルームエアコン延長保証【10年】
+商品価格 232,399円 (価格(税抜)215,185円　消費税額17,214円)
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ ルームエアコン
+メーカー ダイキン工業
+型番 S56WTRXP-W
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    form["aircon_type"] = "ガス漏れ検査"
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert decision["working_form"]["aircon_type"] == "ガス漏れ検査", dbg
+    assert decision["cost_estimate"] == "30,000円前後", dbg
+    assert decision["cost_result"]["cost_status"] == "confirmed", dbg
+
+
+def test_business_aircon_clipboard_infers_business_type_and_cost():
+    text = """業務用エアコン延長保証【10年】
+商品価格 232,399円
+ジャンル (新品)住宅設備機器
+分類 エアコン
+シリーズ パッケージエアコン
+メーカー ダイキン工業
+型番 SZRC80BYT
+"""
+    extracted = app.extract_fields_from_pasted_text(text)
+    form = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    decision = app.run_decision(form)
+    dbg = debug_payload(extracted, form, decision)
+
+    assert form["aircon_type"] == "業務用", dbg
+    assert decision["cost_estimate"] == "15,000円～22,000円前後", dbg
+    assert decision["cost_result"]["cost_status"] == "confirmed", dbg
+
+
+def test_aircon_gas_leak_symptom_infers_gas_leak_type_and_cost():
+    form = app.empty_form()
+    form.update(
+        product="エアコン",
+        manufacturer="ダイキン",
+        series="ルームエアコン",
+        symptom="ガス漏れ検査を希望",
+    )
+    decision = app.run_decision(form)
+
+    assert decision["working_form"]["aircon_type"] == "ガス漏れ検査"
+    assert decision["cost_estimate"] == "30,000円前後"
+    assert decision["cost_result"]["cost_status"] == "confirmed"
 
 
 def test_case_pc_expired():

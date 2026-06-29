@@ -4508,29 +4508,29 @@ def _aircon_inference_text(form: dict, fields: tuple[str, ...]) -> str:
 
 def infer_aircon_type(form: dict) -> str:
     """エアコン区分を明示入力・補足・抽出テキストから推定する。"""
-    explicit = normalize_aircon_type(form.get("aircon_type", ""))
+    raw_aircon_type = str(form.get("aircon_type") or "").strip()
+    if raw_aircon_type == AIRCON_TYPE_UNKNOWN:
+        return AIRCON_TYPE_UNKNOWN
+    explicit = normalize_aircon_type(raw_aircon_type)
     if explicit != AIRCON_TYPE_UNKNOWN:
         return explicit
 
+    extra_condition_type = normalize_aircon_type(form.get("extra_condition", ""))
+    if extra_condition_type != AIRCON_TYPE_UNKNOWN:
+        return extra_condition_type
+
     broad_text = _aircon_inference_text(form, (
         "symptoms", "symptom", "symptom_detail", "memo", "notes", "call_memo",
-        "hearing_memo", "extra_condition", "product_original",
+        "hearing_memo", "product_original",
     ))
     if any(keyword in broad_text for keyword in AIRCON_GAS_LEAK_KEYWORDS):
         return AIRCON_TYPE_GAS_LEAK
     if any(keyword in broad_text for keyword in AIRCON_BUSINESS_KEYWORDS):
         return AIRCON_TYPE_BUSINESS
-    if any(keyword in broad_text for keyword in AIRCON_HOME_KEYWORDS):
-        return AIRCON_TYPE_HOME
 
-    product_text = _aircon_inference_text(form, ("product", "category"))
     series_text = _aircon_inference_text(form, ("series", "attached_plan_name"))
     if any(keyword in series_text for keyword in AIRCON_BUSINESS_KEYWORDS):
         return AIRCON_TYPE_BUSINESS
-    if any(keyword in series_text for keyword in AIRCON_HOME_KEYWORDS):
-        return AIRCON_TYPE_HOME
-    if "エアコン" in product_text and any(keyword in series_text for keyword in AIRCON_HOME_KEYWORDS):
-        return AIRCON_TYPE_HOME
     return AIRCON_TYPE_UNKNOWN
 
 
@@ -4545,6 +4545,8 @@ def aircon_type_basis_label(form: dict, aircon_type: str | None = None) -> str:
         if "ルームエアコン" in series_text:
             return "シリーズ：ルームエアコン"
         return "家庭用判定"
+    if "ルームエアコン" in series_text:
+        return "家庭用/業務用 未確認（シリーズ：ルームエアコン）"
     return "家庭用/業務用 未確認"
 
 

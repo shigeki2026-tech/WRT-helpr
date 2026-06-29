@@ -1209,6 +1209,22 @@ def test_daikin_aircon_unknown_type_stays_pending():
     assert d["cost_result"]["missing_fields"] == ["aircon_type"]
 
 
+def test_daikin_room_aircon_manual_unknown_overrides_auto_home_inference():
+    d = app.run_decision(make_form(
+        product="エアコン",
+        series="ルームエアコン",
+        manufacturer="ダイキン",
+        aircon_type="未確認",
+    ))
+
+    assert d["working_form"]["aircon_type"] == "未確認"
+    assert d["cost_estimate"] == "未確定"
+    assert d["cost_estimate"] != "7,000円～16,000円前後"
+    assert d["cost_result"]["cost_status"] == "pending"
+    assert "家庭用/業務用を確認してください" in d["cost_result"]["required_questions"]
+    assert d["cost_result"]["missing_fields"] == ["aircon_type"]
+
+
 # ============================================================
 # TC15: パソコンのみ入力 → 金額未確定 / メーカー確認要求
 # ============================================================
@@ -4224,6 +4240,7 @@ _ALL_TESTS = [
     test_daikin_business_aircon_type_confirms_cost,
     test_daikin_aircon_gas_leak_type_confirms_cost,
     test_daikin_aircon_unknown_type_stays_pending,
+    test_daikin_room_aircon_manual_unknown_overrides_auto_home_inference,
     test_tc15_pc_no_manufacturer,
     test_tc16_pc_fujitsu,
     test_tc17_pc_dell,
