@@ -95,6 +95,88 @@ WRT-NO	W026700099999
 """
 
 
+REIMPORT_MULTI_PRODUCT_TEXT = """回線名	家電
+運営会社	テスト運営会社	販売店	テスト販売店
+顧客情報
+お名前（漢字）	山田太郎	お電話番号	090-1111-2222	ご住所	東京都新宿区西新宿1-1-1
+都道府県	東京都
+製品情報
+WRT-NO	W026700012345
+プラン
+エアコン【10年保証】
+商品価格	100000
+ジャンル	家電	分類	エアコン
+シリーズ	エアコン	メーカー	パナソニック
+型番	AC-001	製造番号	SN-001
+プラン
+冷蔵庫【10年保証】
+商品価格	200000
+ジャンル	家電	分類	冷蔵庫
+シリーズ	冷蔵庫	メーカー	日立
+型番	RF-002	製造番号	SN-002
+"""
+
+
+def test_reimport_preserves_selected_product_item_fields_and_case_fields():
+    extracted = app.extract_fields_from_pasted_text(REIMPORT_MULTI_PRODUCT_TEXT)
+    initial = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    selected = app.apply_product_item_to_form(initial["product_items"][1], initial)
+    selected["selected_product_item_index"] = 1
+
+    reimported = app.apply_extracted_fields_to_form(extracted, selected)
+
+    assert reimported["selected_product_item_index"] == 1
+    assert reimported["product"] == "冷蔵庫"
+    assert reimported["series"] == "冷蔵庫"
+    assert reimported["manufacturer"] == "日立"
+    assert reimported["manufacturer_original"] == "日立"
+    assert reimported["model_number"] == "RF-002"
+    assert reimported["serial_number"] == "SN-002"
+    assert reimported["product_price"] == "200000"
+    assert reimported["call_line"] == "家電"
+    assert reimported["customer_name"] == "山田太郎"
+    assert reimported["phone_number"] == "090-1111-2222"
+    assert reimported["address"] == "東京都新宿区西新宿1-1-1"
+    assert reimported["prefecture"] == "東京都"
+    assert reimported["store_name"] == "テスト販売店"
+    assert reimported["operating_company"] == "テスト運営会社"
+    assert reimported["wrt_no"] == "W026700012345"
+
+
+def test_reimport_uses_first_product_item_when_first_is_selected():
+    extracted = app.extract_fields_from_pasted_text(REIMPORT_MULTI_PRODUCT_TEXT)
+    initial = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+    reimported = app.apply_extracted_fields_to_form(extracted, initial)
+
+    assert reimported["selected_product_item_index"] == 0
+    assert reimported["product"] == "エアコン"
+    assert reimported["series"] == "エアコン"
+    assert reimported["manufacturer"] == "パナソニック"
+    assert reimported["model_number"] == "AC-001"
+    assert reimported["serial_number"] == "SN-001"
+    assert reimported["product_price"] == "100000"
+
+
+def test_single_product_reimport_keeps_extracted_product_fields():
+    extracted = app.extract_fields_from_pasted_text("""回線名	家電
+製品	電子レンジ
+シリーズ	NE-MS4C
+メーカー	パナソニック
+型番	NE-MS4C-K
+製造番号	SN-100
+商品価格	30000
+""")
+
+    reimported = app.apply_extracted_fields_to_form(extracted, app.empty_form())
+
+    assert reimported["product_items"] == []
+    assert reimported["product"] == "電子レンジ"
+    assert reimported["series"] == "NE-MS4C"
+    assert reimported["manufacturer"] == "パナソニック"
+    assert reimported["model_number"] == "NE-MS4C-K"
+    assert reimported["product_price"] == "30000"
+
+
 def test_extract_product_items_from_ai_koumuten_clipboard_extracts_ten_blocks():
     items = app.extract_product_items_from_pasted_text(AI_KOUMUTEN_MULTI_PRODUCT_TEXT)
 

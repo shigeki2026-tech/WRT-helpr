@@ -5434,12 +5434,18 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         "operating_company": "operating_company",
     }
     form = current_form.copy()
+    product_items = parsed_case_field_value(extracted, "product_items") or []
+    product_item_fields = {
+        "product_price", "genre", "category", "series", "manufacturer", "model_number",
+    }
     locked_case_category_values = {
         field: form.get(field, "")
         for field in ("appliance_category", "appliance_type", "housing_phase", "case_category")
         if parsed_case_value_present(form.get(field))
     }
     for src, dst in mapping.items():
+        if product_items and dst in product_item_fields:
+            continue
         value = parsed_case_field_value(extracted, src)
         if value is not None:
             if dst == "prefecture" and value not in PREFECTURES:
@@ -5451,7 +5457,6 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
                 form[dst] = normalize_call_line_for_display(value)
                 continue
             form[dst] = value
-    product_items = parsed_case_field_value(extracted, "product_items") or []
     if product_items:
         form["product_items"] = product_items
         selected_index = int(form.get("selected_product_item_index") or 0)
@@ -5477,7 +5482,9 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     elif form.get("product"):
         form["product"] = normalize_product_for_select(form.get("product"))
     raw_mfr = parsed_case_field_value(extracted, "manufacturer") or ""
-    if raw_mfr:
+    if product_items:
+        pass
+    elif raw_mfr:
         form["manufacturer_original"] = raw_mfr
         form["manufacturer"] = normalize_manufacturer_for_select(raw_mfr)
     elif form.get("manufacturer"):
