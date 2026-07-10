@@ -177,6 +177,79 @@ def test_single_product_reimport_keeps_extracted_product_fields():
     assert reimported["product_price"] == "30000"
 
 
+def test_new_case_import_clears_missing_case_common_fields_from_previous_case():
+    case_a = {
+        "wrt_no": "WRT-A",
+        "call_line": "家電",
+        "customer_code": "CUST-A",
+        "customer_name": "山田太郎",
+        "phone_number": "090-1111-2222",
+        "contact_phone": "080-1111-2222",
+        "address": "東京都新宿区1-1-1",
+        "prefecture": "東京都",
+        "store_name": "A販売店",
+        "operating_company": "A運営会社",
+        "warranty_plan": "A保証",
+        "warranty_start_date": "2025/01/01",
+        "warranty_end_date": "2035/01/01",
+    }
+    case_b = {"wrt_no": "WRT-B", "customer_name": "佐藤花子"}
+    form_a = app.apply_extracted_fields_to_form(case_a, app.empty_form())
+
+    imported_b = app.apply_extracted_fields_to_form(case_b, form_a)
+
+    assert imported_b["wrt_no"] == "WRT-B"
+    assert imported_b["customer_name"] == "佐藤花子"
+    for field in (
+        "call_line", "customer_code", "phone_number", "contact_phone", "address", "prefecture",
+        "store_name", "operating_company", "warranty_plan", "warranty_start_date", "warranty_end_date",
+    ):
+        assert imported_b[field] == ""
+
+
+def test_same_case_reimport_preserves_manual_values_missing_from_extraction():
+    original = app.apply_extracted_fields_to_form(
+        {"wrt_no": "WRT-A", "customer_name": "山田太郎", "phone_number": "090-1111-2222"},
+        app.empty_form(),
+    )
+    original["phone_number"] = "手入力電話番号"
+    original["call_memo"] = "手入力メモ"
+
+    reimported = app.apply_extracted_fields_to_form(
+        {"wrt_no": "WRT-A", "customer_name": "山田太郎（更新）"}, original,
+    )
+
+    assert reimported["customer_name"] == "山田太郎（更新）"
+    assert reimported["phone_number"] == "手入力電話番号"
+    assert reimported["call_memo"] == "手入力メモ"
+
+
+def test_import_without_a_second_wrt_number_keeps_existing_values():
+    original = app.apply_extracted_fields_to_form(
+        {"wrt_no": "WRT-A", "phone_number": "090-1111-2222", "address": "東京都新宿区1-1-1"},
+        app.empty_form(),
+    )
+
+    reimported = app.apply_extracted_fields_to_form({"customer_name": "確認中"}, original)
+
+    assert reimported["wrt_no"] == "WRT-A"
+    assert reimported["phone_number"] == "090-1111-2222"
+    assert reimported["address"] == "東京都新宿区1-1-1"
+
+
+def test_import_after_case_clear_keeps_existing_empty_case_behavior():
+    state = SessionState({"form": app.apply_extracted_fields_to_form(
+        {"wrt_no": "WRT-A", "phone_number": "090-1111-2222"}, app.empty_form(),
+    )})
+
+    cleared = app.reset_case_session_state(state)
+    imported = app.apply_extracted_fields_to_form({"wrt_no": "WRT-B", "customer_name": "佐藤花子"}, cleared)
+
+    assert imported["wrt_no"] == "WRT-B"
+    assert imported["customer_name"] == "佐藤花子"
+    assert imported["phone_number"] == ""
+
+
 def test_extract_product_items_from_ai_koumuten_clipboard_extracts_ten_blocks():
     items = app.extract_product_items_from_pasted_text(AI_KOUMUTEN_MULTI_PRODUCT_TEXT)
 

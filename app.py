@@ -5416,6 +5416,28 @@ def parsed_case_field_value(extracted: dict, field: str):
     return value if parsed_case_value_present(value) else None
 
 
+CASE_COMMON_IMPORT_FIELDS = (
+    "call_line", "manual_call_line", "appliance_type", "appliance_category", "housing_phase",
+    "warranty_plan", "warranty_start_date", "warranty_end_date",
+    "customer_code", "customer_name", "phone_number", "contact_phone",
+    "address", "prefecture", "wrt_no", "store_name", "operating_company",
+)
+
+
+def is_distinct_case_import(extracted: dict, current_form: dict) -> bool:
+    """WRT-NOが両方取得でき、異なる場合だけ別案件として扱う。"""
+    current_wrt_no = (current_form.get("wrt_no") or "").strip()
+    extracted_wrt_no = (parsed_case_field_value(extracted, "wrt_no") or "").strip()
+    return bool(current_wrt_no and extracted_wrt_no and current_wrt_no != extracted_wrt_no)
+
+
+def clear_case_common_fields_for_new_import(form: dict) -> dict:
+    cleared = form.copy()
+    for field in CASE_COMMON_IMPORT_FIELDS:
+        cleared[field] = False if field == "manual_call_line" else ""
+    return cleared
+
+
 def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
     """抽出結果をフォーム辞書にマッピングして返す。"""
     mapping = {
@@ -5434,6 +5456,8 @@ def apply_extracted_fields_to_form(extracted: dict, current_form: dict) -> dict:
         "operating_company": "operating_company",
     }
     form = current_form.copy()
+    if is_distinct_case_import(extracted, form):
+        form = clear_case_common_fields_for_new_import(form)
     product_items = parsed_case_field_value(extracted, "product_items") or []
     product_item_fields = {
         "product_price", "genre", "category", "series", "manufacturer", "model_number",
