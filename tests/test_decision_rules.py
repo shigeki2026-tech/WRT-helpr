@@ -1400,6 +1400,44 @@ def test_tc20_shiga_ntt_west():
     check("TC20 滋賀県 → area_group=NTT西日本", d["area_group"], "NTT西日本")
 
 
+def test_carry_repair_vendor_rules_distinguish_west_excluding_kyushu():
+    for prefecture in ("大阪府", "滋賀県", "兵庫県", "京都府", "福岡県", "熊本県"):
+        assert app.get_area_group(prefecture) == "NTT西日本"
+    west_excluding_kyushu = app.load_area_groups_dict()["NTT西日本（九州以外）"]
+    assert {"大阪府", "滋賀県", "兵庫県", "京都府"} <= west_excluding_kyushu
+    assert not {"福岡県", "熊本県"} & west_excluding_kyushu
+
+    for prefecture in ("大阪府", "滋賀県"):
+        decision = app.run_decision(make_form(
+            prefecture=prefecture, product="パソコン", manufacturer="富士通",
+        ))
+        assert decision["repair_type"] == "持込修理"
+        assert decision["vendor"] == "ユナイトサービス㈱"
+        assert decision["vendor_result"]["reason"] == "西日本持込"
+        assert decision["vendor_result"]["needs_escalation"] is False
+
+    for prefecture in ("福岡県", "熊本県"):
+        decision = app.run_decision(make_form(
+            prefecture=prefecture, product="パソコン", manufacturer="富士通",
+        ))
+        assert decision["repair_type"] == "持込修理"
+        assert decision["vendor"] == "リペアネットワーク株式会社"
+        assert decision["vendor_result"]["reason"] == "九州持込（データ消去不要製品）"
+
+    for prefecture in ("広島県", "香川県"):
+        decision = app.run_decision(make_form(
+            prefecture=prefecture, product="洗濯機", manufacturer="パナソニック",
+        ))
+        assert decision["repair_type"] == "出張修理"
+        assert decision["vendor"] == "CER候補（担当確認）"
+
+    tokyo = app.run_decision(make_form(
+        prefecture="東京都", product="パソコン", manufacturer="富士通",
+    ))
+    assert tokyo["repair_type"] == "持込修理"
+    assert tokyo["vendor"] == "WRT修理センター"
+
+
 def test_tc21_tokyo_ntt_east():
     d = app.run_decision(make_form(prefecture="東京都"))
     check("TC21 東京都 → area_group=NTT東日本", d["area_group"], "NTT東日本")
