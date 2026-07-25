@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Parameter(Position=0)]
     [ValidateSet("status", "check", "test", "run", "diff", "commit", "push", "log")]
     [string]$Action = "status",
@@ -16,6 +16,10 @@ function Show-Header($text) {
     Write-Host "==== $text ===="
 }
 
+function Test-AppCompile {
+    python -m py_compile .\app.py .\app_source.py
+}
+
 switch ($Action) {
     "status" {
         Show-Header "Git status"
@@ -27,7 +31,7 @@ switch ($Action) {
 
     "check" {
         Show-Header "Python compile"
-        python -m py_compile .\app.py
+        Test-AppCompile
 
         Show-Header "Diff stat"
         git --no-pager diff --stat
@@ -41,7 +45,7 @@ switch ($Action) {
 
     "test" {
         Show-Header "Python compile"
-        python -m py_compile .\app.py
+        Test-AppCompile
 
         Show-Header "Pytest"
         python -m pytest -q
@@ -68,16 +72,19 @@ switch ($Action) {
 
     "commit" {
         if ([string]::IsNullOrWhiteSpace($Message)) {
-            throw "commit にはメッセージが必要です。例: .\tools\wrt.ps1 commit ""Fix call line sync"""
+            throw "commit にはメッセージが必要です。例: .\tools\wrt.ps1 commit \"Fix call line sync\""
         }
 
         Show-Header "Pre-commit check"
-        python -m py_compile .\app.py
+        Test-AppCompile
         git --no-pager diff --check
         git status --short
 
-        Show-Header "Commit app.py only"
-        git add .\app.py
+        Show-Header "Commit application source"
+        git add .\app.py .\app_source.py
+        if (Test-Path .\tests\test_after_call_copy_fields.py) {
+            git add .\tests\test_after_call_copy_fields.py
+        }
         git commit -m $Message
 
         Show-Header "Post-commit status"
