@@ -1,0 +1,190 @@
+name: Apply after-call copy fields
+
+on:
+  push:
+    paths:
+      - ".github/workflows/apply-after-call-copy-fields.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest
+
+      - name: Apply code and regression tests
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app_path = Path("app.py")
+          text = app_path.read_text(encoding="utf-8")
+
+          old_category = '''    if base_type == "住設":
+              if phase == "賃貸":
+                  return "住設（賃貸）"
+              if phase in ("新築", "新設"):
+                  return "住設（新築）"
+              if phase in ("", "既築", "中古", "既築/中古"):
+                  return "住設（既築）"
+          return ""
+          '''
+          new_category = '''    if base_type == "住設":
+              if phase == "賃貸":
+                  return "住設（賃貸）"
+              if phase in ("新築", "新設"):
+                  return "住設（新築）"
+              if phase in ("既築", "中古", "既築/中古"):
+                  return "住設（既築）"
+          return ""
+          '''
+          if old_category not in text and new_category not in text:
+              raise SystemExit("normalize_appliance_category anchor not found")
+          text = text.replace(old_category, new_category, 1)
+
+          helper_anchor = '''        except Exception as e:
+              st.warning(f"コピーに失敗しました（{e}）。")
+
+
+          def sort_diagnostic_items(items: list) -> list:
+          '''
+          helper_replacement = '''        except Exception as e:
+              st.warning(f"コピーに失敗しました（{e}）。")
+
+
+          def digits_only(value: str) -> str:
+              """Convert a displayed amount to half-width digits for external-system paste."""
+              translated = str(value or "").translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+              return re.sub(r"[^0-9]", "", translated)
+
+
+          def build_after_call_field_copy_values(form: dict, decision: dict | None = None) -> dict:
+              """Return one-field clipboard values used after the call."""
+              decision = decision or {}
+              return {
+                  "model_number": str(form.get("model_number") or "").strip(),
+                  "manufacturer": str(form.get("manufacturer") or "").strip(),
+                  "product": str(decision.get("normalized_product") or form.get("product") or "").strip(),
+                  "product_price": digits_only(form.get("product_price")),
+              }
+
+
+          def sort_diagnostic_items(items: list) -> list:
+          '''
+          if "def build_after_call_field_copy_values(" not in text:
+              if helper_anchor not in text:
+                  raise SystemExit("copy helper anchor not found")
+              text = text.replace(helper_anchor, helper_replacement, 1)
+
+          ui_anchor = '''    st.session_state.form = form
+
+              # ── 修理依頼書メモ（備考欄反映）──
+          '''
+          ui_replacement = '''    st.session_state.form = form
+
+              st.markdown("##### 📋 別システム貼り付け")
+              st.caption("各ボタンは1項目だけをコピーします。商品金額は半角数字のみです。")
+              copy_values = build_after_call_field_copy_values(form, decision)
+              copy_columns = st.columns(4)
+              copy_specs = (
+                  ("型番をコピー", "model_number", "copy_after_call_model_number"),
+                  ("メーカーをコピー", "manufacturer", "copy_after_call_manufacturer"),
+                  ("製品をコピー", "product", "copy_after_call_product"),
+                  ("商品金額をコピー", "product_price", "copy_after_call_product_price"),
+              )
+              for column, (label, field_name, key) in zip(copy_columns, copy_specs):
+                  with column:
+                      render_copy_button(label, copy_values[field_name], key)
+
+              # ── 修理依頼書メモ（備考欄反映）──
+          '''
+          if "copy_after_call_model_number" not in text:
+              if ui_anchor not in text:
+                  raise SystemExit("after-call UI anchor not found")
+              text = text.replace(ui_anchor, ui_replacement, 1)
+
+          app_path.write_text(text, encoding="utf-8")
+
+          test_path = Path("tests/test_after_call_copy_fields.py")
+          test_path.write_text('''# -*- coding: utf-8 -*-
+
+          import os
+          import sys
+          import unittest.mock as mock
+
+          sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+          _st_mock = mock.MagicMock()
+          _st_mock.cache_data = lambda f: f
+          sys.modules["streamlit"] = _st_mock
+
+          import app  # noqa: E402
+
+
+          def test_residential_without_phase_stays_unselected():
+              assert app.normalize_appliance_category("", "住設", "") == ""
+              assert app.normalize_appliance_category("住設", "", "") == ""
+
+
+          def test_residential_existing_requires_explicit_existing_evidence():
+              assert app.normalize_appliance_category("", "住設", "既築") == "住設（既築）"
+              assert app.normalize_appliance_category("住設（既築）", "", "") == "住設（既築）"
+
+
+          def test_after_call_copy_values_are_independent_and_price_is_digits_only():
+              form = {
+                  "model_number": " ABC-123 ",
+                  "manufacturer": " パナソニック ",
+                  "product": "電子レンジ",
+                  "product_price": "50,000円（税込）",
+              }
+              values = app.build_after_call_field_copy_values(form, {"normalized_product": "オーブンレンジ"})
+
+              assert values == {
+                  "model_number": "ABC-123",
+                  "manufacturer": "パナソニック",
+                  "product": "オーブンレンジ",
+                  "product_price": "50000",
+              }
+
+
+          def test_product_price_copy_normalizes_full_width_digits():
+              assert app.digits_only("１２３，４５６ 円") == "123456"
+          ''', encoding="utf-8")
+          PY
+
+      - name: Compile
+        run: python -m py_compile app.py
+
+      - name: Run regression suite
+        run: python -m pytest -q
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          if git diff --quiet -- app.py tests/test_after_call_copy_fields.py; then
+            echo "No code changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py tests/test_after_call_copy_fields.py
+          git commit -m "Fix case category and add after-call copy buttons"
+          git push origin HEAD:main
