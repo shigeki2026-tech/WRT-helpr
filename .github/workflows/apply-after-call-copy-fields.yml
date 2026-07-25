@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/apply-after-call-copy-fields.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
