@@ -162,7 +162,7 @@ def test_water_faucet_decision_is_unchanged_after_price_extraction_change():
     assert form["manufacturer"] == "TOTO", dbg
     assert form["product_price"] == "50000", dbg
     assert decision["repair_type"] == "出張修理", dbg
-    assert decision["cost_estimate"] == "5,000円～7,000円前後", dbg
+    assert decision["cost_estimate"] == "5,000円～13,000円前後", dbg
     assert decision["vendor"] == "ユナイトサービス㈱", dbg
 
 
@@ -220,7 +220,7 @@ def test_room_aircon_clipboard_keeps_aircon_type_unknown_and_cost_pending():
     assert decision["working_form"]["aircon_type"] == "未確認", dbg
     assert decision["cost_result"]["cost_status"] == "pending", dbg
     assert decision["cost_estimate"] == "未確定", dbg
-    assert decision["cost_estimate"] != "7,000円～16,000円前後", dbg
+    assert decision["cost_estimate"] != "7,000円～19,000円前後", dbg
     assert "家庭用/業務用を確認してください" in decision["cost_result"]["required_questions"], dbg
 
 
@@ -244,7 +244,7 @@ def test_room_aircon_manual_unknown_keeps_cost_pending_after_import():
     assert decision["working_form"]["aircon_type"] == "未確認", dbg
     assert decision["cost_result"]["cost_status"] == "pending", dbg
     assert decision["cost_estimate"] == "未確定", dbg
-    assert decision["cost_estimate"] != "7,000円～16,000円前後", dbg
+    assert decision["cost_estimate"] != "7,000円～19,000円前後", dbg
     assert "家庭用/業務用を確認してください" in decision["cost_result"]["required_questions"], dbg
     assert "aircon_type" in decision["cost_result"]["missing_fields"], dbg
 
@@ -265,7 +265,7 @@ def test_room_aircon_manual_home_confirms_cost_after_import():
     dbg = debug_payload(extracted, form, decision)
 
     assert decision["working_form"]["aircon_type"] == "家庭用", dbg
-    assert decision["cost_estimate"] == "7,000円～16,000円前後", dbg
+    assert decision["cost_estimate"] == "7,000円～19,000円前後", dbg
     assert decision["cost_result"]["cost_status"] == "confirmed", dbg
 
 
@@ -427,7 +427,7 @@ def test_case_ecocute_daikin_active():
     assert form["product"] == "エコキュート", dbg
     assert form["manufacturer"] == "ダイキン", dbg
     assert decision["repair_type"] == "出張修理", dbg
-    assert decision["cost_estimate"] == "15,000円～20,000円前後", dbg
+    assert decision["cost_estimate"] == "20,000円～25,000円前後", dbg
     assert decision["area_group"] == "NTT西日本", dbg
     assert decision["warranty_status"] == "active", dbg
 

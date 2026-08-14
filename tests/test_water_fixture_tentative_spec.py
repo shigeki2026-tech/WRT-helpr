@@ -24,7 +24,7 @@ def test_water_fixture_master_csv_rows_exist_after_implementation():
     vendor_lines = csv_lines_containing("data/master_vendor_rules.csv", ("水栓",))
 
     assert any("水栓" in line and "出張修理" in line for line in repair_lines)
-    assert any("水栓" in line and "5,000円～7,000円前後" in line for line in cost_lines)
+    assert any("水栓" in line and "5,000円～13,000円前後" in line for line in cost_lines)
     assert any("水栓" in line and "クリンスイ" in line and "未確定" in line for line in cost_lines)
     assert any("水栓" in line and "ユナイトサービス㈱" in line and "10年以内・年数不明" in line for line in vendor_lines)
     assert any("水栓" in line and "クラシアン（交換）" in line and "10年以上" in line for line in vendor_lines)
@@ -42,7 +42,7 @@ def test_water_fixture_cost_rule_csv_contract():
     assert any(
         "水栓" in line
         and "出張修理" in line
-        and "5,000円～7,000円前後" in line
+        and "5,000円～13,000円前後" in line
         and "confirmed" in line
         for line in lines
     )

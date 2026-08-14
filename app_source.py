@@ -676,6 +676,7 @@ _REPAIR_TYPE_COLS  = [
 ]
 _COST_COLS         = ["priority", "enabled", "product_keyword", "manufacturer_keyword",
                       "manufacturer_group", "condition_keyword", "repair_type",
+                      "appliance_category_keyword",
                       "cost_estimate", "can_announce_cost", "needs_escalation",
                       "required_fields", "cost_status", "guidance_scope",
                       "required_questions", "customer_notice", "internal_note", "notes"]
@@ -741,6 +742,7 @@ PRODUCT_OTHER = "その他・要確認"
 MANUFACTURER_OTHER = "その他・要確認"
 MANUFACTURER_UNKNOWN = "不明"
 SHOW_CALL_TYPE_IN_CALL_FORM = False
+SIMPLE_OP_MODE = os.getenv("WRT_SIMPLE_OP_MODE", "").strip() == "1"
 MAIN_TAB_DURING_CALL = "during_call"
 MAIN_TAB_AFTER_CALL = "after_call"
 MAIN_TAB_MASTER = "master"
@@ -749,7 +751,11 @@ MAIN_TAB_LABELS = {
     MAIN_TAB_AFTER_CALL: "終話後処理",
     MAIN_TAB_MASTER: "マスタ管理",
 }
-MAIN_TAB_ORDER = [MAIN_TAB_DURING_CALL, MAIN_TAB_AFTER_CALL, MAIN_TAB_MASTER]
+MAIN_TAB_ORDER = (
+    [MAIN_TAB_DURING_CALL]
+    if SIMPLE_OP_MODE
+    else [MAIN_TAB_DURING_CALL, MAIN_TAB_AFTER_CALL, MAIN_TAB_MASTER]
+)
 MAIN_TAB_LABEL_TO_KEY = {label: tab_name for tab_name, label in MAIN_TAB_LABELS.items()}
 
 
@@ -5763,24 +5769,19 @@ def guard_pending_cost_before_rules(form: dict):
     return None
 
 
-def _confirmed_cost_result(cost_estimate: str, keyword: str, internal_note: str = "",
-                           guidance_scope: str = "always") -> dict:
-    return {
-        "matched": True,
-        "cost_estimate": cost_estimate,
-        "can_announce_cost": True,
-        "needs_escalation": False,
-        "cost_status": "confirmed",
-        "guidance_scope": guidance_scope,
-        "required_questions": "",
-        "customer_notice": "",
-        "internal_note": internal_note,
-        "missing_fields": [],
-        "keyword": keyword,
-        "priority": 0,
-        "csv_name": "master_cost_rules.csv",
-        "notes": internal_note,
-    }
+def pc_software_recovery_notice(form: dict) -> str:
+    """ソフトウェア関連症状のときだけリカバリー再セットアップ費用を返す。"""
+    symptom_text = " ".join(
+        str(form.get(field) or "")
+        for field in ("symptom", "symptom_detail", "call_memo", "extra_condition")
+    )
+    software_keywords = (
+        "ソフトウェア", "アプリ", "office", "エラー表示", "立ち上がらない",
+        "起動しない", "リカバリー", "再セットアップ",
+    )
+    if any(keyword.lower() in symptom_text.lower() for keyword in software_keywords):
+        return "リカバリー再セットアップは別途17,000円前後～（20,000円を超える場合あり）"
+    return ""
 
 
 def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
@@ -5797,51 +5798,27 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     mfr_groups   = load_manufacturer_groups_dict()
     product      = (form.get("product") or "").strip()
     manufacturer = (form.get("manufacturer") or "").strip()
+    appliance_category = (
+        form.get("appliance_category")
+        or form.get("appliance_type")
+        or ""
+    ).strip()
     aircon_type  = infer_aircon_type(form)
+    pc_manufacturer_type = (
+        form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN
+    ).strip()
     condition    = " ".join([
         (form.get("extra_condition") or "").strip(),
         aircon_type if aircon_type != AIRCON_TYPE_UNKNOWN else "",
+        pc_manufacturer_type
+        if product == "パソコン" and pc_manufacturer_type != PC_MANUFACTURER_TYPE_UNKNOWN
+        else "",
     ]).strip()
     norm_mfr     = normalize_manufacturer(manufacturer)
 
     guarded = guard_pending_cost_before_rules(form)
     if guarded:
         return guarded
-
-    pc_manufacturer_type = (form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN).strip()
-    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_DOMESTIC:
-        return _confirmed_cost_result(
-            "2,000円～9,000円",
-            "国内PC",
-            "PCメーカー区分=国内メーカー",
-        )
-    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_FOREIGN:
-        return _confirmed_cost_result(
-            "12,000円前後",
-            "海外PC",
-            "PCメーカー区分=海外メーカー",
-        )
-    if product == "エアコン" and norm_mfr == "ダイキン":
-        basis = aircon_type_basis_label(form, aircon_type)
-        if aircon_type == AIRCON_TYPE_GAS_LEAK:
-            return _confirmed_cost_result(
-                "30,000円前後",
-                "ダイキンエアコンガス漏れ検査",
-                basis,
-                guidance_scope="eu_asked_only",
-            )
-        if aircon_type == AIRCON_TYPE_HOME:
-            return _confirmed_cost_result(
-                "7,000円～16,000円前後",
-                "ダイキンエアコン家庭用",
-                basis,
-            )
-        if aircon_type == AIRCON_TYPE_BUSINESS:
-            return _confirmed_cost_result(
-                "15,000円～22,000円前後",
-                "ダイキンエアコン業務用",
-                basis,
-            )
 
     _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
@@ -5860,6 +5837,7 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
         mg  = (row.get("manufacturer_group") or "").strip()
         ck  = (row.get("condition_keyword") or "").strip()
         rt  = (row.get("repair_type") or "").strip()
+        ak  = (row.get("appliance_category_keyword") or "").strip()
 
         # repair_type: 完全一致（空=ワイルドカード）
         if rt and rt != repair_type:
@@ -5867,6 +5845,7 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
         if not _kw_match(pk, product):      continue
         if not _kw_match(mk, manufacturer): continue
         if not _kw_match(ck, condition):    continue
+        if not _kw_match(ak, appliance_category): continue
         # manufacturer_group チェック（CSVロード済みグループ辞書を使用）
         if mg:
             group_set = mfr_groups.get(mg)
@@ -5874,7 +5853,7 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
                 continue  # グループに含まれないメーカーはスキップ
             # 未定義グループは無視（ワイルドカード扱い）
 
-        matched_kw = pk or mk or mg or ck or rt or "(汎用)"
+        matched_kw = pk or mk or mg or ck or ak or rt or "(汎用)"
 
         # ── required_fields チェック ──────────────────────────────
         req_fields_str = (row.get("required_fields") or "").strip()
@@ -5908,7 +5887,7 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
         if not raw_status:
             raw_status = "escalation" if esc else "confirmed"
 
-        return {
+        result = {
             "matched":            True,
             "cost_estimate":      (row.get("cost_estimate") or "").strip(),
             "can_announce_cost":  (row.get("can_announce_cost") or "可").strip() != "不可",
@@ -5924,37 +5903,18 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
             "csv_name":           "master_cost_rules.csv",
             "notes":              (row.get("notes") or "").strip(),
         }
+        if product == "パソコン":
+            result["customer_notice"] = pc_software_recovery_notice(form)
+        if product == "エアコン" and norm_mfr == "ダイキン":
+            result["internal_note"] = aircon_type_basis_label(form, aircon_type)
+        return result
 
     return _no_match
 
 
 # ── 既存ロジック（フォールバック・削除しない） ──
 def determine_cost_estimate(form: dict, repair_type: str) -> str:
-    product      = form.get("product", "")
-    manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
     if repair_type == "要確認":       return "要確認"
-    if manufacturer == "ダイキン" and "エアコン" in product:
-        aircon_type = infer_aircon_type(form)
-        if aircon_type == AIRCON_TYPE_GAS_LEAK:
-            return "30,000円前後"
-        if aircon_type == AIRCON_TYPE_BUSINESS:
-            return "15,000円～22,000円前後"
-        if aircon_type == AIRCON_TYPE_HOME:
-            return "7,000円～16,000円前後"
-        if form.get("appliance_type") == "住設" or "業務用" in form.get("extra_condition", ""):
-            return "15,000円～22,000円前後"
-        return "7,000円～16,000円前後"
-    if manufacturer == "アイリスオーヤマ" and repair_type == "出張修理":
-        return "15,000円前後"
-    if manufacturer == "エレクトロラックス・ジャパン":
-        if product in {"洗濯機", "食器洗い乾燥機"} or "レンジフード" in product:
-            return "45,000円前後"
-        if "IH" in product or "クッキングヒーター" in product:
-            return "25,000円～30,000円前後"
-    if manufacturer == "ダイソン" and product == "掃除機": return "10,000円前後"
-    if product == "パソコン":
-        domestic = {"パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー"}
-        return "2,000円～9,000円" if manufacturer in domestic else "12,000円前後"
     if repair_type == "出張修理": return "5,000円～7,000円前後"
     if repair_type == "持込修理": return "2,000円～5,000円前後"
     return "要確認"
@@ -10351,6 +10311,9 @@ def render_tab_call():
                 key=f"history_display_{stable_hash_text(history_tmpl, 12)}",
             )
 
+        if SIMPLE_OP_MODE:
+            return
+
         if should_offer_master_registration_candidate(st.session_state.form, decision):
             with st.expander("マスタ登録候補", expanded=False):
                 candidate = build_master_registration_candidate(st.session_state.form, decision)
@@ -11737,6 +11700,8 @@ def render_tab_master():
 # メイン
 # ============================================================
 def render_main_tab_navigation() -> str:
+    if SIMPLE_OP_MODE:
+        return set_active_main_tab(st.session_state, MAIN_TAB_DURING_CALL)
     active_tab = get_active_main_tab(st.session_state)
     labels = [MAIN_TAB_LABELS[tab_name] for tab_name in MAIN_TAB_ORDER]
     current_label = MAIN_TAB_LABELS.get(active_tab, MAIN_TAB_LABELS[MAIN_TAB_DURING_CALL])
@@ -11757,7 +11722,7 @@ def render_main_tab_navigation() -> str:
 
 def main():
     st.set_page_config(
-        page_title="修理受付 支援ツール MVP",
+        page_title="修理受付 概算費用ガイド" if SIMPLE_OP_MODE else "修理受付 支援ツール MVP",
         page_icon="🔧",
         layout="wide",
         initial_sidebar_state="collapsed",
