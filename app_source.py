@@ -5784,26 +5784,6 @@ def pc_software_recovery_notice(form: dict) -> str:
     return ""
 
 
-def _confirmed_cost_result(cost_estimate: str, keyword: str, internal_note: str = "",
-                           guidance_scope: str = "always", customer_notice: str = "") -> dict:
-    return {
-        "matched": True,
-        "cost_estimate": cost_estimate,
-        "can_announce_cost": True,
-        "needs_escalation": False,
-        "cost_status": "confirmed",
-        "guidance_scope": guidance_scope,
-        "required_questions": "",
-        "customer_notice": customer_notice,
-        "internal_note": internal_note,
-        "missing_fields": [],
-        "keyword": keyword,
-        "priority": 0,
-        "csv_name": "master_cost_rules.csv",
-        "notes": internal_note,
-    }
-
-
 def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
     """
     master_cost_rules.csv から概算費用ルールを判定する（拡張版）。
@@ -5824,54 +5804,21 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
         or ""
     ).strip()
     aircon_type  = infer_aircon_type(form)
+    pc_manufacturer_type = (
+        form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN
+    ).strip()
     condition    = " ".join([
         (form.get("extra_condition") or "").strip(),
         aircon_type if aircon_type != AIRCON_TYPE_UNKNOWN else "",
+        pc_manufacturer_type
+        if product == "パソコン" and pc_manufacturer_type != PC_MANUFACTURER_TYPE_UNKNOWN
+        else "",
     ]).strip()
     norm_mfr     = normalize_manufacturer(manufacturer)
 
     guarded = guard_pending_cost_before_rules(form)
     if guarded:
         return guarded
-
-    pc_manufacturer_type = (form.get("pc_manufacturer_type") or PC_MANUFACTURER_TYPE_UNKNOWN).strip()
-    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_DOMESTIC:
-        recovery_notice = pc_software_recovery_notice(form)
-        return _confirmed_cost_result(
-            "2,000円～9,000円",
-            "国内PC",
-            "PCメーカー区分=国内メーカー",
-            customer_notice=recovery_notice,
-        )
-    if product == "パソコン" and pc_manufacturer_type == PC_MANUFACTURER_TYPE_FOREIGN:
-        recovery_notice = pc_software_recovery_notice(form)
-        return _confirmed_cost_result(
-            "12,000円前後",
-            "海外PC",
-            "PCメーカー区分=海外メーカー",
-            customer_notice=recovery_notice,
-        )
-    if product == "エアコン" and norm_mfr == "ダイキン":
-        basis = aircon_type_basis_label(form, aircon_type)
-        if aircon_type == AIRCON_TYPE_GAS_LEAK:
-            return _confirmed_cost_result(
-                "30,000円前後",
-                "ダイキンエアコンガス漏れ検査",
-                basis,
-                guidance_scope="eu_asked_only",
-            )
-        if aircon_type == AIRCON_TYPE_HOME:
-            return _confirmed_cost_result(
-                "7,000円～19,000円前後",
-                "ダイキンエアコン家庭用",
-                basis,
-            )
-        if aircon_type == AIRCON_TYPE_BUSINESS:
-            return _confirmed_cost_result(
-                "15,000円～22,000円前後",
-                "ダイキンエアコン業務用",
-                basis,
-            )
 
     _no_match = {
         "matched": False, "cost_estimate": "", "can_announce_cost": True,
@@ -5940,7 +5887,7 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
         if not raw_status:
             raw_status = "escalation" if esc else "confirmed"
 
-        return {
+        result = {
             "matched":            True,
             "cost_estimate":      (row.get("cost_estimate") or "").strip(),
             "can_announce_cost":  (row.get("can_announce_cost") or "可").strip() != "不可",
@@ -5956,37 +5903,18 @@ def determine_cost_from_rules(form: dict, repair_type: str) -> dict:
             "csv_name":           "master_cost_rules.csv",
             "notes":              (row.get("notes") or "").strip(),
         }
+        if product == "パソコン":
+            result["customer_notice"] = pc_software_recovery_notice(form)
+        if product == "エアコン" and norm_mfr == "ダイキン":
+            result["internal_note"] = aircon_type_basis_label(form, aircon_type)
+        return result
 
     return _no_match
 
 
 # ── 既存ロジック（フォールバック・削除しない） ──
 def determine_cost_estimate(form: dict, repair_type: str) -> str:
-    product      = form.get("product", "")
-    manufacturer = normalize_manufacturer(form.get("manufacturer", ""))
     if repair_type == "要確認":       return "要確認"
-    if manufacturer == "ダイキン" and "エアコン" in product:
-        aircon_type = infer_aircon_type(form)
-        if aircon_type == AIRCON_TYPE_GAS_LEAK:
-            return "30,000円前後"
-        if aircon_type == AIRCON_TYPE_BUSINESS:
-            return "15,000円～22,000円前後"
-        if aircon_type == AIRCON_TYPE_HOME:
-            return "7,000円～19,000円前後"
-        if form.get("appliance_type") == "住設" or "業務用" in form.get("extra_condition", ""):
-            return "15,000円～22,000円前後"
-        return "7,000円～19,000円前後"
-    if manufacturer == "アイリスオーヤマ" and repair_type == "出張修理":
-        return "15,000円前後"
-    if manufacturer == "エレクトロラックス・ジャパン":
-        if product in {"洗濯機", "食器洗い乾燥機"} or "レンジフード" in product:
-            return "45,000円前後"
-        if "IH" in product or "クッキングヒーター" in product:
-            return "25,000円～30,000円前後"
-    if manufacturer == "ダイソン" and product == "掃除機": return "10,000円前後"
-    if product == "パソコン":
-        domestic = {"パナソニック", "シャープ", "富士通", "東芝", "日立", "ソニー"}
-        return "2,000円～9,000円" if manufacturer in domestic else "12,000円前後"
     if repair_type == "出張修理": return "5,000円～7,000円前後"
     if repair_type == "持込修理": return "2,000円～5,000円前後"
     return "要確認"
