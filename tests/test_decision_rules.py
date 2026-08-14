@@ -1168,6 +1168,8 @@ def test_daikin_aircon_home_type_confirms_cost():
     assert d["working_form"]["aircon_type"] == "家庭用"
     assert d["cost_estimate"] == "7,000円～19,000円前後"
     assert d["cost_result"]["cost_status"] == "confirmed"
+    assert d["cost_result"]["csv_name"] == "master_cost_rules.csv"
+    assert d["cost_result"]["priority"] == 10
     assert d["cost_result"]["internal_note"] == "シリーズ：ルームエアコン"
 
 
@@ -1181,6 +1183,8 @@ def test_daikin_business_aircon_type_confirms_cost():
     assert d["working_form"]["aircon_type"] == "業務用"
     assert d["cost_estimate"] == "15,000円～22,000円前後"
     assert d["cost_result"]["cost_status"] == "confirmed"
+    assert d["cost_result"]["csv_name"] == "master_cost_rules.csv"
+    assert d["cost_result"]["priority"] == 5
     assert d["cost_result"]["internal_note"] == "業務用/店舗用/パッケージエアコン等"
 
 
@@ -1194,6 +1198,8 @@ def test_daikin_aircon_gas_leak_type_confirms_cost():
     assert d["working_form"]["aircon_type"] == "ガス漏れ検査"
     assert d["cost_estimate"] == "30,000円前後"
     assert d["cost_result"]["cost_status"] == "confirmed"
+    assert d["cost_result"]["csv_name"] == "master_cost_rules.csv"
+    assert d["cost_result"]["priority"] == 4
 
 
 def test_daikin_aircon_unknown_type_stays_pending():
@@ -1272,6 +1278,26 @@ def test_pc_hardware_symptom_hides_recovery_setup_supplement():
     d = app.run_decision(form)
 
     assert d["cost_result"]["customer_notice"] == ""
+
+
+def test_cost_csv_is_single_source_and_redundant_rows_are_removed():
+    df = app.load_cost_rules()
+
+    assert not (
+        (df["product_keyword"] == "エアコン")
+        & (df["manufacturer_keyword"] == "ダイキン")
+        & (df["priority"] == 15)
+    ).any()
+    assert not ((df["product_keyword"] == "エアコン") & (df["priority"] == 26)).any()
+    assert not (df["manufacturer_keyword"] == "Dyson").any()
+    assert not (df["product_keyword"] == "ヘッドホン").any()
+
+    domestic_pc = app.run_decision(make_form(product="パソコン", manufacturer="富士通"))
+    foreign_pc = app.run_decision(make_form(product="パソコン", manufacturer="Dell"))
+    assert domestic_pc["cost_result"]["csv_name"] == "master_cost_rules.csv"
+    assert domestic_pc["cost_result"]["priority"] == 20
+    assert foreign_pc["cost_result"]["csv_name"] == "master_cost_rules.csv"
+    assert foreign_pc["cost_result"]["priority"] == 30
 
 
 def test_tc17b_pc_lenovo_original_infers_foreign_and_clears_question():
@@ -4338,6 +4364,7 @@ _ALL_TESTS = [
     test_tc17_pc_dell,
     test_pc_software_symptom_shows_recovery_setup_supplement,
     test_pc_hardware_symptom_hides_recovery_setup_supplement,
+    test_cost_csv_is_single_source_and_redundant_rows_are_removed,
     test_tc18_bic_store_infer,
     test_tc19_sofmap_store_infer,
     test_tc20_shiga_ntt_west,
