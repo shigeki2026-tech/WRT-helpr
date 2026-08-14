@@ -923,7 +923,7 @@ def test_tc03_electrolux_washer():
 
 
 # ============================================================
-# TC04: ダイキン家庭用エアコン → 出張修理 / 7,000円～16,000円前後
+# TC04: ダイキン家庭用エアコン → 出張修理 / 7,000円～19,000円前後
 # ※ extra_condition="家庭用" 指定が必要（未指定は pending になる）
 # ============================================================
 
@@ -931,7 +931,7 @@ def test_tc04_daikin_ac():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン",
                                    extra_condition="家庭用"))
     check("TC04 修理形態 → 出張修理",                d["repair_type"],   "出張修理")
-    check("TC04 概算費用 → 7,000円～16,000円前後",   d["cost_estimate"], "7,000円～16,000円前後")
+    check("TC04 概算費用 → 7,000円～19,000円前後",   d["cost_estimate"], "7,000円～19,000円前後")
 
 
 # ============================================================
@@ -1134,14 +1134,14 @@ def test_tc12_ac_daikin_no_type():
 
 
 # ============================================================
-# TC13: エアコン + ダイキン + 家庭用 → 7,000円～16,000円前後
+# TC13: エアコン + ダイキン + 家庭用 → 7,000円～19,000円前後
 # ============================================================
 
 def test_tc13_ac_daikin_katei():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン",
                                    extra_condition="家庭用"))
     check("TC13 修理形態 → 出張修理",             d["repair_type"],   "出張修理")
-    check("TC13 概算費用 → 7,000円～16,000円前後", d["cost_estimate"], "7,000円～16,000円前後")
+    check("TC13 概算費用 → 7,000円～19,000円前後", d["cost_estimate"], "7,000円～19,000円前後")
     check("TC13 cost_status → confirmed",         d["cost_result"]["cost_status"], "confirmed")
 
 
@@ -1166,7 +1166,7 @@ def test_daikin_aircon_home_type_confirms_cost():
     ))
 
     assert d["working_form"]["aircon_type"] == "家庭用"
-    assert d["cost_estimate"] == "7,000円～16,000円前後"
+    assert d["cost_estimate"] == "7,000円～19,000円前後"
     assert d["cost_result"]["cost_status"] == "confirmed"
     assert d["cost_result"]["internal_note"] == "シリーズ：ルームエアコン"
 
@@ -1219,7 +1219,7 @@ def test_daikin_room_aircon_manual_unknown_overrides_auto_home_inference():
 
     assert d["working_form"]["aircon_type"] == "未確認"
     assert d["cost_estimate"] == "未確定"
-    assert d["cost_estimate"] != "7,000円～16,000円前後"
+    assert d["cost_estimate"] != "7,000円～19,000円前後"
     assert d["cost_result"]["cost_status"] == "pending"
     assert "家庭用/業務用を確認してください" in d["cost_result"]["required_questions"]
     assert d["cost_result"]["missing_fields"] == ["aircon_type"]
@@ -1254,6 +1254,24 @@ def test_tc17_pc_dell():
     d = app.run_decision(make_form(product="パソコン", manufacturer="Dell"))
     check("TC17 修理形態 → 持込修理",            d["repair_type"],   "持込修理")
     check("TC17 概算費用 → 12,000円前後",         d["cost_estimate"], "12,000円前後")
+
+
+def test_pc_software_symptom_shows_recovery_setup_supplement():
+    form = make_form(product="パソコン", manufacturer="富士通")
+    form["symptom_detail"] = "Officeでエラー表示が出て立ち上がらない"
+    d = app.run_decision(form)
+
+    assert d["cost_estimate"] == "2,000円～9,000円"
+    assert "17,000円前後" in d["cost_result"]["customer_notice"]
+    assert "20,000円を超える場合" in d["cost_result"]["customer_notice"]
+
+
+def test_pc_hardware_symptom_hides_recovery_setup_supplement():
+    form = make_form(product="パソコン", manufacturer="富士通")
+    form["symptom_detail"] = "液晶画面が割れている"
+    d = app.run_decision(form)
+
+    assert d["cost_result"]["customer_notice"] == ""
 
 
 def test_tc17b_pc_lenovo_original_infers_foreign_and_clears_question():
@@ -1476,7 +1494,7 @@ def test_tc26_ac_daikin_only_pending_type_question():
 
 def test_tc27_ac_daikin_home():
     d = app.run_decision(make_form(product="エアコン", manufacturer="ダイキン", extra_condition="家庭用"))
-    check("TC27 ダイキン家庭用 → 7,000円～16,000円前後", d["cost_estimate"], "7,000円～16,000円前後")
+    check("TC27 ダイキン家庭用 → 7,000円～19,000円前後", d["cost_estimate"], "7,000円～19,000円前後")
     check("TC27 ダイキン家庭用 → confirmed", d["cost_result"]["cost_status"], "confirmed")
 
 
@@ -1743,8 +1761,8 @@ def test_tc62_pc_other_manufacturer_blocks_cost():
 def test_tc63_ecocute_daikin_cost():
     d = app.run_decision(make_form(product="エコキュート", manufacturer="ダイキン"))
     check("TC63 エコキュート+ダイキン → 出張修理", d["repair_type"], "出張修理")
-    check("TC63 エコキュート+ダイキン → 15,000円～20,000円前後",
-          d["cost_estimate"], "15,000円～20,000円前後")
+    check("TC63 エコキュート+ダイキン → 20,000円～25,000円前後",
+          d["cost_estimate"], "20,000円～25,000円前後")
 
 
 def test_tc64_ecocute_panasonic_cost():
@@ -1755,26 +1773,26 @@ def test_tc64_ecocute_panasonic_cost():
 
 def test_tc65_gas_water_heater_cost():
     d = app.run_decision(make_form(product="ガス給湯器"))
-    check("TC65 ガス給湯器 → 5,000円～7,000円前後",
-          d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC65 ガス給湯器 → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
 
 
 def test_tc66_oil_water_heater_cost():
     d = app.run_decision(make_form(product="石油給湯器"))
-    check("TC66 石油給湯器 → 5,000円～7,000円前後",
-          d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC66 石油給湯器 → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
 
 
 def test_tc67_hybrid_water_heater_cost():
     d = app.run_decision(make_form(product="ハイブリッド給湯器"))
-    check("TC67 ハイブリッド給湯器 → 8,000円～10,000円前後",
-          d["cost_estimate"], "8,000円～10,000円前後")
+    check("TC67 ハイブリッド給湯器 → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
 
 
 def test_tc68_enefarm_requires_gas_company():
     d = app.run_decision(make_form(product="エネファーム"))
-    check("TC68 エネファーム → 5,000円～7,000円前後",
-          d["cost_estimate"], "5,000円～7,000円前後")
+    check("TC68 エネファーム → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
     check("TC68 required_questions にガス会社",
           "ガス会社" in d["cost_result"]["required_questions"], True)
     check("TC68 internal_note にガス会社",
@@ -1783,14 +1801,50 @@ def test_tc68_enefarm_requires_gas_company():
 
 def test_tc69_electric_water_heater_cost():
     d = app.run_decision(make_form(product="電気温水器"))
-    check("TC69 電気温水器 → 8,000円～10,000円前後",
-          d["cost_estimate"], "8,000円～10,000円前後")
+    check("TC69 電気温水器 → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
 
 
 def test_tc70_electric_heating_water_boiler_cost():
     d = app.run_decision(make_form(product="電気暖房温水ボイラー"))
-    check("TC70 電気暖房温水ボイラー → 8,000円～10,000円前後",
-          d["cost_estimate"], "8,000円～10,000円前後")
+    check("TC70 電気暖房温水ボイラー → 5,000円～13,000円前後",
+          d["cost_estimate"], "5,000円～13,000円前後")
+
+
+def test_generic_visit_cost_separates_home_appliance_and_housing_equipment():
+    home = app.run_decision(make_form(
+        product="洗濯機",
+        appliance_type="家電",
+        appliance_category="家電",
+    ))
+    housing = app.run_decision(make_form(
+        product="洗濯機",
+        appliance_type="住設",
+        appliance_category="住設（既築）",
+    ))
+
+    assert home["cost_estimate"] == "5,000円～7,000円前後"
+    assert housing["cost_estimate"] == "5,000円～13,000円前後"
+    assert housing["cost_result"]["priority"] == 80
+
+
+def test_sk_japan_visit_cost_and_operator_guidance():
+    d = app.run_decision(make_form(product="洗濯機", manufacturer="エスケイジャパン"))
+
+    assert d["repair_type"] == "出張修理"
+    assert d["cost_estimate"] == "5,000円～7,000円前後"
+    assert "2回訪問" in d["cost_result"]["internal_note"]
+    assert "マルチ" in d["cost_result"]["internal_note"]
+
+
+def test_sk_japan_carry_in_requires_wrt_cost_confirmation():
+    d = app.run_decision(make_form(product="ドライヤー", manufacturer="エスケイジャパン"))
+
+    assert d["repair_type"] == "持込修理"
+    assert d["cost_estimate"] == "未確定"
+    assert d["cost_result"]["cost_status"] == "pending"
+    assert d["cost_result"]["can_announce_cost"] is False
+    assert "WRT修理受付センター" in d["cost_result"]["required_questions"]
 
 
 def test_tc71_generic_water_heater_pending():
@@ -2664,7 +2718,7 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
 
     check("AI工務店 appliance type inferred", decision["working_form"]["appliance_type"], "住設")
     check("AI工務店 repair type", decision["repair_type"], "出張修理")
-    check("AI工務店 cost generic visit", decision["cost_estimate"], "5,000円～7,000円前後")
+    check("AI工務店 cost generic visit", decision["cost_estimate"], "5,000円～13,000円前後")
     check("AI工務店 cost can announce", decision["cost_result"]["can_announce_cost"], True)
     check("AI工務店 cost status", decision["cost_result"]["cost_status"], "confirmed")
     check("AI工務店 vendor", decision["vendor"], "ユナイトサービス㈱")
@@ -2682,9 +2736,9 @@ def test_ai_koumuten_system_kitchen_case_uses_vendor_list_no7_fallback():
     check("AI工務店 after-call vendor reason", summary["vendor_reason"], "依頼先一覧 No.7 上記以外・全国・全メーカー")
     assert summary["template_reason"] != summary["vendor_reason"]
     assert "アイ工務店上位5社案件はユナイトサービスへ依頼" not in str(summary)
-    assert "※修理キャンセル時の概算費用5,000円～7,000円前後" in memo
+    assert "※修理キャンセル時の概算費用5,000円～13,000円前後" in memo
     check("AI工務店 repair tag primary", repair_tag["primary"], "出張修理")
-    check("AI工務店 cost tag primary", cost_tag["primary"], "5,000円～7,000円前後")
+    check("AI工務店 cost tag primary", cost_tag["primary"], "5,000円～13,000円前後")
     assert "拠点対応" in [tag["title"] for tag in tags]
     check("AI工務店 script tag primary", script_tag["primary"], "参照スクリプト")
     check("AI工務店 script tag matches reference", script_tag["secondary"], script_reference["display"])
@@ -4282,6 +4336,8 @@ _ALL_TESTS = [
     test_tc15_pc_no_manufacturer,
     test_tc16_pc_fujitsu,
     test_tc17_pc_dell,
+    test_pc_software_symptom_shows_recovery_setup_supplement,
+    test_pc_hardware_symptom_hides_recovery_setup_supplement,
     test_tc18_bic_store_infer,
     test_tc19_sofmap_store_infer,
     test_tc20_shiga_ntt_west,
@@ -4335,6 +4391,9 @@ _ALL_TESTS = [
     test_tc68_enefarm_requires_gas_company,
     test_tc69_electric_water_heater_cost,
     test_tc70_electric_heating_water_boiler_cost,
+    test_generic_visit_cost_separates_home_appliance_and_housing_equipment,
+    test_sk_japan_visit_cost_and_operator_guidance,
+    test_sk_japan_carry_in_requires_wrt_cost_confirmation,
     test_tc71_generic_water_heater_pending,
     test_tc72_water_heater_products_in_options,
     test_tc73_digital_camera_cost,
@@ -4482,7 +4541,7 @@ def test_water_fixture_under_or_unknown_10years_routes_to_unite():
     )
 
     assert result["repair_type"] == "出張修理"
-    assert result["cost_estimate"] == "5,000円～7,000円前後"
+    assert result["cost_estimate"] == "5,000円～13,000円前後"
     assert result["vendor"] == "ユナイトサービス㈱"
     assert result["vendor_result"]["vendor_name"] == "ユナイトサービス㈱"
     assert result["vendor_result"]["reason"] == "既築／中古 水栓 10年以内・年数不明"
@@ -4510,7 +4569,7 @@ def test_crinsui_water_fixture_cost_is_unavailable_not_generic_water_cost():
     cost_result = result["cost_result"]
 
     assert result["repair_type"] == "出張修理"
-    assert result["cost_estimate"] != "5,000円～7,000円前後"
+    assert result["cost_estimate"] != "5,000円～13,000円前後"
     assert cost_result["can_announce_cost"] is False
     assert (
         str(cost_result.get("cost_status", "")).lower() in {"unavailable", "not_available", "na"}
