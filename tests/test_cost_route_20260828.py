@@ -55,6 +55,19 @@ def test_selected_jusetsu_line_uses_latest_daikin_ecocute_cost():
     assert result["cost_estimate"] == "20,000円～25,000円前後"
 
 
+def test_selected_line_uses_latest_daikin_home_aircon_cost():
+    result = app.determine_cost_from_rules(
+        selected_form(
+            line="家電",
+            product="エアコン",
+            manufacturer="ダイキン",
+            aircon_type=app.AIRCON_TYPE_HOME,
+        ),
+        "出張修理",
+    )
+    assert result["cost_estimate"] == "7,000円～19,000円前後"
+
+
 def test_selected_line_sk_japan_carry_in_is_not_generic_price():
     result = app.determine_cost_from_rules(
         selected_form(line="家電", product="ドライヤー", manufacturer="エスケイジャパン"),
