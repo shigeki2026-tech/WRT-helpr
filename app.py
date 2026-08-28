@@ -66,6 +66,30 @@ _source = _replace_once(
 
 _source = _replace_once(
     _source,
+    '''        if aircon_type == AIRCON_TYPE_HOME:
+            return _confirmed_cost_result(
+                "7,000円～16,000円前後",
+                "ダイキンエアコン家庭用",
+                basis,
+            )
+''',
+    '''        if aircon_type == AIRCON_TYPE_HOME:
+            home_cost = (
+                "7,000円～19,000円前後"
+                if form.get("manual_call_line")
+                else "7,000円～16,000円前後"
+            )
+            return _confirmed_cost_result(
+                home_cost,
+                "ダイキンエアコン家庭用",
+                basis,
+            )
+''',
+    "選択回線のダイキン家庭用エアコン概算費用更新",
+)
+
+_source = _replace_once(
+    _source,
     '''    if repair_type == "出張修理": return "5,000円～7,000円前後"
     if repair_type == "持込修理": return "2,000円～5,000円前後"
 ''',
