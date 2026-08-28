@@ -43,6 +43,46 @@ _source = _replace_once(
 
 _source = _replace_once(
     _source,
+    '''    condition    = " ".join([
+        (form.get("extra_condition") or "").strip(),
+        aircon_type if aircon_type != AIRCON_TYPE_UNKNOWN else "",
+    ]).strip()
+''',
+    '''    selected_cost_line = (
+        (form.get("call_line") or "").strip()
+        if form.get("manual_call_line")
+        else ""
+    )
+    selected_cost_line_group = get_line_group(selected_cost_line) if selected_cost_line else ""
+    condition = " ".join([
+        (form.get("extra_condition") or "").strip(),
+        selected_cost_line,
+        selected_cost_line_group,
+        aircon_type if aircon_type != AIRCON_TYPE_UNKNOWN else "",
+    ]).strip()
+''',
+    "入電回線選択を概算費用条件へ反映",
+)
+
+_source = _replace_once(
+    _source,
+    '''    if repair_type == "出張修理": return "5,000円～7,000円前後"
+    if repair_type == "持込修理": return "2,000円～5,000円前後"
+''',
+    '''    if repair_type == "出張修理":
+        if form.get("manual_call_line"):
+            selected_line = (form.get("call_line") or "").strip()
+            selected_group = get_line_group(selected_line) if selected_line else ""
+            if selected_group == "住設" or "住設" in selected_line:
+                return "5,000円～13,000円前後"
+        return "5,000円～7,000円前後"
+    if repair_type == "持込修理": return "2,000円～5,000円前後"
+''',
+    "住設回線の汎用出張費用フォールバック修正",
+)
+
+_source = _replace_once(
+    _source,
     '''        except Exception as e:
             st.warning(f"コピーに失敗しました（{e}）。")
 
