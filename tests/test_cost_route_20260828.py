@@ -36,6 +36,7 @@ def test_selected_jusetsu_line_uses_housing_generic_cost():
 
 def test_selected_jusetsu_line_updates_included_water_heater_costs():
     for product in (
+        "給湯器",
         "ガス給湯器",
         "石油給湯器",
         "ハイブリッド給湯器",
@@ -45,6 +46,18 @@ def test_selected_jusetsu_line_updates_included_water_heater_costs():
     ):
         result = app.determine_cost_from_rules(selected_form(product=product), "出張修理")
         assert result["cost_estimate"] == "5,000円～13,000円前後", product
+        assert result["cost_status"] == "confirmed", product
+        assert result["can_announce_cost"] is True, product
+
+
+def test_generic_water_heater_does_not_request_type_confirmation():
+    result = app.determine_cost_from_rules(selected_form(product="給湯器"), "出張修理")
+
+    assert result["cost_estimate"] == "5,000円～13,000円前後"
+    assert result["cost_status"] == "confirmed"
+    assert result["can_announce_cost"] is True
+    assert result["required_questions"] == ""
+    assert "給湯器単独" in result["notes"]
 
 
 def test_selected_jusetsu_line_uses_latest_daikin_ecocute_cost():
@@ -53,6 +66,21 @@ def test_selected_jusetsu_line_uses_latest_daikin_ecocute_cost():
         "出張修理",
     )
     assert result["cost_estimate"] == "20,000円～25,000円前後"
+
+
+def test_selected_jusetsu_line_uses_other_domestic_ecocute_cost():
+    result = app.determine_cost_from_rules(
+        selected_form(product="エコキュート", manufacturer="パナソニック"),
+        "出張修理",
+    )
+    assert result["cost_estimate"] == "8,000円～10,000円前後"
+
+
+def test_enefarm_keeps_gas_company_hearing_requirement():
+    result = app.determine_cost_from_rules(selected_form(product="エネファーム"), "出張修理")
+
+    assert result["cost_estimate"] == "5,000円～13,000円前後"
+    assert "ガス会社" in result["required_questions"]
 
 
 def test_selected_line_uses_latest_daikin_home_aircon_cost():
