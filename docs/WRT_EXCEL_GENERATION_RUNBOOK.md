@@ -1,14 +1,14 @@
 # WRT_HELPER Excel版 正本生成手順書
 
 更新日: 2026-08-29  
-対象成果物: `WRT_HELPER-ver1.19R1.xlsm`
+対象成果物: `WRT_HELPER-ver1.20.xlsm`
 
 ## 1. 正本
 
-- 入力ブック: `WRT_HELPER-ver1.19_FIXED_SOURCE.xlsm`
-- 入力SHA-256: `7b8a5a192c3956b392176416eca01e74ea9a77c9d9aaa6722a490285d1df6faf`
-- VBA正本: `Module1_ver1.19R1.bas`
-- VBA SHA-256: `2506828e74eea39aa21f591ae5adbc2718179e18ed2fe5e04f17e16103f3a883`
+- 入力ブック: `WRT_HELPER-ver1.19R1_SOURCE.xlsm`
+- 入力SHA-256: `3b9f795388ae8f9312fe8886c9259a09494cce40f9d21fbce3d97b67d777e352`
+- VBA正本: `Module1_ver1.20.bas`
+- VBA SHA-256: `807f64b68eceabd73889a13366019eafe9e2f56cf03814e0c8d695569c2e8f38`
 - 生成スクリプト: `BUILD_AND_VERIFY.js`
 - 実行入口: `RUN_BUILD.bat`
 
@@ -20,10 +20,10 @@
 2. Windows版Excel COMで一時コピーを開く。
 3. OOXMLの再保存、LibreOffice変換、Pythonによるxlsm再構築は行わない。
 4. `VBProject.VBComponents("Module1").CodeModule`を取得する。
-5. Module1を部分置換せず、`Module1_ver1.19R1.bas`の全文で一括置換する。
+5. Module1を部分置換せず、`Module1_ver1.20.bas`の全文で一括置換する。
 6. 保護された`01_受付画面`を生成スクリプトから直接編集しない。
 7. VBA内の公開マクロだけで受入試験と最終クリーンを行う。
-8. 全GateがPASSした場合だけ、`WRT_HELPER-ver1.19R1.xlsm`として保存する。
+8. 全GateがPASSした場合だけ、`WRT_HELPER-ver1.20.xlsm`として保存する。
 9. FAIL時は出力xlsmと成功証跡を削除し、完成扱いにしない。
 10. 実行後、`AccessVBOM`レジストリ値を実行前の状態へ戻す。
 
@@ -50,7 +50,7 @@
 
 ### コピー・取込ボタンの反応
 
-成功時に650msだけボタンを緑色へ変え、次を表示する。
+成功時に1200msだけボタンを緑色へ変え、次を表示する。
 
 - 取込: `✓ 取込済み`
 - 全文コピー: `✓ コピー済み`
@@ -105,10 +105,35 @@
 
 ## 7. 失敗時に必要な証跡
 
-- `WRT_HELPER-ver1.19R1_BUILD_LOG.txt`
+- `WRT_HELPER-ver1.20_BUILD_LOG.txt`
 - 画面に表示された最初のFAILED行
 - 入力ブックSHA
 - Module1 SHA
 - Excelのバージョン
 
 ログなしで新しいZIPを作らず、最初のFAILED Gateだけを修正する。
+
+## ver1.20 追加修正
+
+- 複数製品候補は `WORK!D` の表示残りではなく、内部レコード `gProductCaption()` を正本としてメニュー生成する。これにより候補リストの取りこぼしを防ぐ。
+- 取り込みで複数製品が検出された場合、候補一覧をメッセージでも表示し、画面上部の `WRT_LINEINFO` にも展開する。
+- コピー系ボタン（全文コピー / 4項目コピー / 通話メモコピー）は、短い点滅だけでなく `WRT_IMPSTATE` と `WRT_LINEINFO` に成功状態を表示する。
+- 反応視認性を上げるため、ボタンの成功表示は 1200ms 保持する。
+
+## 8. 生成スクリプトの文字コード固定（必須）
+
+Windows Script HostのJScriptは、UTF-8 BOM付きファイルを1行目1文字目の不正文字として拒否する環境がある。今回の失敗を再発させないため、次を正本ルールとして固定する。
+
+- `BUILD_AND_VERIFY.js` は **UTF-16LE（BOM付き）** で保存する。
+- `BUILD_AND_VERIFY.js` の先頭6bytesは必ず `FF FE 2F 00 2F 00`（BOM + `//`）とする。
+- `RUN_BUILD.bat` は **ASCII（BOMなし）** で保存する。
+- `RUN_BUILD.bat` の先頭9bytesは必ず `40 65 63 68 6F 20 6F 66 66`（`@echo off`）とする。
+- `EF BB BF`で始まるJS/BATはパッケージへ入れない。
+- ZIP作成前に、実機で構文検査を通過した旧ビルダーと先頭16bytesを照合する。
+- 構文の内容検査と文字コード検査は分離する。内容はNode等で検査し、最終配布JSはUTF-16LEへ戻す。
+- 上記byte gateが不一致ならZIPを生成しない。
+
+現行正本:
+
+- 入力ブックSHA-256: `3b9f795388ae8f9312fe8886c9259a09494cce40f9d21fbce3d97b67d777e352`
+- Module1 SHA-256: `807f64b68eceabd73889a13366019eafe9e2f56cf03814e0c8d695569c2e8f38`
