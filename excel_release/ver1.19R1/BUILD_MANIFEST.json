@@ -1,0 +1,18 @@
+{
+  "artifact": "WRT_HELPER-ver1.19R1",
+  "created_at": "2026-08-29",
+  "source_workbook_sha256": "7b8a5a192c3956b392176416eca01e74ea9a77c9d9aaa6722a490285d1df6faf",
+  "module_source_sha256": "2506828e74eea39aa21f591ae5adbc2718179e18ed2fe5e04f17e16103f3a883",
+  "output_filename": "WRT_HELPER-ver1.19R1.xlsm",
+  "required_runtime": "Windows desktop Excel with VBA project object model access; builder temporarily sets AccessVBOM and restores it",
+  "gates": [
+    "input workbook SHA-256",
+    "Module1 source SHA-256",
+    "whole Module1 replacement",
+    "source anchors",
+    "WRT_PatchGateV021: outside-section water fixture excluded, 2 products retained, no auto-selection, line prompt registered",
+    "WRT_SelfTest: PASS=200 FAIL=0",
+    "final clean: no selected line, no case text, no product candidate residue",
+    "output file created with byte size and SHA-256 recorded"
+  ]
+}
