@@ -174,3 +174,14 @@ Windows Script HostのJScriptは、UTF-8 BOM付きファイルを1行目1文字�
 10. ドアホン
 
 Gateは、候補数10、各候補名、WORK保持、重複2件の保持、未選択状態を検査する。1つでも不一致なら出力xlsmを生成しない。
+
+## 11. 静的ソースGateの追従ルール
+
+2026-08-29、VBA正本では候補範囲が `ProductCandidateScopeV120(fullText)` へ変更済みだった一方、生成スクリプトが削除済みの `scopedText = ProductSectionTextV020(fullText)` を要求し、VBAインストール前後の静的Gateだけで停止した。
+
+再発防止:
+
+- 生成スクリプトの `assertContains` は、配布する同一パッケージ内の `Module1_ver1.20.bas` に全件実在することをZIP作成前に機械照合する。
+- 候補範囲の正本アンカーは `scopedText = ProductCandidateScopeV120(fullText)` とする。
+- 旧アンカー `scopedText = ProductSectionTextV020(fullText)` を生成Gateへ戻さない。
+- `assertContains` の1件でもVBA正本に存在しない場合、ZIPを生成しない。
